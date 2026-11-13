@@ -27,7 +27,10 @@ modelled chip.
 using the SDCC `.rst` listings next to the map for every byte's bank, kind and
 label. On the pre-fix firmware (bf93461) it names the three strings of
 `rtl837x_init` read from bank 3 instead of bank 2; the current one is clean.
-`--flash state.bin` keeps the chip in a file across runs.
+`--flash state.bin` keeps the chip in a file across runs. `--link 4=2g5`
+plugs a cable into a physical port (the firmware sees it in REG_LINKS* and
+gets its link interrupt); GPIO inputs nobody drives read 1, so SFP cages are
+empty.
 
 UART is stdin/stdout. Registers nobody has modelled are plain storage, and
 the first access to each is logged ("unmodelled reg ...").

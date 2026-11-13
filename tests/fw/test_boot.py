@@ -7,6 +7,8 @@ silicon.
 - Every line of the silicon boot log (golden/swtg024as-boot.log, the bench
   SWTG024AS; version and build date left out) appears, in order, before the
   prompt.
+- Booted with the bench's cable (2.5G on physical port 4, front port 1), the
+  port table's State and Link columns match silicon's.
 - The prompt comes up, and CLI commands work against the modelled chip:
   registers, the VLAN table, the L2 table.
 - With --flash, the chip persists: the first boot writes the default config,
@@ -59,7 +61,7 @@ def main():
     ap.add_argument("--rtlsim", default=os.path.join(HERE, "../../build/rtlsim"))
     a = ap.parse_args()
 
-    c = Console(a.rtlsim, a.image)
+    c = Console(a.rtlsim, a.image, ["--link", "4=2g5"])
     t = time.time()
     up = c.expect(PROMPT, 120)
     check(up, f"boots to the prompt ({time.time() - t:.1f} s)")
@@ -69,6 +71,12 @@ def main():
     boot = [l.rstrip() for l in c.log.decode(errors="replace").splitlines()]
     missing = in_order(golden_lines(os.path.join(HERE, "golden/swtg024as-boot.log")), boot)
     check(not missing, "the silicon boot log appears in order" + (f"; missing: {missing[:3]}" if missing else ""))
+
+    def port_rows(lines):
+        i = next(k for k, l in enumerate(lines) if l.startswith("Port\tState"))
+        return [tuple(l.split("\t")[:3]) for l in lines[i + 1:i + 7]]
+    gold = [l.rstrip() for l in open(os.path.join(HERE, "golden/swtg024as-boot.log"), errors="replace")]
+    check(port_rows(boot) == port_rows(gold), f"port table State/Link match silicon: {port_rows(boot)}")
 
     ok, out = run(c, "regget 0004")
     check(ok and "VAL: 0x83720000" in out, "regget reads the chip id (RTL8372)")

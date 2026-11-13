@@ -8,6 +8,8 @@
 // at 0) when missing, used as it is otherwise, so the saved config and
 // updates persist from run to run. Without it the chip is --image, in memory.
 //
+// --link PORT=SPEED (repeatable) plugs a cable into a physical port.
+//
 // --check-banks MAP reports constants read with movc from bytes that ran as
 // code in the same bank (the const-bank bug class; see sys/bankcheck.h).
 //
@@ -18,6 +20,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <strings.h>
 #include <fstream>
 #include <iterator>
 #include <poll.h>
@@ -31,6 +34,24 @@ static std::vector<u8> load(const char *path)
 		exit(1);
 	}
 	return std::vector<u8>(std::istreambuf_iterator<char>(f), {});
+}
+
+// --link PORT=SPEED: a physical port with a cable in at start.
+static bool parse_link(const char *s, unsigned *port, int *speed)
+{
+	static const std::pair<const char *, int> speeds[] = {
+		{"10m", 0}, {"100m", 1}, {"1g", 2}, {"10g", 4}, {"2g5", 5}, {"5g", 6}, {"down", rtl837x_system::LINK_DOWN},
+	};
+	const char *eq = strchr(s, '=');
+	if (!eq)
+		return false;
+	*port = atoi(s);
+	for (auto &[n, v] : speeds)
+		if (!strcasecmp(eq + 1, n)) {
+			*speed = v;
+			return *port < 10;
+		}
+	return false;
 }
 
 static u32 parse_size(const char *s)
@@ -61,6 +82,7 @@ static bool pump_stdin(rtl837x_system &sys)
 int main(int argc, char **argv)
 {
 	const char *image = nullptr, *flash_file = nullptr, *check_map = nullptr;
+	std::vector<std::pair<unsigned, int>> links;
 	long long cycles = 100000000;
 	u32 flash_size = 0x80000;
 	bool trace = false, trace_sfr = false, trace_reg = false, trace_flash = false, quiet = false, stats = false;
@@ -69,7 +91,15 @@ int main(int argc, char **argv)
 			image = argv[++i];
 		else if (!strcmp(argv[i], "--flash") && i + 1 < argc)
 			flash_file = argv[++i];
-		else if (!strcmp(argv[i], "--check-banks") && i + 1 < argc)
+		else if (!strcmp(argv[i], "--link") && i + 1 < argc) {
+			unsigned p;
+			int sp;
+			if (!parse_link(argv[++i], &p, &sp)) {
+				fprintf(stderr, "rtlsim: --link PORT=10m|100m|1g|2g5|5g|10g|down (physical port 0-9)\n");
+				return 1;
+			}
+			links.emplace_back(p, sp);
+		} else if (!strcmp(argv[i], "--check-banks") && i + 1 < argc)
 			check_map = argv[++i];
 		else if (!strcmp(argv[i], "--cycles") && i + 1 < argc)
 			cycles = atoll(argv[++i]);
@@ -89,7 +119,7 @@ int main(int argc, char **argv)
 			stats = true;
 		else {
 			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
-				"[--trace-sfr] [--trace-reg] [--trace-flash] [--check-banks MAP] [--quiet] [--stats]\n");
+				"[--trace-sfr] [--trace-reg] [--trace-flash] [--link P=SPEED] [--check-banks MAP] [--quiet] [--stats]\n");
 			return 1;
 		}
 	}
@@ -117,6 +147,8 @@ int main(int argc, char **argv)
 	sys.core().trace = trace_reg;
 	sys.core().log_unmodelled = !quiet;
 	sys.flash().trace = trace_flash;
+	for (auto &[p, sp] : links)
+		sys.set_link(p, sp);
 	if (check_map) {
 		sys.bankcheck = std::make_unique<bank_checker>();
 		if (!sys.bankcheck->load_map(check_map)) {

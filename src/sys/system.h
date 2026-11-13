@@ -53,6 +53,17 @@ public:
 	u8 code_read(u16 addr);			// as the CPU sees it now
 	u32 code_flash_addr(u16 addr, u8 psbank) const;
 
+	// Link state of a physical port (0-9): a speed code as REG_LINKS has it
+	// (0 10M, 1 100M, 2 1G, 4 10G, 5 2.5G, 6 5G), or LINK_DOWN. A change
+	// pulses INT0, the firmware's link interrupt.
+	static constexpr int LINK_DOWN = -1;
+	void set_link(unsigned phys_port, int speed);
+	int link(unsigned phys_port) const { return phys_port < 10 ? m_link[phys_port] : LINK_DOWN; }
+
+	// What drives a GPIO input pin (0-63) from outside; pins nobody drives
+	// read 1 (pulled up), so an empty SFP cage reads "no module".
+	void set_gpio(unsigned pin, bool level) { if (pin < 64) m_gpio_ext = (m_gpio_ext & ~(1ull << pin)) | (u64(level) << pin); }
+
 	void uart_input(const std::string &s) { m_rx.insert(m_rx.end(), s.begin(), s.end()); }
 	bool uart_idle() const { return m_rx.empty(); }
 
@@ -74,6 +85,8 @@ private:
 	void map_code_pages();
 	bool at_halt();
 	void seed_chip();
+	void model_links();
+	void model_gpio();
 
 	rtl837x_cpu m_cpu;
 	std::unique_ptr<flash_controller> m_flash;
@@ -89,7 +102,10 @@ private:
 	std::deque<u8> m_rx;
 	std::unique_ptr<util::disasm_interface> m_dasm;
 	chip_identity m_id;
-	u8 m_len[256] = {};		// instruction lengths, from the disassembler
+	u8 m_len[256] = {};
+	int m_link[10] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+	bool m_int0_pulse = false;
+	u64 m_gpio_ext = ~0ull;		// instruction lengths, from the disassembler
 };
 
 #endif

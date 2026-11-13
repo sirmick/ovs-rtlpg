@@ -12,6 +12,8 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const ch
 	  m_code_ram(0x4000, 0xff), m_xdata(0x10000, 0), m_id(id)
 {
 	seed_chip();
+	model_links();
+	model_gpio();
 	m_cpu.start();
 	m_cpu.space(AS_PROGRAM).set_external([this](offs_t a) { return code_read(a); }, [](offs_t, u8) {});
 	m_cpu.space(AS_DATA).set_external([this](offs_t a) { return xdata_r(a); }, [this](offs_t a, u8 d) { xdata_w(a, d); });
@@ -56,6 +58,56 @@ void rtl837x_system::seed_chip()
 	m_core.set_reg(0x0014, m_id.lot_no);
 	u8 rev = m_id.revision;
 	m_core.on_read(0x000c, [rev](u32 v) { return (v & 0xa0000) == 0xa0000 ? (v & ~0xff00u) | (u32(rev) << 8) : v; });
+}
+
+// Link registers (rtl837x_port.c, rtlplayground.c check_links()):
+// LINKS_STS 0x63e8 has link-up bits, physical ports 0-7 at bits 16-23 and
+// 8-9 at bits 8-9; LINKS 0x63f0 a 4-bit speed code per port 0-7 (port i at
+// bits 4i+3..4i), LINKS_89 0x63f4 the same for ports 8-9.
+void rtl837x_system::model_links()
+{
+	m_core.on_read(0x63e8, [this](u32 v) {
+		u32 up = 0;
+		for (unsigned i = 0; i < 10; i++)
+			if (m_link[i] != LINK_DOWN)
+				up |= i < 8 ? 1u << (16 + i) : 1u << (i - 8 + 8);
+		return (v & ~0x00ff0300u) | up;
+	});
+	m_core.on_read(0x63f0, [this](u32) {
+		u32 v = 0;
+		for (unsigned i = 0; i < 8; i++)
+			v |= u32(m_link[i] == LINK_DOWN ? 0 : m_link[i] & 0xf) << (4 * i);
+		return v;
+	});
+	m_core.on_read(0x63f4, [this](u32) {
+		u32 v = 0;
+		for (unsigned i = 8; i < 10; i++)
+			v |= u32(m_link[i] == LINK_DOWN ? 0 : m_link[i] & 0xf) << (4 * (i - 8));
+		return v;
+	});
+}
+
+// GPIO (rtl837x_pins.c): DIRECTION bit set = output. The INPUT registers
+// read the output latch for outputs and the outside level for inputs.
+void rtl837x_system::model_gpio()
+{
+	for (int half = 0; half < 2; half++) {
+		u16 const in = half ? 0x48 : 0x44, out = half ? 0x40 : 0x3c, dir = half ? 0x50 : 0x4c;
+		m_core.on_read(in, [this, half, out, dir](u32) {
+			u32 const d = m_core.reg(dir);
+			u32 const ext = u32(m_gpio_ext >> (32 * half));
+			return (m_core.reg(out) & d) | (ext & ~d);
+		});
+	}
+}
+
+void rtl837x_system::set_link(unsigned phys_port, int speed)
+{
+	if (phys_port >= 10 || m_link[phys_port] == speed)
+		return;
+	m_link[phys_port] = speed;
+	m_cpu.set_int0(true);		// the falling edge IT0 waits for; released after a slice
+	m_int0_pulse = true;
 }
 
 u32 rtl837x_system::code_flash_addr(u16 addr, u8 psbank) const
@@ -180,6 +232,10 @@ bool rtl837x_system::run(int cycles)
 		this->cycles += n;
 		if (!m_rx.empty() && m_cpu.uart_rx(m_rx.front()))
 			m_rx.pop_front();
+		if (m_int0_pulse) {
+			m_int0_pulse = false;
+			m_cpu.set_int0(false);
+		}
 		if (m_reset_pending) {
 			m_reset_pending = false;
 			resets++;
