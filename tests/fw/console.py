@@ -12,9 +12,9 @@ PROMPT = b"\n> "
 
 
 class Console:
-    def __init__(self, rtlsim, image, extra=()):
+    def __init__(self, rtlsim, image, extra=(), stderr=subprocess.DEVNULL):
         self.p = subprocess.Popen([rtlsim, "--image", image, "--cycles", "0", "--quiet", *extra],
-                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr)
         self.log = b""
 
     def expect(self, pat, timeout):

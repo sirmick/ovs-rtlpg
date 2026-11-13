@@ -46,9 +46,15 @@ test: $(BUILD)/rtlsim
 	$(MAKE) -C tests/bank RTLSIM=$(abspath $(BUILD)/rtlsim)
 ifneq ($(FW_IMAGE),)
 	python3 tests/fw/test_boot.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
+	python3 tests/net/test_nic.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 else
 	@echo "fw: no firmware image (set FW_IMAGE or build RTLPlayground), skipped"
 endif
+
+# The firmware against Linux's TCP/IP in a network namespace (needs sudo;
+# real time, so a few seconds): ping, the web UI, and what each frame costs.
+test-net: $(BUILD)/rtlsim
+	python3 tests/net/test_net.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 
 # The bank check over a firmware boot (slower: every instruction is watched).
 FW_MAP ?= $(dir $(FW_IMAGE))rtlplayground.map
@@ -63,4 +69,4 @@ clean:
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
-.PHONY: all test check-banks clean
+.PHONY: all test test-net check-banks clean
