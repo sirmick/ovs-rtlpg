@@ -1,0 +1,3 @@
+swtg024as-boot.log: serial console of the bench SWTG024AS (RTLPlayground
+1a7053c, compact layout) from power-on to its port table, as captured on
+silicon 2026-11-12; ends before the saved config (its IP settings).
