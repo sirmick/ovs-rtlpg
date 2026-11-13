@@ -97,7 +97,7 @@ def main():
     d = tempfile.mkdtemp(prefix="rtlsim-net-")
     os.chmod(d, 0o755)	# root's OVS reads and writes in here
     sock, ns, tap = os.path.join(d, "nic.sock"), f"rtlsim{os.getpid()}", "rtap0"
-    board = json.load(open(os.path.join(HERE, "../../boards/swtg024as.json")))
+    board = json.load(open(os.path.join(HERE, "../../boards/swgt024_v2_0_unmanaged.json")))
     fronts = [p["front"] for p in board["ports"] if "sfp" not in p]
     front = next(p["front"] for p in board["ports"] if p["phys"] == a.port)
     other = next(f for f in fronts if f != front)
@@ -109,8 +109,9 @@ def main():
     if a.via == "tap":
         c = Console(a.rtlsim, a.image, ["--nic", sock, "--nic-port", str(a.port), *extra], stderr=err)
     else:
-        lab = Lab(a.image, hosts={front: None, other: None}, extra=["--trace-of", *extra], rtlsim=a.rtlsim,
-                  console=True, stderr=err).start(attach=False)
+        lab = Lab(a.image, name=f"t{os.getpid() % 100000}", hosts={front: None, other: None},
+                  extra=["--trace-of", *extra], rtlsim=a.rtlsim, console=True, stderr=err)
+        lab.start(attach=False)
         c = lab.console
     try:
         check(c.expect(PROMPT, 30), "boots to the prompt")

@@ -41,7 +41,8 @@ def main():
         print("switching: no passwordless sudo, skipped")
         return 0
 
-    lab = Lab(a.image, hosts={f: f"{ip}/24" for f, ip in HOSTS.items()}, extra=["--ageing", "3", "--trace-of"],
+    lab = Lab(a.image, name=f"t{os.getpid() % 100000}", hosts={f: f"{ip}/24" for f, ip in HOSTS.items()},
+              extra=["--ageing", "3", "--trace-of"],
               rtlsim=a.rtlsim, console=True, stderr=open(os.devnull, "w"))
     c = None
 

@@ -2,7 +2,7 @@
 """rtlswitch.py - one simulated switch on a private OVS bridge, with Linux
 hosts on its front ports.
 
-    tools/rtlswitch.py IMAGE [--board boards/swtg024as.json] [--name sw0]
+    tools/rtlswitch.py IMAGE [--board boards/swgt024_v2_0_unmanaged.json] [--name sw0]
                        [--host FRONT=ADDR/LEN]... [--port FRONT=IFACE]...
                        [--flash FILE] [--rtlsim build/rtlsim] [-- RTLSIM-ARGS...]
 
@@ -35,7 +35,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from privovs import Ovs, sudo
 
-DEFAULT_BOARD = os.path.join(HERE, "../boards/swtg024as.json")
+DEFAULT_BOARD = os.path.join(HERE, "../boards/swgt024_v2_0_unmanaged.json")
 
 
 def ifname(*parts):
@@ -56,6 +56,7 @@ class Lab:
         os.chmod(self.dir, 0o755)	# root's OVS works in here
         self.sock = os.path.join(self.dir, "ofp.sock")
         self.ovs, self.proc, self.console = None, None, None
+        self.created = []		# namespaces this lab made, the only ones stop() removes
         fronts = [p["front"] for p in self.board["ports"]]
         for f in self.ports:
             if f in self.hosts:
@@ -74,7 +75,10 @@ class Lab:
         self.ovs.vsctl("set-controller", self.name, f"unix:{self.sock}")
 
     def start(self, attach=True):
+        if os.path.exists(f"/run/netns/{self.ns}"):
+            raise SystemExit(f"rtlswitch: namespace {self.ns} exists: is a switch called {self.name} running? (--name)")
         sudo("ip", "netns", "add", self.ns)
+        self.created.append(self.ns)
         self.ovs = Ovs(self.ns, self.dir)
         self.ovs.start()
         self.ovs.bridge(self.name, controller=self.sock if attach else None)
@@ -88,6 +92,7 @@ class Lab:
                 continue
             ns = self.host_ns(front)
             sudo("ip", "netns", "add", ns)
+            self.created.append(ns)
             sudo("ip", "netns", "exec", self.ns, "ip", "link", "set", host, "netns", ns)
             nsx = ["ip", "netns", "exec", ns]
             for cmd in (["ip", "link", "set", "lo", "up"], ["ip", "link", "set", host, "name", "eth0"],
@@ -117,9 +122,9 @@ class Lab:
             except RuntimeError as e:	# keep the namespace: it still holds an interface
                 print(f"rtlswitch: {e}; namespace {self.ns} kept", file=sys.stderr)
                 return
-        for front in self.hosts:
-            sudo("ip", "netns", "del", self.host_ns(front), check=False)
-        sudo("ip", "netns", "del", self.ns, check=False)
+        for ns in reversed(self.created):
+            sudo("ip", "netns", "del", ns, check=False)
+        self.created = []
         sudo("rm", "-rf", self.dir, check=False)
 
 
