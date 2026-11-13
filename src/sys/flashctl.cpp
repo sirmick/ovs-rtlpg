@@ -109,19 +109,31 @@ void flash_controller::execute()
 		case 0x04: m_wel = false; break;			// write disable
 		case 0x01: m_status = data[0] & 0xfc; m_wel = false; break;	// write status
 		case 0x02:						// page program
-			if (m_wel)
+			if (m_wel) {
+				unsigned const n = ops();
 				fd_write(&m_dev, addr, data, len);
+				if (op_log && ops() != n)
+					fprintf(op_log, "P %06x %u\n", addr, len);
+			}
 			m_wel = false;
 			break;
 		case 0x20:						// sector erase
-			if (m_wel)
+			if (m_wel) {
+				unsigned const n = ops();
 				fd_erase_sector(&m_dev, addr);
+				if (op_log && ops() != n)
+					fprintf(op_log, "E %06x\n", addr);
+			}
 			m_wel = false;
 			break;
 		case 0xd8:						// 64K block erase
 			if (m_wel)
-				for (u32 a = addr & ~0xffffu; a < (addr & ~0xffffu) + 0x10000; a += FD_SECTOR_SIZE)
+				for (u32 a = addr & ~0xffffu; a < (addr & ~0xffffu) + 0x10000; a += FD_SECTOR_SIZE) {
+					unsigned const n = ops();
 					fd_erase_sector(&m_dev, a);
+					if (op_log && ops() != n)
+						fprintf(op_log, "E %06x\n", a);
+				}
 			m_wel = false;
 			break;
 		default:

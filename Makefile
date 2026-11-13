@@ -72,6 +72,12 @@ test-net: $(BUILD)/rtlsim
 test-update: $(BUILD)/rtlsim
 	python3 tests/net/test_update.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 
+# A power cut at every step of a firmware install (rtlsim --powercut-after;
+# no sudo; minutes, in parallel). FW_OLD is what the switch runs before.
+FW_OLD ?= $(FW_IMAGE)
+test-powercut: $(BUILD)/rtlsim
+	python3 tests/flash/test_powercut.py $(FW_IMAGE) --old $(FW_OLD) --rtlsim $(BUILD)/rtlsim
+
 # The bank check over a firmware boot (slower: every instruction is watched).
 FW_MAP ?= $(dir $(FW_IMAGE))rtlplayground.map
 check-banks: $(BUILD)/rtlsim
@@ -85,4 +91,4 @@ clean:
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
-.PHONY: all test test-net test-update check-banks clean
+.PHONY: all test test-net test-update test-powercut check-banks clean

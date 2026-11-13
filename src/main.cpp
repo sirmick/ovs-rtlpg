@@ -5,7 +5,7 @@
 //          [--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]
 //          [--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime]
 //          [--sfp SLOT=EEPROM.bin] [--trace-i2c] [--ofp PATH] [--trace-of] [--board FILE]
-//          [--print-flows] [--ageing S]
+//          [--print-flows] [--ageing S] [--powercut-after N] [--flash-ops FILE]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -47,12 +47,18 @@
 // --print-flows prints the flow set the chip's state compiles to
 // (fabric/compiler.h) on stdout when rtlsim ends.
 //
+// --powercut-after N cuts the power at the flash's (N+1)th erase or page
+// program since power-on: that one and anything after it doesn't happen, and
+// rtlsim exits at once with 5. With --flash the file keeps what was written,
+// so the next run is the next power-on. --flash-ops FILE logs each erase
+// ("E addr") and page program ("P addr len") done; --stats counts them.
+//
 // --check-banks MAP reports constants read with movc from bytes that ran as
 // code in the same bank (the const-bank bug class; see sys/bankcheck.h).
 //
 // Exits 0 when the program halts ("sjmp ."), 2 when the cycle budget runs out
 // (--cycles 0: no budget), 3 when stdin closes after input was given, 4 when
-// the bank check found something.
+// the bank check found something, 5 on a power cut (--powercut-after).
 #include "sys/system.h"
 #include "net/stream.h"
 #include "net/openflow.h"
@@ -130,6 +136,8 @@ int main(int argc, char **argv)
 	int nic_port = -1, realtime = -1;
 	bool trace_nic = false, trace_i2c = false, trace_of = false, print_flows = false;
 	fabric_config fcfg;
+	long powercut_after = -1;
+	const char *flash_ops = nullptr;
 	std::vector<std::pair<unsigned, std::string>> sfps;
 	std::vector<std::pair<unsigned, int>> links;
 	long long cycles = 100000000;
@@ -163,6 +171,10 @@ int main(int argc, char **argv)
 			board_file = argv[++i];
 		else if (!strcmp(argv[i], "--ofp") && i + 1 < argc)
 			ofp_path = argv[++i];
+		else if (!strcmp(argv[i], "--powercut-after") && i + 1 < argc)
+			powercut_after = atol(argv[++i]);
+		else if (!strcmp(argv[i], "--flash-ops") && i + 1 < argc)
+			flash_ops = argv[++i];
 		else if (!strcmp(argv[i], "--ageing") && i + 1 < argc)
 			fcfg.ageing_s = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--print-flows"))
@@ -200,7 +212,8 @@ int main(int argc, char **argv)
 			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
 				"[--trace-sfr] [--trace-reg] [--trace-flash] [--link P=SPEED] [--check-banks MAP] [--quiet] [--stats] "
 				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime] [--sfp SLOT=EEPROM.bin] [--trace-i2c] "
-				"[--ofp PATH] [--trace-of] [--board FILE] [--print-flows] [--ageing S]\n");
+				"[--ofp PATH] [--trace-of] [--board FILE] [--print-flows] [--ageing S] "
+				"[--powercut-after N] [--flash-ops FILE]\n");
 			return 1;
 		}
 	}
@@ -243,6 +256,12 @@ int main(int argc, char **argv)
 	sys.core().trace = trace_reg;
 	sys.core().log_unmodelled = !quiet;
 	sys.flash().trace = trace_flash;
+	if (powercut_after >= 0)
+		sys.flash().power_cut_after(powercut_after);
+	if (flash_ops && !(sys.flash().op_log = fopen(flash_ops, "w"))) {
+		fprintf(stderr, "rtlsim: cannot write %s\n", flash_ops);
+		return 1;
+	}
 	for (auto &[p, sp] : links)
 		sys.set_link(p, sp);
 	sys.i2c().trace = trace_i2c;
@@ -338,6 +357,11 @@ int main(int argc, char **argv)
 			rc = 0;
 			break;
 		}
+		if (sys.flash().power_cut()) {
+			fprintf(stderr, "rtlsim: power cut after %u flash operations\n", sys.flash().ops());
+			rc = 5;
+			break;
+		}
 		fflush(stdout);	// a prompt doesn't end in a newline
 		if (!paced) {
 			pace_t0 = std::chrono::steady_clock::now();
@@ -375,6 +399,9 @@ int main(int argc, char **argv)
 			(unsigned long long)sys.cycles, s, sys.cycles / s / 1e6, (unsigned long long)sys.cpu().busy_cycles,
 			(unsigned long long)sys.cpu().idle_skipped, (unsigned long long)sys.resets);
 		auto &n = sys.nic().stats;
+		auto &d = sys.flash().dev();
+		fprintf(stderr, "rtlsim: flash: %u erases, %u programs, %u wrapped past the end, %u wrote without erase\n",
+			d.erases, d.writes, d.wrapped_ops, d.wrote_without_erase);
 		if (fab)
 			fprintf(stderr, "rtlsim: fabric: %llu compiles, %zu flows, %llu learned, %llu aged out\n",
 				(unsigned long long)fab->compiles, ofp->flows_installed(),

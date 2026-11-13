@@ -12,6 +12,7 @@
 
 #include "emu.h"
 
+#include <cstdio>
 #include <string>
 #include <vector>
 extern "C" {
@@ -39,6 +40,13 @@ public:
 	u32 size() const { return m_dev.size; }
 	u8 byte(u32 addr) const { return m_dev.mem[addr & m_dev.addr_mask]; }
 	bool trace = false;
+	FILE *op_log = nullptr;		// each erase (E addr) and program (P addr len) done
+
+	// Power cuts: let n more erase/program operations through, then drop
+	// the next one and every later one; power_cut() says it happened.
+	void power_cut_after(long n) { fd_fail_after(&m_dev, int(n)); }
+	bool power_cut() const { return m_dev.powercut; }
+	unsigned ops() const { return m_dev.erases + m_dev.writes; }
 
 private:
 	void execute();
