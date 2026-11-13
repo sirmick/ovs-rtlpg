@@ -28,7 +28,8 @@ updates through the web UI install on the simulated flash.
                  [--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]
     tests/fw/console.py fw.bin --cmd "vlan 10 1t 2" --cmd l2   # drive the CLI
     make check-banks   # boot FW_IMAGE with the bank check (src/sys/bankcheck.h)
-    make test-net      # Linux in a netns against the firmware, via a tap and via OVS (sudo; ~5 s)
+    make test-net      # Linux in a netns against the firmware, via a tap and via OVS (sudo; ~6 s)
+    tools/rtlswitch.py fw.bin --host 1=192.168.2.1/24 --host 2=192.168.2.3/24   # a switch to play with (sudo)
     make test-update   # a web firmware update and a power cut mid-install (sudo; ~1.5 min)
     build/rtlsim --image fw.bin --cycles 0 --nic /tmp/sw.sock --nic-port 4 [--trace-nic]
 
@@ -71,7 +72,12 @@ bridge's ports are front ports: OpenFlow port N is physical port N - 1.
 Each port's link follows its OVS port. For now every frame goes to the CPU
 as a packet-in (one table-miss flow), and the CPU's frames go back as
 packet-outs; forwarding between front ports comes with the flow compiler.
-`tools/privovs.py` runs a private OVS for a test.
+`tools/privovs.py` runs a private OVS; `tools/rtlswitch.py` builds a switch
+on it from a board file. Every front port becomes an OVS port (a veth), and
+each `--host FRONT=ADDR/LEN` gets a namespace of its own, `rtl-sw0-FRONT`,
+with Linux on that port: `sudo ip netns exec rtl-sw0-1 curl
+http://192.168.2.2/`. The switch's console is the terminal, and `^C`
+removes everything.
 
 UART is stdin/stdout. Registers nobody has modelled are plain storage, and
 the first access to each is logged ("unmodelled reg ...").
@@ -88,8 +94,9 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
 - `tests/net`: `test_nic.py` (in `make test`) puts hand-made ARP, ICMP,
   TCP and VLAN frames on the socket. `test_net.py` (`make test-net`, needs
   sudo, skipped without) bridges the socket to a tap in a private network
-  namespace (`--via tap`), or puts a veth on port 4 of an OVS bridge
-  rtlsim controls (`--via ovs`, which also pulls the veth's cable). Its Linux
+  namespace (`--via tap`), or builds the switch on OVS with
+  `tools/rtlswitch.py` (`--via ovs`): Linux on front port 1, a second Linux
+  on port 2, and a pull of port 1's cable. Its Linux
   pings the switch, logs in, loads the web UI and every JSON page it uses
   (with a module in slot 1), and measures throughput. It also prints what
   each kind of reply cost the CPU (DESIGN.md, "How fast"). `test_update.py`

@@ -237,8 +237,10 @@ the busy cycles since the last RX).
 ### Bridge setup
 Built so far: `--ofp PATH` (`src/net/openflow.h`). OpenFlow port numbers are
 physical port + 1 (OpenFlow has no port 0), and the bridge is set up from
-outside: by `tools/privovs.py` for the tests, with a private
-ovsdb-server and ovs-vswitchd as root in the test's network namespace.
+outside: by `tools/rtlswitch.py` from the board file, on a private
+ovsdb-server and ovs-vswitchd (`tools/privovs.py`) run as root in a network
+namespace of its own. rtlsim runs as the user; it doesn't need to reach
+OVSDB.
 OVS sees rtlsim's socket because UNIX sockets don't belong to a namespace.
 The veth's host end needs `ethtool -K tx off`: the userspace datapath
 passes on the partial checksums Linux leaves for offload.
