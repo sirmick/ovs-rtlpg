@@ -11,7 +11,7 @@ RTLPG ?= $(HOME)/src/RTLPlayground
 
 BUILD = build
 MAME_SRC = $(addprefix third_party/mame/mcs51/,i8051.cpp mcs51ops.cpp i8052.cpp dw8051.cpp mcs51dasm.cpp)
-SIM_SRC = $(wildcard src/cpu/*.cpp) $(wildcard src/sys/*.cpp)
+SIM_SRC = $(wildcard src/cpu/*.cpp) $(wildcard src/sys/*.cpp) $(wildcard src/net/*.cpp)
 C_SRC = third_party/rtlplayground/flash_dev.c
 MAIN_SRC = src/main.cpp
 
