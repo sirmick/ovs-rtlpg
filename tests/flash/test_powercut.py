@@ -13,11 +13,14 @@ runs on a copy of the flash with the power cut there (rtlsim
 --powercut-after), followed by up to 4 power-ons. Each cut ends:
 - up: at the prompt, the image area is NEW, the staging area and the
   progress record are clear, and the config is the one it had;
-- dead: no prompt in 4 power-ons. Allowed only while the home bank (the
-  first 16 KiB, copied last) is torn: the boot code itself;
+- dead: no prompt in 4 power-ons, or a power-on without a prompt that
+  leaves the flash as it found it (rtlsim is deterministic: every later
+  one does the same). Allowed only while the home bank (the first 16 KiB,
+  copied last) is torn: the boot code itself;
 - bad: anything else (up, but on a mixed image, a leftover record, a lost
   config...).
---list writes one line a cut point: "N erase|program ADDR up|dead|bad...".
+--list writes one line a cut point as it finishes: "N erase|program ADDR
+up|dead|bad...". At the end the results are summed by 4 KiB sector.
 Cut points: before every erase and before every program that starts a
 512-byte block, the host tests' granularity (RTLPlayground programs 4 bytes
 a command, about 60,000 of them per install); --every-op takes them all.
@@ -25,7 +28,7 @@ Layout: compact (CONFIG_START 0x7f000, UPLOAD_START 0x40000, UPDATE_PROGRESS
 0x7e000 in RTLPlayground's layout.h). Needs an image that can resume an
 install (dev e3347e6 and later).
 """
-import argparse, concurrent.futures, os, re, shutil, subprocess, sys, tempfile, time
+import argparse, collections, concurrent.futures, os, re, shutil, subprocess, sys, tempfile, threading, time
 
 CHIP = 0x80000
 UPLOAD_START, UPDATE_PROGRESS, CONFIG_START, SECTOR = 0x40000, 0x7e000, 0x7f000, 0x1000
@@ -48,9 +51,12 @@ def prompt_after_last_boot(out):
 def outcome(a, flash, base, new):
     """Power-ons until the prompt; then what state the flash is in."""
     for n in range(POWER_ONS):
+        before = open(flash, "rb").read()
         rc, out = rtlsim(a, flash)
         if prompt_after_last_boot(out):
             break
+        if open(flash, "rb").read() == before:
+            return "dead", n + 1		# and the next power-on would be the same
     else:
         return "dead", n + 1
     d = open(flash, "rb").read()
@@ -107,12 +113,20 @@ def main():
         cuts = [i for i, o in enumerate(ops)
                 if lo <= i <= hi and (a.every_op or o[0] == "E" or int(o[1], 16) % 512 == 0)]
 
+        listing = open(a.list, "w") if a.list else None
+        lock = threading.Lock()
+
         def run(i):
             f = os.path.join(d, f"cut{i}.bin")
             shutil.copy(base_path, f)
             rc, _ = rtlsim(a, f, "--powercut-after", str(i))
             res = outcome(a, f, base, new) if rc == 5 else (f"bad: no cut (rc {rc})", 0)
             os.remove(f)
+            if listing:
+                with lock:
+                    listing.write(f"{i} {'erase' if ops[i][0] == 'E' else 'program'} 0x{ops[i][1]} "
+                                  f"{res[0].replace(' ', '')}\n")
+                    listing.flush()
             return i, res
 
         t = time.time()
@@ -127,11 +141,11 @@ def main():
         home = [i for i, o in enumerate(ops) if int(o[1], 16) < HOME_BANK]
         home_span = (min(home), max(home)) if home else (0, -1)
         dead_outside = [i for i in dead if not home_span[0] <= i <= home_span[1] + 1]
-        if a.list:
-            with open(a.list, "w") as f:
-                for i in sorted(results):
-                    r, n = results[i]
-                    f.write(f"{i} {'erase' if ops[i][0] == 'E' else 'program'} 0x{ops[i][1]} {r.replace(' ', '')}\n")
+        if listing:
+            listing.close()
+        by_sector = collections.defaultdict(collections.Counter)
+        for i, (r, _) in results.items():
+            by_sector[int(ops[i][1], 16) & ~(SECTOR - 1)][r.split(":")[0]] += 1
 
         def ranges(xs):
             out, xs = [], sorted(xs)
@@ -144,6 +158,10 @@ def main():
 
         print(f"      {len(cuts)} cut points in {took:.0f} s: {len(up)} up on the new image, {len(dead)} dead"
               + (f" (cuts {ranges(dead)}; the home bank is ops {home_span[0]}-{home_span[1]})" if dead else ""))
+        for sec in sorted(by_sector):
+            c = by_sector[sec]
+            if c["dead"] or c["bad"]:
+                print(f"      sector 0x{sec:05x}: {c['up']} up, {c['dead']} dead, {c['bad']} bad")
         for i in bad[:10]:
             print(f"      cut {i} ({' '.join(ops[i])}): {results[i][0]}")
         ok = not bad and not dead_outside
