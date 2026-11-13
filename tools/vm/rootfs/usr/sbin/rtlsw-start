@@ -1,0 +1,79 @@
+#!/bin/sh
+# rtlsw-start - the switch: an OVS bridge over this VM's NICs, with rtlsim
+# (running the RTLPlayground firmware) as its OpenFlow controller.
+#
+# NIC n (eth0, eth1, ...) is front port n+1, in the board's front-port order;
+# the switch has as many cabled ports as the VM has NICs (up to the board's).
+# The firmware's serial console is /dev/ttyS1 (QEMU's second -serial).
+#
+# Settings (shell variables), from, in order:
+#   - QEMU -fw_cfg name=opt/rtlsw/conf,string=... or ,file=...
+#   - rtlsw.conf on a data disk labelled RTLSW (mounted at /mnt/rtlsw)
+#     FIRMWARE=   the image (default: the one built in; or opt/rtlsw/firmware
+#                 by -fw_cfg, or firmware.bin on the data disk)
+#     BOARD=      a board file (default: the bench SWTG024AS)
+#     SFP1=, SFP2= 10g|1g: a module in that cage, with light
+#     RTLSIM_ARGS= anything more for rtlsim
+# The flash is fresh each boot, unless the data disk is there: then it is
+# flash.bin on it, and the switch's saved config and updates persist.
+set -e
+RUN=/run/rtlsw
+SHARE=/usr/share/rtlsw
+mkdir -p $RUN
+FIRMWARE=$SHARE/firmware.bin
+BOARD=$SHARE/boards/swgt024_v2_0_unmanaged.json
+FLASH=$RUN/flash.bin
+SFP1= SFP2= RTLSIM_ARGS=
+
+modprobe qemu_fw_cfg 2>/dev/null || true
+FWCFG=/sys/firmware/qemu_fw_cfg/by_name/opt/rtlsw
+[ -f $FWCFG/firmware/raw ] && { cp $FWCFG/firmware/raw $RUN/firmware.bin; FIRMWARE=$RUN/firmware.bin; }
+[ -f $FWCFG/conf/raw ] && { cp $FWCFG/conf/raw $RUN/fwcfg.conf; . $RUN/fwcfg.conf; }
+
+disk=$(findfs LABEL=RTLSW 2>/dev/null || true)
+if [ -n "$disk" ]; then
+	mkdir -p /mnt/rtlsw
+	mountpoint -q /mnt/rtlsw || mount "$disk" /mnt/rtlsw
+	FLASH=/mnt/rtlsw/flash.bin
+	[ -f /mnt/rtlsw/firmware.bin ] && FIRMWARE=/mnt/rtlsw/firmware.bin
+	[ -f /mnt/rtlsw/rtlsw.conf ] && { cd /mnt/rtlsw; . ./rtlsw.conf; cd /; }
+fi
+
+# OVS: a private database in $RUN, the kernel datapath
+modprobe openvswitch
+export OVS_RUNDIR=$RUN OVS_LOGDIR=$RUN OVS_DBDIR=$RUN
+running() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }	# after a respawn
+[ -f $RUN/conf.db ] || ovsdb-tool create $RUN/conf.db /usr/share/openvswitch/vswitch.ovsschema
+running $RUN/ovsdb.pid || ovsdb-server $RUN/conf.db --remote=punix:$RUN/db.sock --pidfile=$RUN/ovsdb.pid \
+	--detach --log-file=$RUN/ovsdb.log
+VSCTL="ovs-vsctl --db=unix:$RUN/db.sock --timeout=10"
+$VSCTL --no-wait init
+running $RUN/vswitchd.pid || ovs-vswitchd unix:$RUN/db.sock --pidfile=$RUN/vswitchd.pid --detach \
+	--log-file=$RUN/vswitchd.log
+$VSCTL --may-exist add-br sw0 -- set bridge sw0 datapath_type=system fail_mode=secure \
+	protocols=OpenFlow13 other-config:disable-in-band=true
+n=0
+for phys in $(jq -r '.ports | sort_by(.front | tonumber) | .[].phys' "$BOARD"); do
+	nic=eth$n
+	[ -e /sys/class/net/$nic ] || break
+	ip link set $nic up
+	$VSCTL --may-exist add-port sw0 $nic -- set interface $nic ofport_request=$((phys + 1))
+	n=$((n + 1))
+done
+echo "rtlsw: $n front ports on NICs, board $(basename "$BOARD"), firmware $(basename "$FIRMWARE")" > /dev/kmsg
+
+args="--image $FIRMWARE --board $BOARD --flash $FLASH --ofp $RUN/ofp.sock --cycles 0 --quiet"
+for slot in 1 2; do
+	eval speed=\$SFP$slot
+	[ -n "$speed" ] || continue
+	phys=$(jq -r ".ports[] | select(.sfp.slot == $slot) | .phys" "$BOARD")
+	args="$args --sfp $slot=$SHARE/sfp-$speed.bin --link $phys=$speed"
+done
+$VSCTL set-controller sw0 unix:$RUN/ofp.sock -- set controller sw0 max_backoff=1000
+
+# the firmware's console on the second serial port, raw, as a real switch's
+if [ -c /dev/ttyS1 ]; then
+	stty -F /dev/ttyS1 115200 raw -echo
+	exec /usr/bin/rtlsim $args $RTLSIM_ARGS < /dev/ttyS1 > /dev/ttyS1 2> $RUN/rtlsim.log
+fi
+exec /usr/bin/rtlsim $args $RTLSIM_ARGS < /dev/null > $RUN/console.log 2> $RUN/rtlsim.log

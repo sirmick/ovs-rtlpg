@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+# The simulated switch (rtlsw-start), kept running.
+description="RTL837x switch: rtlsim and an OVS bridge over the NICs"
+command=/usr/sbin/rtlsw-start
+supervisor=supervise-daemon
+respawn_delay=2
+
+depend() {
+	need localmount
+	after modules
+}

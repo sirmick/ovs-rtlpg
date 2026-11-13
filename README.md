@@ -35,6 +35,8 @@ through the web UI install on the simulated flash.
     make check-banks   # boot FW_IMAGE with the bank check (src/sys/bankcheck.h)
     make test-net      # Linux in netns against the firmware, via a tap and via OVS, and switching (sudo; ~20 s)
     tools/rtlswitch.py fw.bin --host 1=192.168.2.1/24 --host 2=192.168.2.3/24   # a switch to play with (sudo)
+    make vm            # build/vm/rtlsw.qcow2: the switch as a small Alpine VM (tools/vm/README.md)
+    make test-vm       # boot it under QEMU, no root: console, ports, switching, persistence (~15 s)
     make test-update   # a web firmware update and a power cut mid-install (sudo; ~1.5 min)
     build/rtlsim --image fw.bin --cycles 0 --nic /tmp/sw.sock --nic-port 4 [--trace-nic]
 
