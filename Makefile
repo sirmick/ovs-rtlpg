@@ -47,16 +47,19 @@ test: $(BUILD)/rtlsim
 ifneq ($(FW_IMAGE),)
 	python3 tests/fw/test_boot.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/net/test_nic.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
+	python3 tests/fabric/test_flows.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 else
 	@echo "fw: no firmware image (set FW_IMAGE or build RTLPlayground), skipped"
 endif
 
 # The firmware against Linux's TCP/IP in a network namespace (needs sudo;
 # real time, so a few seconds): ping, the web UI, and what each frame costs.
-# Once over a tap on the --nic socket, once through a private OVS bridge.
+# Once over a tap on the --nic socket, once through a private OVS bridge;
+# then hosts on three front ports, switched as the firmware configures it.
 test-net: $(BUILD)/rtlsim
 	python3 tests/net/test_net.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim --via tap
 	python3 tests/net/test_net.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim --via ovs
+	python3 tests/net/test_switching.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 
 # A firmware update through the web UI on a persistent flash, with a power
 # cut in the middle of the install (needs sudo; real time, ~1.5 min).

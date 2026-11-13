@@ -5,9 +5,11 @@ An RTL837x switch simulated with the real RTLPlayground firmware. See
 
 Status: the real firmware boots to its CLI prompt (in 0.1 s), its boot log
 matching the bench SWTG024AS line for line, and CLI commands work against the
-modelled chip. Through the CPU port's NIC, Linux pings the switch and loads
-its web UI, directly or through an OVS bridge rtlsim controls, and firmware
-updates through the web UI install on the simulated flash.
+modelled chip. The switch runs as an OVS bridge whose flows rtlsim compiles
+from the chip's state, so its front ports switch as the firmware configures
+them: VLANs, PVIDs, frame types, ingress filter, isolation, learning and
+ageing. Linux pings the switch and loads its web UI, and firmware updates
+through the web UI install on the simulated flash.
 
 - `src/cpu`: MAME's mcs51/DW8051 core (vendored unchanged in
   `third_party/mame`, behind `src/shim/emu.h`), the RTL837x variant, and an
@@ -21,6 +23,9 @@ updates through the web UI install on the simulated flash.
   cages).
 - `src/net`: a front port on a UNIX stream socket, framed as QEMU's
   `-netdev stream`; the OpenFlow 1.3 controller of an OVS bridge (`--ofp`).
+- `src/fabric`: the flow compiler (register state and tables to an OVS flow
+  set, `compiler.h`), and the glue that keeps the bridge's flows current and
+  learns and ages L2 entries in the chip model (`fabric.h`).
 
     make -j            # build/rtlsim
     make test -j       # ISA, banking and firmware boot tests
@@ -28,7 +33,7 @@ updates through the web UI install on the simulated flash.
                  [--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]
     tests/fw/console.py fw.bin --cmd "vlan 10 1t 2" --cmd l2   # drive the CLI
     make check-banks   # boot FW_IMAGE with the bank check (src/sys/bankcheck.h)
-    make test-net      # Linux in a netns against the firmware, via a tap and via OVS (sudo; ~6 s)
+    make test-net      # Linux in netns against the firmware, via a tap and via OVS, and switching (sudo; ~20 s)
     tools/rtlswitch.py fw.bin --host 1=192.168.2.1/24 --host 2=192.168.2.3/24   # a switch to play with (sudo)
     make test-update   # a web firmware update and a power cut mid-install (sudo; ~1.5 min)
     build/rtlsim --image fw.bin --cycles 0 --nic /tmp/sw.sock --nic-port 4 [--trace-nic]
@@ -69,9 +74,14 @@ Give the cage's port a link too (`--link 8=10g` for slot 1).
 `--ofp PATH` makes rtlsim the controller of an OVS bridge
 (`ovs-vsctl set-controller BR unix:PATH`, `fail_mode=secure`). The
 bridge's ports are front ports: OpenFlow port N is physical port N - 1.
-Each port's link follows its OVS port. For now every frame goes to the CPU
-as a packet-in (one table-miss flow), and the CPU's frames go back as
-packet-outs; forwarding between front ports comes with the flow compiler.
+Each port's link follows its OVS port. rtlsim installs the flows the
+chip's state compiles to (DESIGN.md "Compiler"), and recompiles when the
+firmware changes a VLAN, a PVID, an isolation mask or the L2 table. Frames
+from unknown sources come to rtlsim once, to be learned into the chip's L2
+table, so the firmware's `l2` command shows what OVS forwards by. Frames for
+the CPU are packet-ins, and its own frames go out as packet-outs.
+`--print-flows` prints the flow set at exit; `--ageing S` sets the L2 ageing
+time (300 s).
 `tools/privovs.py` runs a private OVS; `tools/rtlswitch.py` builds a switch
 on it from a board file. Every front port becomes an OVS port (a veth), and
 each `--host FRONT=ADDR/LEN` gets a namespace of its own, `rtl-sw0-FRONT`,
@@ -105,6 +115,13 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
   its resets. Then it uploads a corrupted image, which must be refused.
   Last, it cuts the power in the middle of a second install and checks the
   next power-on finishes it (if the image can resume; dev e3347e6 and later).
+- `tests/fabric`: `test_flows.py` (in `make test`) compares the flows that
+  firmware configurations (VLANs, PVIDs, isolation, frame types) compile
+  to with `golden/` (`--update` rewrites them).
+  `tests/net/test_switching.py` (`make test-net`) puts three Linux hosts on
+  front ports 1-3 and configures the switch through its CLI. It checks
+  switching, learning (in the firmware's `l2` table), no flooding of known
+  unicast, isolation, PVID and tagged VLANs, and ageing.
 - `tests/sdcc-bugs`: two SDCC 4.6.0 miscompilations the ISA tests found.
 
 ## Found

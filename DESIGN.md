@@ -1,9 +1,11 @@
 # rtlsim — an RTL837x switch, simulated as an Open vSwitch bridge
 
-Status: phases 1-2 built; phase 3 under way: the CPU port's NIC, rtlsim as
-the OpenFlow controller of an OVS bridge whose ports are the front ports
-(the CPU's traffic only, as packet-in/out), SFP modules on I2C. Next the
-flow compiler (phase 4). See README.md.
+Status: phases 1-3 built, and phase 4 (Fabric I) in large part. The switch
+runs as an OVS bridge whose flows are compiled from the chip's state: VLANs,
+PVIDs, frame types, ingress filter, isolation, L2 learning and ageing. The
+CPU port's NIC and the firmware's TCP/IP, the web UI, SFP modules and
+firmware updates all work. Next: phase 5 (STP, LAG, mirroring, meters,
+IGMP). See README.md.
 
 ## Goal
 
@@ -129,27 +131,43 @@ function from the map file.
 ## Layer 3: fabric (OVS)
 
 ### Compiler: register state → flow set
-A pure function of the register file and tables. It produces a complete,
-readable flow set (ovs-ofctl syntax text). The controller installs it with
-replace-flows semantics in an OpenFlow bundle, so updates are atomic. Golden
-tests can check the text without OVS running.
+A pure function of the register file, the tables and the board
+(`src/fabric/compiler.h`). It produces a complete, readable flow set
+(ovs-ofctl-like text, `rtlsim --print-flows`); golden tests check the text
+for firmware configurations without OVS (`tests/fabric`). The controller
+installs only the difference to what is installed (adds, strict deletes);
+the plan was an OpenFlow bundle with replace-flows semantics, and that can
+come back if a half-applied update ever shows.
 
-Pipeline (tables):
+Built (phase 4, Fabric I):
 | Table | Job | From |
 |---|---|---|
-| 0 ingress | port enabled, STP state (drop / learn-only / forward), traps to CPU (BPDU, LACP, LLDP, IGMP/MLD, RMA config) | `MSTP_STATES`, `RMA_*`, `IPV4/6_*` |
-| 1 classify | accepted frame types, add the PVID tag when untagged, ingress VLAN filter, VLAN → FID | `VLAN_PORT_*`, VLAN table |
-| 2 learn | `learn()` into table 3 keyed on (FID, src MAC) → in_port; idle_timeout = ageing; skipped when learning is off on the port | `L2_CTRL`, `L2_LRN` |
-| 3 L2 | learned + static entries (the firmware's L2 writes), the CPU's MAC → CPU | L2 table |
-| 4 flood | unknown unicast / multicast / broadcast → the VLAN's member mask, minus the ingress port | VLAN table, flood masks |
-| 5 egress | port isolation mask; LAG: one group per trunk (`select`, hash fields from `TRK_HASH`); per-port untag mask (strip or keep the tag); mirroring | `PORT_ISOLATION`, `TRK_*`, VLAN untag mask, mirror regs |
+| 0 classify | accepted frame types; the PVID pushed as a tag on untagged and priority-tagged frames; ingress VLAN filter (tagged: only the port's VLANs; untagged: only if the PVID's VLAN has the port); the port's isolation mask into metadata | `RTL837x_REG_INGRESS`, `VLAN_CTRL`, `VLAN_PORT_IGR_FLTR`, PVID regs, `PORT_ISOLATION`, VLAN table |
+| 1 learn | (VID, src MAC) known on this in_port → on; else also a copy to the controller | L2 table |
+| 2 L2 | known unicast → its port, if the isolation mask allows (else drop); the CPU's MAC → CPU | L2 table, untag mask |
+| 3 flood | the VLAN's members the isolation mask allows: tagged ones and the CPU first, then `pop_vlan` and the untagged ones | VLAN table |
 
-Storm control and ingress rate limits → OpenFlow meters. Mirroring → output
-to the mirror port, in the egress table or via OVS's `Mirror` table.
+**Learning lives in the chip model, not in OVS's `learn()`.** A frame from an
+unknown source reaches the controller from table 1. rtlsim learns it into
+the chip's own L2 table, as the hardware would, and the next compile gives
+it its flows. The learn flow's `idle_timeout` is the ageing time, and its
+FLOW_REMOVED ages the entry out. So the firmware's `l2` command, which reads
+the L2 table through `TBL_CTRL`, shows exactly what OVS forwards by, with no
+conversion from flow dumps. The cost is the first frame of every new source
+going through the controller. The CPU's own frames get the same lookup in
+the NIC model, against the same tables.
 
-The firmware's view of learned entries (the `l2` command reads the L2 table
-through `TBL_CTRL`) is answered from a flow dump of table 3, converted back to
-the hardware entry format.
+Still to do (phase 5): STP port states and traps (`MSTP_STATES`, `RMA_*`),
+LAG (`select` groups from `TRK_*`), mirroring, storm control and rate
+limits as meters, multicast entries and IGMP, per-port learning off, the
+egress tag mode (`VLAN_PORT_EGR_TAG`), counters from OVS stats. Unknowns: the
+ageing time register (300 s, `--ageing S` for tests), and whether a full L2
+table floods (it does here).
+
+Note: `isolate P PORTS` writes exactly that mask, without the CPU port, so
+port P can't reach the switch's own address afterwards. That's the
+firmware's doing, and silicon presumably behaves the same; `isolate P off`
+puts the CPU back.
 
 ### CPU port and NIC
 - Frames to the CPU (traps, the CPU's MAC, floods that include the CPU) leave
