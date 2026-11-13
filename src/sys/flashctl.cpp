@@ -88,8 +88,10 @@ bool flash_controller::owns(u8 s)
 
 u8 flash_controller::sfr_r(u8 s)
 {
-	if (s == EXEC)
-		return m_sfr[EXEC] & ~(EXEC_BUSY | EXEC_GO);	// every transaction is done at once
+	if (s == EXEC) {
+		bool const busy = timing && now() < m_exec_until;
+		return (m_sfr[EXEC] & ~(EXEC_BUSY | EXEC_GO)) | (busy ? EXEC_BUSY : 0);
+	}
 	return m_sfr[s];
 }
 
@@ -111,6 +113,9 @@ void flash_controller::execute()
 
 	if (trace)
 		fprintf(stderr, "FLASH %s cmd=%02x tconf=%02x addr=%06x\n", write ? "W" : "R", cmd, tconf, addr);
+	if (timing)
+		m_exec_until = now() + t.transfer;
+	auto busy_for = [this](u64 c) { if (timing) m_busy_until = now() + c; };
 
 	if (write) {
 		switch (cmd) {
@@ -120,6 +125,7 @@ void flash_controller::execute()
 		case 0x02:						// page program
 			if (m_wel) {
 				unsigned const n = ops();
+				busy_for(t.program);
 				fd_write(&m_dev, addr, data, len);
 				if (op_log && ops() != n)
 					fprintf(op_log, "P %06x %u\n", addr, len);
@@ -129,6 +135,7 @@ void flash_controller::execute()
 		case 0x20:						// sector erase
 			if (m_wel) {
 				unsigned const n = ops();
+				busy_for(t.sector_erase);
 				fd_erase_sector(&m_dev, addr);
 				if (op_log && ops() != n)
 					fprintf(op_log, "E %06x\n", addr);
@@ -136,6 +143,8 @@ void flash_controller::execute()
 			m_wel = false;
 			break;
 		case 0xd8:						// 64K block erase
+			if (m_wel)
+				busy_for(t.block_erase);
 			if (m_wel)
 				for (u32 a = addr & ~0xffffu; a < (addr & ~0xffffu) + 0x10000; a += FD_SECTOR_SIZE) {
 					unsigned const n = ops();
@@ -153,7 +162,7 @@ void flash_controller::execute()
 
 	switch (cmd) {
 	case 0x05:						// read status
-		data[0] = m_status | (m_wel ? 0x02 : 0);
+		data[0] = m_status | (m_wel ? 0x02 : 0) | (timing && now() < m_busy_until ? 0x01 : 0);
 		break;
 	case 0x9f:						// JEDEC id
 		data[0] = m_mfr;

@@ -135,6 +135,7 @@ bool rtl837x_cpu::idle_skip()
 		m_t2 += dist / per(5);
 	m_icount -= dist;
 	idle_skipped += dist;
+	cycles_total += dist;
 	return true;
 }
 
@@ -162,6 +163,7 @@ void rtl837x_cpu::execute_run()
 			m_inst_cycles++;
 		}
 		burn_cycles(m_inst_cycles);
+		cycles_total += m_inst_cycles;
 		handle_ta_window();
 		m_inst_cycles = 0;
 	} while (m_icount > 0);

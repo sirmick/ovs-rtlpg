@@ -7,6 +7,7 @@
 //          [--sfp SLOT=EEPROM.bin] [--trace-i2c] [--ofp PATH] [--trace-of] [--board FILE]
 //          [--print-flows] [--ageing S] [--powercut-after N] [--flash-ops FILE]
 //          [--rtl8238b-e8 N] [--rtl8238b-alt-arm] [--rtl8238b-dump FILE] [--trace-pse]
+//          [--flash-timing]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -50,6 +51,10 @@
 //
 // --print-flows prints the flow set the chip's state compiles to
 // (fabric/compiler.h) on stdout when rtlsim ends.
+//
+// --flash-timing makes the flash chip take as long as a real one (a page
+// program ~1.9 ms, a sector erase ~45 ms, sys/flashctl.h): updates, installs
+// and config saves then take their real time. Off, everything is at once.
 //
 // --powercut-after N cuts the power at the flash's (N+1)th erase or page
 // program since power-on: that one and anything after it doesn't happen, and
@@ -147,6 +152,7 @@ int main(int argc, char **argv)
 	bool trace_nic = false, trace_i2c = false, trace_of = false, print_flows = false;
 	fabric_config fcfg;
 	long powercut_after = -1;
+	bool flash_timing = false;
 	long pse_e8 = 0;
 	bool pse_alt = false, trace_pse = false;
 	const char *pse_dump = nullptr;
@@ -184,6 +190,8 @@ int main(int argc, char **argv)
 			board_file = argv[++i];
 		else if (!strcmp(argv[i], "--ofp") && i + 1 < argc)
 			ofp_path = argv[++i];
+		else if (!strcmp(argv[i], "--flash-timing"))
+			flash_timing = true;
 		else if (!strcmp(argv[i], "--powercut-after") && i + 1 < argc)
 			powercut_after = atol(argv[++i]);
 		else if (!strcmp(argv[i], "--flash-ops") && i + 1 < argc)
@@ -235,7 +243,7 @@ int main(int argc, char **argv)
 				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime] [--sfp SLOT=EEPROM.bin] [--trace-i2c] "
 				"[--ofp PATH] [--trace-of] [--board FILE] [--print-flows] [--ageing S] "
 				"[--powercut-after N] [--flash-ops FILE] [--rtl8238b-e8 N] [--rtl8238b-alt-arm] "
-				"[--rtl8238b-dump FILE] [--trace-pse]\n");
+				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing]\n");
 			return 1;
 		}
 	}
@@ -278,6 +286,7 @@ int main(int argc, char **argv)
 	sys.core().trace = trace_reg;
 	sys.core().log_unmodelled = !quiet;
 	sys.flash().trace = trace_flash;
+	sys.flash().timing = flash_timing;
 	if (powercut_after >= 0)
 		sys.flash().power_cut_after(powercut_after);
 	if (flash_ops && !(sys.flash().op_log = fopen(flash_ops, "w"))) {

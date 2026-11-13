@@ -28,6 +28,7 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 	};
 	m_cpu.uart_tx = [this](u8 c) { fputc(c, uart_out); if (c == '\n') fflush(uart_out); };
 	m_core.soc_reset = [this]() { m_reset_pending = true; };
+	m_flash->now = [this]() { return m_cpu.cycles_total; };
 	m_core.pc = [this]() { return m_cpu.pc(); };
 	m_nic.xdata_r = [this](u16 a) { return xdata_r(a); };
 	m_nic.xdata_w = [this](u16 a, u8 d) { xdata_w(a, d); };

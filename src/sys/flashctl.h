@@ -13,6 +13,7 @@
 #include "emu.h"
 
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <vector>
 extern "C" {
@@ -42,6 +43,17 @@ public:
 	bool trace = false;
 	FILE *op_log = nullptr;		// each erase (E addr) and program (P addr len) done
 
+	// Timing (timing = true; else everything is done at once), in machine
+	// cycles (31.25 M a second), as measured on the bench SWTG024AS's W25Q40:
+	// a page program keeps the chip BUSY ~1.9 ms, a 4K sector erase ~45 ms
+	// (datasheet typical), a 64K block ~150 ms; a transfer keeps the
+	// controller's EXEC busy ~8 us (reads ~500 KiB/s). `now` is the clock.
+	struct timings {
+		u64 program = 59375, sector_erase = 1406250, block_erase = 4687500, transfer = 250;
+	} t;
+	bool timing = false;
+	std::function<u64()> now;
+
 	// Power cuts: let n more erase/program operations through, then drop
 	// the next one and every later one; power_cut() says it happened.
 	void power_cut_after(long n) { fd_fail_after(&m_dev, int(n)); }
@@ -60,6 +72,7 @@ private:
 	u8 m_sfr[256] = {};
 	bool m_wel = false;
 	bool m_mapped = false;
+	u64 m_busy_until = 0, m_exec_until = 0;
 	unsigned m_synced_ops = 0;
 	u8 m_status = 0;
 };
