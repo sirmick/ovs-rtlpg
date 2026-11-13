@@ -53,8 +53,17 @@ flash_controller::flash_controller(const std::string &path, const std::vector<u8
 	if (fresh) {
 		memset(m_dev.mem, 0xff, size);
 		fd_load(&m_dev, 0, image.data(), std::min<u32>(image.size(), size));
+		msync(m_dev.mem, size, MS_SYNC);
 	}
 	set_capacity();
+}
+
+void flash_controller::sync()
+{
+	if (!m_mapped || ops() == m_synced_ops)
+		return;
+	msync(m_dev.mem, m_dev.size, MS_SYNC);
+	m_synced_ops = ops();
 }
 
 void flash_controller::set_capacity()

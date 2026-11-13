@@ -9,7 +9,10 @@
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
-// updates persist from run to run. Without it the chip is --image, in memory.
+// updates persist from run to run. What the firmware erases and programs
+// reaches the file's storage within 50 ms (msync), so a crash, or a VM
+// stopped without a shutdown, loses no more than that. Without it the chip is
+// --image, in memory.
 //
 // --link PORT=SPEED (repeatable) plugs a cable into a physical port.
 //
@@ -336,7 +339,7 @@ int main(int argc, char **argv)
 	}
 
 	auto t0 = std::chrono::steady_clock::now();
-	auto pace_t0 = t0;
+	auto pace_t0 = t0, synced = t0;
 	u64 pace_c0 = 0;
 	bool stdin_open = !isatty(0) || true;
 	int rc = 2;
@@ -357,7 +360,12 @@ int main(int argc, char **argv)
 			rc = 0;
 			break;
 		}
+		if (auto now = std::chrono::steady_clock::now(); now - synced > std::chrono::milliseconds(50)) {
+			sys.flash().sync();
+			synced = now;
+		}
 		if (sys.flash().power_cut()) {
+			sys.flash().sync();
 			fprintf(stderr, "rtlsim: power cut after %u flash operations\n", sys.flash().ops());
 			rc = 5;
 			break;
@@ -390,6 +398,7 @@ int main(int argc, char **argv)
 	}
 	if (print_flows)
 		printf("\n--- flows\n%s", flows_text(compile_flows(sys.core(), sys.tables(), sys.board_info(), fcfg)).c_str());
+	sys.flash().sync();
 	fflush(stdout);
 	if (sys.bankcheck && sys.bankcheck->report(stderr) && rc != 2)
 		rc = 4;

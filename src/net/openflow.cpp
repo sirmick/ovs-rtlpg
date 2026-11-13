@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>

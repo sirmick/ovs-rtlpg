@@ -47,6 +47,9 @@ public:
 	void power_cut_after(long n) { fd_fail_after(&m_dev, int(n)); }
 	bool power_cut() const { return m_dev.powercut; }
 	unsigned ops() const { return m_dev.erases + m_dev.writes; }
+	// A flash file: write what changed since the last call back to it (msync),
+	// so a crash or a VM killed without a shutdown can't lose it.
+	void sync();
 
 private:
 	void execute();
@@ -57,6 +60,7 @@ private:
 	u8 m_sfr[256] = {};
 	bool m_wel = false;
 	bool m_mapped = false;
+	unsigned m_synced_ops = 0;
 	u8 m_status = 0;
 };
 
