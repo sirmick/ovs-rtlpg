@@ -71,7 +71,7 @@ bridge's ports are front ports: OpenFlow port N is physical port N - 1.
 Each port's link follows its OVS port. For now every frame goes to the CPU
 as a packet-in (one table-miss flow), and the CPU's frames go back as
 packet-outs; forwarding between front ports comes with the flow compiler.
-`tests/net/privovs.py` runs a private OVS for a test.
+`tools/privovs.py` runs a private OVS for a test.
 
 UART is stdin/stdout. Registers nobody has modelled are plain storage, and
 the first access to each is logged ("unmodelled reg ...").

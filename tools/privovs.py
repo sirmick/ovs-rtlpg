@@ -4,7 +4,7 @@ network namespace, with database, sockets and logs in one directory. Nothing
 of the system's OVS (/var/run/openvswitch, /etc/openvswitch) is used.
 
     o = Ovs(ns, dir); o.start()
-    o.bridge("sw0", controller=sock)          # rtlsim --ofp sock
+    o.bridge("sw0", controller=sock)          # rtlsim --ofp sock (None: later)
     o.veth("sw0", "h1", ofport=5)             # h1 in the namespace <-> port 5
     ...
     o.stop()
@@ -50,8 +50,9 @@ class Ovs:
         in-band control and nothing of its own (fail_mode=secure: without
         rtlsim it forwards only what rtlsim installed)."""
         self.vsctl("add-br", name, "--", "set", "bridge", name, "datapath_type=netdev", "fail_mode=secure",
-                   "protocols=OpenFlow13", "other-config:disable-in-band=true",
-                   "--", "set-controller", name, f"unix:{controller}")
+                   "protocols=OpenFlow13", "other-config:disable-in-band=true")
+        if controller:
+            self.vsctl("set-controller", name, f"unix:{controller}")
 
     def veth(self, bridge, host, ofport):
         """A veth pair: `host` stays in the namespace for Linux, the other end
