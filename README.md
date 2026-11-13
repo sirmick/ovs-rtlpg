@@ -29,7 +29,7 @@ updates through the web UI install on the simulated flash.
     tests/fw/console.py fw.bin --cmd "vlan 10 1t 2" --cmd l2   # drive the CLI
     make check-banks   # boot FW_IMAGE with the bank check (src/sys/bankcheck.h)
     make test-net      # Linux in a netns against the firmware, via a tap and via OVS (sudo; ~5 s)
-    make test-update   # a web firmware update and a power cut mid-install (sudo; ~1 min)
+    make test-update   # a web firmware update and a power cut mid-install (sudo; ~1.5 min)
     build/rtlsim --image fw.bin --cycles 0 --nic /tmp/sw.sock --nic-port 4 [--trace-nic]
 
 `--check-banks MAP` reports constants read through the wrong code bank
@@ -87,10 +87,11 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
   pings the switch, logs in, loads the web UI and every JSON page it uses
   (with a module in slot 1), and measures throughput. It also prints what
   each kind of reply cost the CPU (DESIGN.md, "How fast"). `test_update.py`
-  (`make test-update`) uploads a corrupted image, then a good one, on a
-  persistent `--flash`. It follows the install through its resets, then
-  cuts the power in the middle of a second install and checks the next
-  power-on finishes it (if the image can resume; dev e3347e6 and later).
+  (`make test-update`) works on a persistent `--flash`. It uploads a good
+  image across `loader_confirm()`'s moment and follows the install through
+  its resets. Then it uploads a corrupted image, which must be refused.
+  Last, it cuts the power in the middle of a second install and checks the
+  next power-on finishes it (if the image can resume; dev e3347e6 and later).
 - `tests/sdcc-bugs`: two SDCC 4.6.0 miscompilations the ISA tests found.
 
 ## Found
@@ -116,8 +117,10 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
   0xff in it. The read-back check then refuses the image ("NO: checksum
   failed"), so nothing breaks, but an update started soon after a boot
   fails. Two `fwupdate.py` runs in a row do this, because the second
-  catches the first's reboot. Not fixed; `test_update.py` waits the
-  window out.
+  catches the first's reboot. Fixed in RTLPlayground 56db072 (on
+  `evflags-bits`, handed to the dev checkout to merge): `loader_confirm()`
+  reads the 2-byte mark into a buffer of its own. `test_update.py` uploads
+  across the 15 s mark, so it fails on firmware without the fix.
 
 ## Parked
 

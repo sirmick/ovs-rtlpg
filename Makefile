@@ -59,7 +59,7 @@ test-net: $(BUILD)/rtlsim
 	python3 tests/net/test_net.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim --via ovs
 
 # A firmware update through the web UI on a persistent flash, with a power
-# cut in the middle of the install (needs sudo; real time, ~1 min).
+# cut in the middle of the install (needs sudo; real time, ~1.5 min).
 test-update: $(BUILD)/rtlsim
 	python3 tests/net/test_update.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 

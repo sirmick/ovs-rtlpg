@@ -7,20 +7,20 @@ The switch boots IMAGE on a --flash file; Linux in a private network
 namespace (a tap on the --nic socket, as test_net.py) logs in and uploads
 images as RTLPlayground's tools/fwupdate.py does (a multipart POST to
 /upload). Checks:
+- a good image is staged, verified at the next boot, copied into place, and
+  the switch comes back with its saved config. Its upload runs across
+  loader_confirm(), 15 s (LDR_CONFIRM_S) after the boot, which reads the
+  loader's boot counter: before RTLPlayground 56db072 it read it into
+  flash_buf, where the upload keeps its next page between packets, and the
+  read-back refused the image ("checksum failed");
 - a corrupted image is refused, and the switch carries on;
-- a good one is staged, verified at the next boot, copied into place, and
-  the switch comes back with its saved config;
 - if IMAGE can resume an install a reset broke off ("Resuming the update"),
   a power cut in the middle of the copy (rtlsim killed: the flash file is
   written through, so it keeps what was programmed) and a power-on finish
   the install.
-Uploads wait until the firmware is past loader_confirm(), 15 s
-(LDR_CONFIRM_S) after its boot: it reads the loader's boot counter into
-flash_buf, which an upload in flight is using for its next page, so an
-upload across that moment is refused at its read-back ("checksum failed").
-The boot reaches the prompt at ~7.7 s of firmware time, and from the peer's
-connect the firmware's clock runs with the wall clock (rtlsim --realtime).
-Needs sudo; skipped without it. Real time: ~1 min.
+The peer connects at power-on, so the firmware's clock runs with the wall
+clock from its boot (rtlsim --realtime), and the test knows the firmware's
+time. Needs sudo; skipped without it. Real time: ~1.5 min.
 """
 import argparse, os, re, shutil, subprocess, sys, tempfile, time
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -29,7 +29,7 @@ from console import Console, PROMPT
 
 failures = 0
 IP = "192.168.2.2"
-PAST_CONFIRM = 16 - 7	# s after connecting: past 15 s of firmware time
+CONFIRM_S = 15		# LDR_CONFIRM_S
 
 
 def check(cond, msg):
@@ -54,10 +54,14 @@ class Switch:
     def connect(self):
         self.bridge = subprocess.Popen(["sudo", "-n", "ip", "netns", "exec", self.ns, sys.executable,
                                         os.path.join(HERE, "tapbridge.py"), self.sock, "rtap0"])
-        self.connected = time.time()
+        self.booted = time.time()
+
+    def uptime(self):
+        """Seconds of firmware time since its last (re)boot."""
+        return time.time() - self.booted
 
     def past_confirm(self):
-        time.sleep(max(0, self.connected + PAST_CONFIRM - time.time()))
+        time.sleep(max(0, CONFIRM_S + 1 - self.uptime()))
 
     def curl(self, *args, timeout=120):
         jar = os.path.join(self.d, "cookies")
@@ -67,10 +71,18 @@ class Switch:
     def login(self):
         self.curl("-o", "/dev/null", "-d", "pwd=1234", f"http://{IP}/login")
 
-    def upload(self, path):
-        r = self.curl("-F", f"uploadedfile=@{path};type=application/octet-stream", "-H", "Connection: close",
+    def upload(self, path, *opts):
+        r = self.curl(*opts, "-F", f"uploadedfile=@{path};type=application/octet-stream", "-H", "Connection: close",
                       f"http://{IP}/upload")
         return r.stdout.strip()
+
+    def wait_boots(self, n, timeout):
+        """Waits for the n-th boot to reach its prompt; notes when it began."""
+        end = time.time() + timeout
+        while time.time() < end and boots(self.c.log.decode(errors="replace")) < n:
+            self.c.expect(PROMPT, 1)
+        self.booted = time.time()
+        return self.c.expect(PROMPT, 30)
 
     def close(self):
         if self.bridge:
@@ -105,36 +117,32 @@ def main():
     sw = None
     try:
         sw = Switch(a, d, ns)
+        sw.connect()		# the firmware's clock runs with ours from here
         check(sw.c.expect(PROMPT, 30) and b"Written default config to flash" in sw.c.log,
               "first boot on an empty flash writes the default config")
-        sw.connect()
-        sw.login()
 
-        verdict = sw.upload(bad)
-        sw.c.expect(b"nothing", 2)
-        check("checksum" in verdict.lower() and boots(sw.c.log.decode(errors="replace")) == 1,
-              f"a corrupted image is refused ({verdict[:60]!r}) and the switch carries on")
-
-        sw.past_confirm()
-        t = time.time()
         sw.login()
-        verdict = sw.upload(a.image)
-        log = ""
-        while time.time() - t < 120 and boots(log) < 3:
-            sw.c.expect(PROMPT, 5)
-            log = sw.c.log.decode(errors="replace")
-        up = sw.c.expect(PROMPT, 30)
+        t0 = sw.uptime()
+        verdict = sw.upload(a.image, "--limit-rate", "20k")	# ~12 s, across loader_confirm()
+        t1 = sw.uptime()
+        up = sw.wait_boots(3, 120)
         log = sw.c.log.decode(errors="replace")
         third = log[log.rfind("Software version:"):]
         why = [w for w, bad in (("3 boots", boots(log) != 3),
+                                ("upload across 15 s", not t0 < CONFIRM_S - 1 < CONFIRM_S + 1 < t1),
                                 ("verified", not re.search(r"found update image!\nChecking integrity\.*Checksum OK", log)),
                                 ("staging cleared", "no update image found" not in third),
                                 ("config kept", "Written default config" in third)) if bad]
-        ok = up and not why
-        if why:
-            print("  not:", why, [l for l in log.splitlines() if re.search("version|update|Update|Checksum|Moving|Reset|config", l)])
-        check(ok, f"a good image ({verdict[:40]!r}) is staged, verified, copied, and the switch comes back "
-                  f"with its config, in {time.time() - t:.1f} s")
+        check(up and not why, f"a good image, uploaded from {t0:.0f} to {t1:.0f} s after the boot "
+              f"({verdict[:30]!r}), is staged, verified, copied, and the switch comes back with its config"
+              + (f"; not: {why}" if why else ""))
+
+        sw.past_confirm()
+        sw.login()		# the reboots ended the session
+        verdict = sw.upload(bad)
+        sw.c.expect(b"nothing", 2)
+        check("checksum" in verdict.lower() and boots(sw.c.log.decode(errors="replace")) == 3,
+              f"a corrupted image is refused ({verdict[:60]!r}) and the switch carries on")
         sw.close()
         sw = None
 
@@ -143,8 +151,8 @@ def main():
         else:
             os.remove(os.path.join(d, "flash.bin"))
             sw = Switch(a, d, ns)
-            sw.c.expect(PROMPT, 30)
             sw.connect()
+            sw.c.expect(PROMPT, 30)
             sw.past_confirm()
             sw.login()
             sw.upload(a.image)
