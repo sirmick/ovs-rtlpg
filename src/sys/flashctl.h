@@ -11,6 +11,9 @@
 #define RTLSIM_FLASHCTL_H
 
 #include "emu.h"
+
+#include <string>
+#include <vector>
 extern "C" {
 #include "flash_dev.h"
 }
@@ -18,7 +21,14 @@ extern "C" {
 class flash_controller
 {
 public:
+	// The chip in memory, loaded with `image`.
 	flash_controller(const std::vector<u8> &image, u32 chip_size, u8 jedec_mfr = 0xef, u8 jedec_type = 0x40);
+	// The chip is the file at `path`, mapped shared: every program and erase
+	// lands in the file at once, as it would survive a power cut. A new file
+	// is created with `chip_size` bytes of erased flash and `image` programmed
+	// at 0; an existing one is used as it is (its size is the chip size).
+	flash_controller(const std::string &path, const std::vector<u8> &image, u32 chip_size,
+			 u8 jedec_mfr = 0xef, u8 jedec_type = 0x40);
 	~flash_controller();
 
 	static bool owns(u8 sfr);
@@ -32,11 +42,13 @@ public:
 
 private:
 	void execute();
+	void set_capacity();
 
 	flashdev_t m_dev;
 	u8 m_mfr, m_type, m_cap;
 	u8 m_sfr[256] = {};
 	bool m_wel = false;
+	bool m_mapped = false;
 	u8 m_status = 0;
 };
 

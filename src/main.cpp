@@ -1,8 +1,12 @@
 // rtlsim - boot a flash image on the RTL837x model. UART out on stdout, in
 // from stdin (so a test harness can drive the CLI over pipes).
 //
-//   rtlsim --image fw.bin [--flash-size 512K] [--cycles N] [--trace]
+//   rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace]
 //          [--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]
+//
+// --flash keeps the chip in a file: created (erased, with --image programmed
+// at 0) when missing, used as it is otherwise, so the saved config and
+// updates persist from run to run. Without it the chip is --image, in memory.
 //
 // Exits 0 when the program halts ("sjmp ."), 2 when the cycle budget runs out
 // (--cycles 0: no budget), 3 when stdin closes after input was given.
@@ -52,13 +56,15 @@ static bool pump_stdin(rtl837x_system &sys)
 
 int main(int argc, char **argv)
 {
-	const char *image = nullptr;
+	const char *image = nullptr, *flash_file = nullptr;
 	long long cycles = 100000000;
 	u32 flash_size = 0x80000;
 	bool trace = false, trace_sfr = false, trace_reg = false, trace_flash = false, quiet = false, stats = false;
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--image") && i + 1 < argc)
 			image = argv[++i];
+		else if (!strcmp(argv[i], "--flash") && i + 1 < argc)
+			flash_file = argv[++i];
 		else if (!strcmp(argv[i], "--cycles") && i + 1 < argc)
 			cycles = atoll(argv[++i]);
 		else if (!strcmp(argv[i], "--flash-size") && i + 1 < argc)
@@ -76,13 +82,13 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--stats"))
 			stats = true;
 		else {
-			fprintf(stderr, "usage: rtlsim --image fw.bin [--flash-size 512K] [--cycles N] [--trace] "
+			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
 				"[--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]\n");
 			return 1;
 		}
 	}
-	if (!image) {
-		fprintf(stderr, "rtlsim: --image is required\n");
+	if (!image && !flash_file) {
+		fprintf(stderr, "rtlsim: --image or --flash is required\n");
 		return 1;
 	}
 	if (flash_size & (flash_size - 1)) {
@@ -90,7 +96,16 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	rtl837x_system sys(load(image), flash_size);
+	std::vector<u8> img = image ? load(image) : std::vector<u8>();
+	std::unique_ptr<flash_controller> flash;
+	try {
+		flash = flash_file ? std::make_unique<flash_controller>(flash_file, img, flash_size)
+				   : std::make_unique<flash_controller>(img, flash_size);
+	} catch (const std::exception &e) {
+		fprintf(stderr, "rtlsim: %s\n", e.what());
+		return 1;
+	}
+	rtl837x_system sys(std::move(flash));
 	sys.trace_insn = trace;
 	sys.trace_sfr = trace_sfr;
 	sys.core().trace = trace_reg;

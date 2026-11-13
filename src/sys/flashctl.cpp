@@ -3,6 +3,11 @@
 
 #include <cstdio>
 #include <cstring>
+#include <fcntl.h>
+#include <stdexcept>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 enum : u8 {
 	EXEC = 0x80, MODEB = 0x9a, CONF_DIV = 0x9b, CONF_RCMD = 0x9c, DUMMY = 0x9d, TCONF = 0x9e,
@@ -16,14 +21,55 @@ flash_controller::flash_controller(const std::vector<u8> &image, u32 chip_size, 
 {
 	fd_init(&m_dev, chip_size);
 	fd_load(&m_dev, 0, image.data(), std::min<u32>(image.size(), chip_size));
+	set_capacity();
+}
+
+flash_controller::flash_controller(const std::string &path, const std::vector<u8> &image, u32 chip_size,
+				   u8 jedec_mfr, u8 jedec_type)
+	: m_mfr(jedec_mfr), m_type(jedec_type)
+{
+	int f = open(path.c_str(), O_RDWR);
+	bool const fresh = f < 0;
+	if (fresh) {
+		f = open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
+		if (f < 0 || ftruncate(f, chip_size) < 0)
+			throw std::runtime_error("cannot create " + path);
+	}
+	struct stat st;
+	fstat(f, &st);
+	u32 const size = st.st_size;
+	if (!size || (size & (size - 1)))
+		throw std::runtime_error(path + ": size is not a power of two");
+	void *mem = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, f, 0);
+	close(f);
+	if (mem == MAP_FAILED)
+		throw std::runtime_error("cannot map " + path);
+	memset(&m_dev, 0, sizeof m_dev);
+	m_dev.mem = static_cast<uint8_t *>(mem);
+	m_dev.size = size;
+	m_dev.addr_mask = size - 1;
+	m_dev.fail_after = -1;
+	m_mapped = true;
+	if (fresh) {
+		memset(m_dev.mem, 0xff, size);
+		fd_load(&m_dev, 0, image.data(), std::min<u32>(image.size(), size));
+	}
+	set_capacity();
+}
+
+void flash_controller::set_capacity()
+{
 	m_cap = 0;
-	while ((1u << m_cap) < chip_size)
+	while ((1u << m_cap) < m_dev.size)
 		m_cap++;
 }
 
 flash_controller::~flash_controller()
 {
-	fd_free(&m_dev);
+	if (m_mapped)
+		munmap(m_dev.mem, m_dev.size);
+	else
+		fd_free(&m_dev);
 }
 
 bool flash_controller::owns(u8 s)

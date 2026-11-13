@@ -36,7 +36,9 @@ struct chip_identity {
 class rtl837x_system
 {
 public:
-	rtl837x_system(const std::vector<u8> &image, u32 flash_size, const chip_identity &id = {});
+	explicit rtl837x_system(std::unique_ptr<flash_controller> flash, const chip_identity &id = {});
+	rtl837x_system(const std::vector<u8> &image, u32 flash_size, const chip_identity &id = {})
+		: rtl837x_system(std::make_unique<flash_controller>(image, flash_size), id) {}
 
 	void reset();
 	// Run about `cycles` machine cycles. Returns false once halted.

@@ -9,8 +9,10 @@ silicon.
   prompt.
 - The prompt comes up, and CLI commands work against the modelled chip:
   registers, the VLAN table, the L2 table.
+- With --flash, the chip persists: the first boot writes the default config,
+  the second finds it.
 """
-import argparse, os, re, sys, time
+import argparse, os, re, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from console import Console, PROMPT
 
@@ -76,6 +78,17 @@ def main():
     check(ok and re.search(r"06:0f:00:c8:54:07\s+0x0001\s+static\s+CPU", out) is not None,
           "the L2 table holds the CPU's MAC (static, VLAN 1)")
     c.close()
+
+    with tempfile.TemporaryDirectory() as d:
+        state = os.path.join(d, "flash.bin")
+        seen = []
+        for _ in range(2):
+            c = Console(a.rtlsim, a.image, ["--flash", state])
+            c.expect(PROMPT, 120)
+            seen.append(b"Written default config to flash" in c.log)
+            c.close()
+        check(seen == [True, False], f"--flash persists the saved config across boots (default written: {seen})")
+
     print(f"test_boot: {'ALL PASS' if not failures else f'{failures} FAILED'}")
     return 1 if failures else 0
 

@@ -7,8 +7,8 @@ static constexpr u32 COMMON_LEN = 0x3ffe;	// imagebuilder: bank 0 is 0x0000-0x3f
 static constexpr u32 XRAM_LEN = 0xc000;		// --xram-size 49151
 static constexpr u8 SFR_MAP_FLASH = 0x97;	// MAP_FLASH_PAGE_TO_XDATA
 
-rtl837x_system::rtl837x_system(const std::vector<u8> &image, u32 flash_size, const chip_identity &id)
-	: m_cpu(125000000), m_flash(std::make_unique<flash_controller>(image, flash_size)),
+rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const chip_identity &id)
+	: m_cpu(125000000), m_flash(std::move(flash)),
 	  m_code_ram(0x4000, 0xff), m_xdata(0x10000, 0), m_id(id)
 {
 	seed_chip();
