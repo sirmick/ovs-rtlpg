@@ -1,7 +1,9 @@
 # rtlsim — an RTL837x switch, simulated as an Open vSwitch bridge
 
-Status: phases 1-2 built, and the CPU port's NIC with one front port on a
-socket (see README.md); next OVS.
+Status: phases 1-2 built; phase 3 under way: the CPU port's NIC, rtlsim as
+the OpenFlow controller of an OVS bridge whose ports are the front ports
+(the CPU's traffic only, as packet-in/out), SFP modules on I2C. Next the
+flow compiler (phase 4). See README.md.
 
 ## Goal
 
@@ -233,7 +235,15 @@ Frames per reply come from `--trace-nic` (one line per frame; a TX line has
 the busy cycles since the last RX).
 
 ### Bridge setup
-rtlsim creates `sw-<name>` on start: `datapath_type=netdev`,
+Built so far: `--ofp PATH` (`src/net/openflow.h`). OpenFlow port numbers are
+physical port + 1 (OpenFlow has no port 0), and the bridge is set up from
+outside: by `tests/net/privovs.py` for the tests, with a private
+ovsdb-server and ovs-vswitchd as root in the test's network namespace.
+OVS sees rtlsim's socket because UNIX sockets don't belong to a namespace.
+The veth's host end needs `ethtool -K tx off`: the userspace datapath
+passes on the partial checksums Linux leaves for offload.
+
+The plan: rtlsim creates `sw-<name>` on start: `datapath_type=netdev`,
 `fail_mode=secure`, `other-config:disable-in-band=true`, no STP/RSTP/LACP, and
 controller `unix:/run/rtlsim/<name>.sock` (rtlsim listens). It adds the
 front-panel ports the board JSON and the topology ask for, with OpenFlow port

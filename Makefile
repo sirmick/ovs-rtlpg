@@ -38,8 +38,8 @@ $(BUILD)/regnames.inc: tools/regnames.py $(wildcard $(RTLPG)/rtl837x_regs.h)
 	python3 tools/regnames.py $(RTLPG)/rtl837x_regs.h > $@
 $(BUILD)/src/sys/switch_core.o: $(BUILD)/regnames.inc
 
-# A firmware image for tests/fw: the RTLPlayground build for the bench board
-FW_IMAGE ?= $(firstword $(wildcard $(RTLPG)/output/SWGT024_V2_0_UNMANAGED-compact/rtlplayground-v*-compact.bin))
+# A firmware image for tests/fw: the newest RTLPlayground build for the bench board
+FW_IMAGE ?= $(firstword $(shell ls -t $(RTLPG)/output/SWGT024_V2_0_UNMANAGED-compact/rtlplayground-v*-compact.bin 2>/dev/null))
 
 test: $(BUILD)/rtlsim
 	$(MAKE) -C tests/isa RTLSIM=$(abspath $(BUILD)/rtlsim)
@@ -58,6 +58,11 @@ test-net: $(BUILD)/rtlsim
 	python3 tests/net/test_net.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim --via tap
 	python3 tests/net/test_net.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim --via ovs
 
+# A firmware update through the web UI on a persistent flash, with a power
+# cut in the middle of the install (needs sudo; real time, ~1 min).
+test-update: $(BUILD)/rtlsim
+	python3 tests/net/test_update.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
+
 # The bank check over a firmware boot (slower: every instruction is watched).
 FW_MAP ?= $(dir $(FW_IMAGE))rtlplayground.map
 check-banks: $(BUILD)/rtlsim
@@ -71,4 +76,4 @@ clean:
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
-.PHONY: all test test-net check-banks clean
+.PHONY: all test test-net test-update check-banks clean

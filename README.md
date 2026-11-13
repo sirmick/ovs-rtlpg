@@ -6,7 +6,8 @@ An RTL837x switch simulated with the real RTLPlayground firmware. See
 Status: the real firmware boots to its CLI prompt (in 0.1 s), its boot log
 matching the bench SWTG024AS line for line, and CLI commands work against the
 modelled chip. Through the CPU port's NIC, Linux pings the switch and loads
-its web UI.
+its web UI, directly or through an OVS bridge rtlsim controls, and firmware
+updates through the web UI install on the simulated flash.
 
 - `src/cpu`: MAME's mcs51/DW8051 core (vendored unchanged in
   `third_party/mame`, behind `src/shim/emu.h`), the RTL837x variant, and an
@@ -19,7 +20,7 @@ its web UI.
   I2C master (`i2c.h`) and SFP modules on it (`board.h`: the bench board's
   cages).
 - `src/net`: a front port on a UNIX stream socket, framed as QEMU's
-  `-netdev stream`.
+  `-netdev stream`; the OpenFlow 1.3 controller of an OVS bridge (`--ofp`).
 
     make -j            # build/rtlsim
     make test -j       # ISA, banking and firmware boot tests
@@ -27,7 +28,8 @@ its web UI.
                  [--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]
     tests/fw/console.py fw.bin --cmd "vlan 10 1t 2" --cmd l2   # drive the CLI
     make check-banks   # boot FW_IMAGE with the bank check (src/sys/bankcheck.h)
-    make test-net      # Linux in a netns against the firmware (sudo; ~2 s)
+    make test-net      # Linux in a netns against the firmware, via a tap and via OVS (sudo; ~5 s)
+    make test-update   # a web firmware update and a power cut mid-install (sudo; ~1 min)
     build/rtlsim --image fw.bin --cycles 0 --nic /tmp/sw.sock --nic-port 4 [--trace-nic]
 
 `--check-banks MAP` reports constants read through the wrong code bank
@@ -57,6 +59,14 @@ if the file has 512 bytes) answers on the cage's I2C bus. Empty cages NACK.
 Give the cage's port a link too (`--link 8=10g` for slot 1).
 `--trace-i2c` logs each transfer.
 
+`--ofp PATH` makes rtlsim the controller of an OVS bridge
+(`ovs-vsctl set-controller BR unix:PATH`, `fail_mode=secure`). The
+bridge's ports are front ports: OpenFlow port N is physical port N - 1.
+Each port's link follows its OVS port. For now every frame goes to the CPU
+as a packet-in (one table-miss flow), and the CPU's frames go back as
+packet-outs; forwarding between front ports comes with the flow compiler.
+`tests/net/privovs.py` runs a private OVS for a test.
+
 UART is stdin/stdout. Registers nobody has modelled are plain storage, and
 the first access to each is logged ("unmodelled reg ...").
 
@@ -72,9 +82,15 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
 - `tests/net`: `test_nic.py` (in `make test`) puts hand-made ARP, ICMP,
   TCP and VLAN frames on the socket. `test_net.py` (`make test-net`, needs
   sudo, skipped without) bridges the socket to a tap in a private network
-  namespace; its Linux pings the switch, logs in, loads the web UI and
-  every JSON page it uses (with a module in slot 1), and measures throughput. It also prints what each kind of reply cost the CPU
-  (DESIGN.md, "How fast").
+  namespace (`--via tap`), or puts a veth on port 4 of an OVS bridge
+  rtlsim controls (`--via ovs`, which also pulls the veth's cable). Its Linux
+  pings the switch, logs in, loads the web UI and every JSON page it uses
+  (with a module in slot 1), and measures throughput. It also prints what
+  each kind of reply cost the CPU (DESIGN.md, "How fast"). `test_update.py`
+  (`make test-update`) uploads a corrupted image, then a good one, on a
+  persistent `--flash`. It follows the install through its resets, then
+  cuts the power in the middle of a second install and checks the next
+  power-on finishes it (if the image can resume; dev e3347e6 and later).
 - `tests/sdcc-bugs`: two SDCC 4.6.0 miscompilations the ISA tests found.
 
 ## Found
@@ -86,10 +102,22 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
   bool locals are bits 0-5 (`clr 0x00`, `setb 0x01`, `mov 0x02,c`: link_irq,
   rx_irq, tick_pending), and `tx_buf_empty` is bit 6. So `if (!evflags)`
   never sleeps while the UART is idle (the firmware runs flat out after its
-  boot), and CLI parsing can set or lose an event: a lost `rx_irq` with EX1
-  masked would stop the NIC for good. Fixed in RTLPlayground b0fcf85
-  (branch `evflags-bits`, not yet in dev): with it the firmware sleeps ~98%
-  of the time it's idle, and 20 s of its time simulates in 0.24 s instead of 7 s.
+  boot). CLI parsing also writes the events: `cmd_is_space_or_nul()` can
+  clear a pending `link_irq`, which leaves EX0 masked, and the firmware then
+  ignores link changes until it reboots. `rx_irq` is only ever set by
+  mistake, which is harmless. Fixed in RTLPlayground 169af36 (branch
+  `evflags-bits`, on dev e3347e6, not yet merged): with it the firmware
+  sleeps ~98% of the time it's idle, and 20 s of its time simulates in 0.24 s
+  instead of 7 s.
+- RTLPlayground (dev, e3347e6): 15 s after each boot (`LDR_CONFIRM_S`),
+  `handle_tick()` calls `loader_confirm()`, which reads the loader's boot
+  counter (64 bytes) into `flash_buf`. That is the buffer a firmware upload
+  in flight is filling with its next page, so the page is written with
+  0xff in it. The read-back check then refuses the image ("NO: checksum
+  failed"), so nothing breaks, but an update started soon after a boot
+  fails. Two `fwupdate.py` runs in a row do this, because the second
+  catches the first's reboot. Not fixed; `test_update.py` waits the
+  window out.
 
 ## Parked
 
