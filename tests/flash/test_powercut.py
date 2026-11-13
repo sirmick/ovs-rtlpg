@@ -25,8 +25,8 @@ Cut points: before every erase and before every program that starts a
 512-byte block, the host tests' granularity (RTLPlayground programs 4 bytes
 a command, about 60,000 of them per install); --every-op takes them all.
 Layout: compact (CONFIG_START 0x7f000, UPLOAD_START 0x40000, UPDATE_PROGRESS
-0x7e000 in RTLPlayground's layout.h). Needs an image that can resume an
-install (dev e3347e6 and later).
+0x7e000 in RTLPlayground's layout.h). An image that can't finish a broken-
+off install (before dev e3347e6) shows it as dead cuts all over.
 """
 import argparse, collections, concurrent.futures, os, re, shutil, subprocess, sys, tempfile, threading, time
 
@@ -80,8 +80,8 @@ def main():
     a = ap.parse_args()
     new = open(a.new, "rb").read()
     old = open(a.old or a.new, "rb").read()
-    if b"Resuming the update" not in new:
-        print("powercut: this image can't resume an install, skipped")
+    if b"found update image" not in new:
+        print("powercut: this image doesn't install web updates, skipped")
         return 0
 
     d = tempfile.mkdtemp(prefix="rtlsim-powercut-")
