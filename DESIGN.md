@@ -1,6 +1,6 @@
 # rtlsim — an RTL837x switch, simulated as an Open vSwitch bridge
 
-Status: design, 2026-11-13. Nothing built yet.
+Status: phases 1-2 built (see README.md); next the CPU-port NIC, then OVS.
 
 ## Goal
 
