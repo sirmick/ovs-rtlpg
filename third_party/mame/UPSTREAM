@@ -1,0 +1,4 @@
+Upstream: https://github.com/mamedev/mame src/devices/cpu/mcs51
+Commit: f031b34d8fcaf96bc5eff0550138abdb4c80f8ec
+Files copied unchanged; licence BSD-3-Clause (see each file header).
+Re-sync: tools/sync_mame.sh
