@@ -5,6 +5,7 @@
 //          [--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]
 //          [--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime]
 //          [--sfp SLOT=EEPROM.bin] [--trace-i2c] [--ofp PATH] [--trace-of] [--board FILE]
+//          [--print-flows] [--ageing S]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -20,10 +21,11 @@
 // --ofp PATH makes rtlsim the OpenFlow controller of an OVS bridge, which
 // connects to the UNIX socket at PATH (see net/openflow.h): OpenFlow port N
 // is physical port N - 1, its link follows the OVS port's (at the --link
-// speed if given, else 1G), frames from it reach the CPU as packet-ins and
-// the CPU's frames for it go out as packet-outs. --trace-of logs the
-// connection and port changes. --nic and --ofp can be used together, on
-// different ports.
+// speed if given, else 1G). The bridge's flows are compiled from the chip's
+// state (fabric/fabric.h): the front ports switch as the firmware configured
+// them, frames for the CPU are packet-ins, and the CPU's frames go out as
+// packet-outs. --trace-of logs the connection, port changes, learning and
+// ageing. --nic and --ofp can be used together, on different ports.
 //
 // --realtime keeps the firmware's clock (31.25 M machine cycles a second)
 // from running ahead of the wall clock while a peer is connected, so a peer's
@@ -40,6 +42,11 @@
 // 256 bytes (SFF-8472 A0h) or 512 (A0h, then the A2h diagnostics); see
 // tools/mksfp.py. --trace-i2c logs every I2C transfer.
 //
+// --ageing S sets the L2 ageing time (300 s), for tests that watch it.
+//
+// --print-flows prints the flow set the chip's state compiles to
+// (fabric/compiler.h) on stdout when rtlsim ends.
+//
 // --check-banks MAP reports constants read with movc from bytes that ran as
 // code in the same bank (the const-bank bug class; see sys/bankcheck.h).
 //
@@ -49,6 +56,7 @@
 #include "sys/system.h"
 #include "net/stream.h"
 #include "net/openflow.h"
+#include "fabric/fabric.h"
 
 #include <chrono>
 #include <cstring>
@@ -120,7 +128,8 @@ int main(int argc, char **argv)
 	const char *board_file = nullptr;
 	bool flash_size_given = false;
 	int nic_port = -1, realtime = -1;
-	bool trace_nic = false, trace_i2c = false, trace_of = false;
+	bool trace_nic = false, trace_i2c = false, trace_of = false, print_flows = false;
+	fabric_config fcfg;
 	std::vector<std::pair<unsigned, std::string>> sfps;
 	std::vector<std::pair<unsigned, int>> links;
 	long long cycles = 100000000;
@@ -154,6 +163,10 @@ int main(int argc, char **argv)
 			board_file = argv[++i];
 		else if (!strcmp(argv[i], "--ofp") && i + 1 < argc)
 			ofp_path = argv[++i];
+		else if (!strcmp(argv[i], "--ageing") && i + 1 < argc)
+			fcfg.ageing_s = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--print-flows"))
+			print_flows = true;
 		else if (!strcmp(argv[i], "--trace-of"))
 			trace_of = true;
 		else if (!strcmp(argv[i], "--trace-i2c"))
@@ -187,7 +200,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
 				"[--trace-sfr] [--trace-reg] [--trace-flash] [--link P=SPEED] [--check-banks MAP] [--quiet] [--stats] "
 				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime] [--sfp SLOT=EEPROM.bin] [--trace-i2c] "
-				"[--ofp PATH] [--trace-of] [--board FILE]\n");
+				"[--ofp PATH] [--trace-of] [--board FILE] [--print-flows] [--ageing S]\n");
 			return 1;
 		}
 	}
@@ -270,10 +283,6 @@ int main(int argc, char **argv)
 	}
 	if (ofp) {
 		ofp->trace = trace_of;
-		ofp->packet_in = [&](unsigned p, const u8 *f, size_t n) {
-			if (int(p) != nic_port)
-				sys.nic().receive(p, f, n);
-		};
 		ofp->port_status = [&](unsigned p, bool exists, bool up) {
 			if (int(p) == nic_port)
 				return;
@@ -291,6 +300,11 @@ int main(int argc, char **argv)
 		else if (ofp)
 			ofp->packet_out(p, f);
 	};
+	std::unique_ptr<fabric> fab;
+	if (ofp) {
+		fab = std::make_unique<fabric>(sys, *ofp, fcfg);
+		fab->trace = trace_of;
+	}
 	sys.nic().trace = trace_nic;
 	if (realtime < 0)
 		realtime = wire || ofp;
@@ -316,8 +330,10 @@ int main(int argc, char **argv)
 			stdin_open = pump_stdin(sys);
 		if (wire)
 			wire->poll([&](const u8 *f, size_t n) { sys.nic().receive(nic_port, f, n); });
-		if (ofp)
+		if (ofp) {
 			ofp->poll();
+			fab->update();
+		}
 		if (!sys.run(slice)) {
 			rc = 0;
 			break;
@@ -348,6 +364,8 @@ int main(int argc, char **argv)
 			break;
 		}
 	}
+	if (print_flows)
+		printf("\n--- flows\n%s", flows_text(compile_flows(sys.core(), sys.tables(), sys.board_info(), fcfg)).c_str());
 	fflush(stdout);
 	if (sys.bankcheck && sys.bankcheck->report(stderr) && rc != 2)
 		rc = 4;
@@ -357,6 +375,10 @@ int main(int argc, char **argv)
 			(unsigned long long)sys.cycles, s, sys.cycles / s / 1e6, (unsigned long long)sys.cpu().busy_cycles,
 			(unsigned long long)sys.cpu().idle_skipped, (unsigned long long)sys.resets);
 		auto &n = sys.nic().stats;
+		if (fab)
+			fprintf(stderr, "rtlsim: fabric: %llu compiles, %zu flows, %llu learned, %llu aged out\n",
+				(unsigned long long)fab->compiles, ofp->flows_installed(),
+				(unsigned long long)fab->learned, (unsigned long long)fab->aged);
 		if (wire || ofp)
 			fprintf(stderr, "rtlsim: NIC rx %llu (%llu dropped), tx %llu (%llu dropped)\n",
 				(unsigned long long)n.rx, (unsigned long long)n.rx_dropped,

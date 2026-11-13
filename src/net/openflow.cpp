@@ -12,7 +12,7 @@
 enum : u8 {
 	OFPT_HELLO = 0, OFPT_ERROR = 1, OFPT_ECHO_REQUEST = 2, OFPT_ECHO_REPLY = 3,
 	OFPT_FEATURES_REQUEST = 5, OFPT_FEATURES_REPLY = 6, OFPT_SET_CONFIG = 9,
-	OFPT_PACKET_IN = 10, OFPT_PORT_STATUS = 12, OFPT_PACKET_OUT = 13, OFPT_FLOW_MOD = 14,
+	OFPT_PACKET_IN = 10, OFPT_FLOW_REMOVED = 11, OFPT_PORT_STATUS = 12, OFPT_PACKET_OUT = 13, OFPT_FLOW_MOD = 14,
 	OFPT_MULTIPART_REQUEST = 18, OFPT_MULTIPART_REPLY = 19, OFPT_BARRIER_REQUEST = 20, OFPT_BARRIER_REPLY = 21,
 };
 enum : u32 { OFPP_CONTROLLER = 0xfffffffd, OFPP_ANY = 0xffffffff, OFP_NO_BUFFER = 0xffffffff };
@@ -27,6 +27,80 @@ static void put64(std::vector<u8> &v, u64 x) { put32(v, x >> 32); put32(v, x); }
 static void pad(std::vector<u8> &v, size_t n) { v.insert(v.end(), n, 0); }
 static u16 get16(const u8 *p) { return (p[0] << 8) | p[1]; }
 static u32 get32(const u8 *p) { return (u32(get16(p)) << 16) | get16(p + 2); }
+
+// OXM headers (OpenFlow basic class): field << 9 | hasmask << 8 | length
+enum : u32 {
+	OXM_IN_PORT = 0x80000004, OXM_METADATA_W = 0x80000510, OXM_ETH_DST = 0x80000606, OXM_ETH_SRC = 0x80000806,
+	OXM_VLAN_VID = 0x80000c02, OXM_VLAN_VID_W = 0x80000d04,
+};
+enum : u8 { OFPFC_ADD = 0, OFPFC_DELETE = 3, OFPFC_DELETE_STRICT = 4 };
+
+// A flow's match, padded to 8 bytes.
+static void put_match(std::vector<u8> &m, const flow &f)
+{
+	std::vector<u8> o;
+	if (f.in_port) {
+		put32(o, OXM_IN_PORT);
+		put32(o, f.in_port);
+	}
+	if (f.meta_mask) {
+		put32(o, OXM_METADATA_W);
+		put64(o, f.meta);
+		put64(o, f.meta_mask);
+	}
+	if (f.has_dst) {
+		put32(o, OXM_ETH_DST);
+		o.insert(o.end(), f.dst.begin(), f.dst.end());
+	}
+	if (f.has_src) {
+		put32(o, OXM_ETH_SRC);
+		o.insert(o.end(), f.src.begin(), f.src.end());
+	}
+	if (f.vlan_vid >= 0) {
+		put32(o, f.vlan_mask == 0x1fff ? OXM_VLAN_VID : OXM_VLAN_VID_W);
+		put16(o, f.vlan_vid);
+		if (f.vlan_mask != 0x1fff)
+			put16(o, f.vlan_mask);
+	}
+	put16(m, 1);			// OXM
+	put16(m, 4 + o.size());
+	m.insert(m.end(), o.begin(), o.end());
+	pad(m, (8 - (4 + o.size()) % 8) % 8);
+}
+
+static void put_actions(std::vector<u8> &m, const std::vector<of_action> &acts)
+{
+	for (auto &a : acts) {
+		switch (a.type) {
+		case of_action::OUTPUT:
+		case of_action::CONTROLLER:
+			put16(m, 0);
+			put16(m, 16);
+			put32(m, a.type == of_action::CONTROLLER ? OFPP_CONTROLLER : a.arg);
+			put16(m, OFPCML_NO_BUFFER);
+			pad(m, 6);
+			break;
+		case of_action::PUSH_VLAN:
+			put16(m, 17);
+			put16(m, 8);
+			put16(m, a.arg);
+			pad(m, 2);
+			break;
+		case of_action::POP_VLAN:
+			put16(m, 18);
+			put16(m, 8);
+			pad(m, 4);
+			break;
+		case of_action::SET_VID:
+			put16(m, 25);		// set-field: the OXM, padded to 8
+			put16(m, 16);
+			put32(m, OXM_VLAN_VID);
+			put16(m, flow::VID_PRESENT | a.arg);
+			pad(m, 6);
+			break;
+		}
+	}
+}
 
 of_controller::of_controller(const std::string &path) : m_path(path)
 {
@@ -100,42 +174,97 @@ void of_controller::start()
 	put16(cfg, OFPCML_NO_BUFFER);
 	send(OFPT_SET_CONFIG, cfg);
 
-	auto flow_mod = [](u8 command, u8 table, u16 priority) {
-		std::vector<u8> f;
-		put64(f, 0);			// cookie
-		put64(f, 0);			// cookie mask
-		put8(f, table);
-		put8(f, command);
-		put16(f, 0);			// idle timeout
-		put16(f, 0);			// hard timeout
-		put16(f, priority);
-		put32(f, OFP_NO_BUFFER);
-		put32(f, OFPP_ANY);		// out port, out group: any (for delete)
-		put32(f, OFPP_ANY);
-		put16(f, 0);			// flags
-		pad(f, 2);
-		put16(f, 1);			// match: OXM, empty
-		put16(f, 4);
-		pad(f, 4);
-		return f;
-	};
-	send(OFPT_FLOW_MOD, flow_mod(3, 0xff, 0));	// delete everything
-	std::vector<u8> miss = flow_mod(0, 0, 0);
-	put16(miss, 4);					// apply actions
-	put16(miss, 8 + 16);
-	pad(miss, 4);
-	put16(miss, 0);					// output: controller, whole frame
-	put16(miss, 16);
-	put32(miss, OFPP_CONTROLLER);
-	put16(miss, OFPCML_NO_BUFFER);
-	pad(miss, 6);
-	send(OFPT_FLOW_MOD, miss);
+	flow all;
+	all.table = 0xff;			// delete everything, in every table
+	flow_mod(OFPFC_DELETE, all);
+	m_installed.clear();
+	sync();
 
 	std::vector<u8> mp;
 	put16(mp, OFPMP_PORT_DESC);
 	put16(mp, 0);
 	pad(mp, 4);
 	send(OFPT_MULTIPART_REQUEST, mp);
+	send(OFPT_BARRIER_REQUEST, {});
+}
+
+void of_controller::flow_mod(u8 command, const flow &f)
+{
+	std::vector<u8> m;
+	put64(m, 0);			// cookie
+	put64(m, 0);			// cookie mask
+	put8(m, f.table);
+	put8(m, command);
+	put16(m, f.idle_timeout);
+	put16(m, 0);			// hard timeout
+	put16(m, f.priority);
+	put32(m, OFP_NO_BUFFER);
+	put32(m, OFPP_ANY);		// out port, out group: any (deletes)
+	put32(m, OFPP_ANY);
+	put16(m, f.send_removed ? 1 : 0);	// OFPFF_SEND_FLOW_REM
+	pad(m, 2);
+	put_match(m, f);
+	if (command == OFPFC_ADD) {
+		if (!f.actions.empty()) {
+			std::vector<u8> a;
+			put_actions(a, f.actions);
+			put16(m, 4);		// apply actions
+			put16(m, 8 + a.size());
+			pad(m, 4);
+			m.insert(m.end(), a.begin(), a.end());
+		}
+		if (f.write_meta_mask) {
+			put16(m, 2);		// write metadata
+			put16(m, 24);
+			pad(m, 4);
+			put64(m, f.write_meta);
+			put64(m, f.write_meta_mask);
+		}
+		if (f.goto_table >= 0) {
+			put16(m, 1);		// goto table
+			put16(m, 8);
+			put8(m, f.goto_table);
+			pad(m, 3);
+		}
+	}
+	send(OFPT_FLOW_MOD, m);
+}
+
+void of_controller::set_flows(const std::vector<flow> &flows)
+{
+	m_flows = flows;
+	sync();
+}
+
+// Install what differs: deletes first, so a changed match can't linger.
+void of_controller::sync()
+{
+	if (m_conn < 0)
+		return;
+	std::vector<flow> want = m_flows;
+	if (want.empty()) {			// no compiler: everything to the CPU
+		flow miss;
+		miss.actions.push_back({of_action::CONTROLLER});
+		want.push_back(miss);
+	}
+	std::map<std::string, const flow *> keyed;
+	for (auto &f : want)
+		keyed[f.match_text()] = &f;
+	for (auto it = m_installed.begin(); it != m_installed.end();) {
+		if (keyed.count(it->first)) {
+			++it;
+			continue;
+		}
+		flow_mod(OFPFC_DELETE_STRICT, it->second);
+		it = m_installed.erase(it);
+	}
+	for (auto &[k, f] : keyed) {
+		auto it = m_installed.find(k);
+		if (it != m_installed.end() && it->second.text() == f->text())
+			continue;
+		flow_mod(OFPFC_ADD, *f);
+		m_installed[k] = *f;
+	}
 	send(OFPT_BARRIER_REQUEST, {});
 }
 
@@ -227,7 +356,45 @@ void of_controller::handle(u8 type, u32 xid, const u8 *b, size_t len)
 			if (get32(b + o) == 0x80000004 && o + 8 <= len)	// OXM_OF_IN_PORT
 				in_port = get32(b + o + 4);
 		if (data <= len && in_port >= 1 && in_port <= 10 && packet_in)
-			packet_in(in_port - 1, b + data, len - data);
+			packet_in(in_port - 1, b[7], b + data, len - data);
+		break;
+	}
+	case OFPT_FLOW_REMOVED: {
+		// cookie, priority, reason, table, durations, timeouts, counts; the match
+		if (len < 44)
+			break;
+		flow f;
+		f.priority = get16(b + 8);
+		f.table = b[11];
+		u16 const mlen = get16(b + 42);
+		for (size_t o = 44; o + 4 <= 40u + mlen && o + 4 <= len; o += 4 + b[o + 3]) {
+			u32 const h = get32(b + o);
+			const u8 *v = b + o + 4;
+			if (o + 4 + b[o + 3] > len)
+				break;
+			if (h == OXM_IN_PORT)
+				f.in_port = get32(v);
+			else if (h == OXM_ETH_SRC) {
+				f.has_src = true;
+				std::copy(v, v + 6, f.src.begin());
+			} else if (h == OXM_ETH_DST) {
+				f.has_dst = true;
+				std::copy(v, v + 6, f.dst.begin());
+			} else if (h == OXM_VLAN_VID)
+				f.vlan_vid = get16(v);
+			else if (h == OXM_VLAN_VID_W) {
+				f.vlan_vid = get16(v);
+				f.vlan_mask = get16(v + 2);
+			} else if (h == OXM_METADATA_W) {
+				f.meta = (u64(get32(v)) << 32) | get32(v + 4);
+				f.meta_mask = (u64(get32(v + 8)) << 32) | get32(v + 12);
+			}
+		}
+		m_installed.erase(f.match_text());
+		if (trace)
+			fprintf(stderr, "OF: flow removed: %s\n", f.match_text().c_str());
+		if (flow_removed)
+			flow_removed(f);
 		break;
 	}
 	default:
