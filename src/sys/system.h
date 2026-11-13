@@ -1,5 +1,5 @@
 // system.h - the RTL837x around its 8051: flash, code banking, xdata, and
-// the SFR bus to the flash controller and the switch core.
+// the SFR bus to the flash controller, the switch core and the CPU port's NIC.
 //
 // Code memory, as RTLPlayground's imagebuilder lays out the image: the flash
 // starts with a 2-byte header, then the common code (CPU 0x0000-0x3ffd at
@@ -15,6 +15,7 @@
 #include "sys/flashctl.h"
 #include "sys/switch_core.h"
 #include "sys/tables.h"
+#include "sys/nic.h"
 #include "sys/bankcheck.h"
 
 #include <cstdio>
@@ -50,6 +51,7 @@ public:
 	flash_controller &flash() { return *m_flash; }
 	switch_core &core() { return m_core; }
 	switch_tables &tables() { return m_tables; }
+	cpu_nic &nic() { return m_nic; }
 	u8 code_read(u16 addr);			// as the CPU sees it now
 	u32 code_flash_addr(u16 addr, u8 psbank) const;
 
@@ -92,6 +94,7 @@ private:
 	std::unique_ptr<flash_controller> m_flash;
 	switch_core m_core;
 	switch_tables m_tables{m_core};
+	cpu_nic m_nic{m_core, m_tables};
 	std::vector<u8> m_code_ram;		// the common code, 0x0000-0x3fff
 	std::vector<u8> m_xdata;
 	u8 m_sfr[256] = {};			// SFRs nobody models yet

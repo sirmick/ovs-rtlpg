@@ -28,6 +28,10 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const ch
 	m_cpu.uart_tx = [this](u8 c) { fputc(c, uart_out); if (c == '\n') fflush(uart_out); };
 	m_core.soc_reset = [this]() { m_reset_pending = true; };
 	m_core.pc = [this]() { return m_cpu.pc(); };
+	m_nic.xdata_r = [this](u16 a) { return xdata_r(a); };
+	m_nic.xdata_w = [this](u16 a, u8 d) { xdata_w(a, d); };
+	m_nic.irq = [this](bool level) { m_cpu.set_int1(level); };
+	m_nic.busy = [this]() { return m_cpu.busy_cycles; };
 	m_dasm = m_cpu.disassembler();
 	for (int op = 0; op < 256; op++) {
 		std::ostringstream o;
@@ -43,6 +47,7 @@ void rtl837x_system::reset()
 	for (u32 i = 0; i < COMMON_LEN && 2 + i < m_flash->size(); i++)
 		m_code_ram[i] = m_flash->byte(2 + i);
 	m_map_flash = 1;
+	m_nic.reset();
 	m_cpu.reset();
 	m_halted = false;
 	map_code_pages();
@@ -160,6 +165,8 @@ u8 rtl837x_system::sfr_r(u8 a)
 		v = m_flash->sfr_r(a);
 	else if (switch_core::owns(a))
 		v = m_core.sfr_r(a);
+	else if (cpu_nic::owns(a))
+		v = m_nic.sfr_r(a);
 	else if (a == SFR_MAP_FLASH)
 		v = m_map_flash;
 	else
@@ -179,6 +186,10 @@ void rtl837x_system::sfr_w(u8 a, u8 d)
 	}
 	if (switch_core::owns(a)) {
 		m_core.sfr_w(a, d);
+		return;
+	}
+	if (cpu_nic::owns(a)) {
+		m_nic.sfr_w(a, d);
 		return;
 	}
 	if (a == SFR_MAP_FLASH) {

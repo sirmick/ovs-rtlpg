@@ -157,6 +157,7 @@ void rtl837x_cpu::execute_run()
 			u8 op = m_program.read_byte(m_pc++);
 			prepare_instruction(op);
 			execute_op(op);
+			busy_cycles += m_inst_cycles;
 		} else {
 			m_inst_cycles++;
 		}

@@ -38,6 +38,7 @@ public:
 
 	u16 pc() const { return m_pc; }
 	u64 idle_skipped = 0;		// machine cycles fast-forwarded while idle
+	u64 busy_cycles = 0;		// machine cycles spent running instructions
 	bool fast_idle = true;
 	u8 psbank() const { return m_psbank; }
 	u8 sp() const { return m_sp; }
