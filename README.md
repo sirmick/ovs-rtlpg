@@ -78,8 +78,9 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
   rx_irq, tick_pending), and `tx_buf_empty` is bit 6. So `if (!evflags)`
   never sleeps while the UART is idle (the firmware runs flat out after its
   boot), and CLI parsing can set or lose an event: a lost `rx_irq` with EX1
-  masked would stop the NIC for good. Not fixed here; the firmware is a
-  separate repo.
+  masked would stop the NIC for good. Fixed in RTLPlayground b0fcf85
+  (branch `evflags-bits`, not yet in dev): with it the firmware sleeps ~98%
+  of the time it's idle, and 20 s of its time simulates in 0.24 s instead of 7 s.
 
 ## Parked
 

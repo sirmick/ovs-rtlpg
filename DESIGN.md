@@ -225,8 +225,9 @@ handshakes and flash reads are instant, so silicon is somewhat slower:
   delayed-ACK stalls in these transfers. The ~36 KB/s estimate assumed stalls
   that didn't happen.
 - The web UI, after the login (0.04 s): `/` and `/app.js` (8 + 53 KB) in 0.24 s.
-- The firmware never idles after its boot (see README.md, "Found"), so these
-  latencies include up to one main-loop pass before `handle_rx()` runs.
+- Before RTLPlayground b0fcf85 the firmware never idled after its boot (see
+  README.md, "Found"). With the fix these numbers are unchanged: the work
+  per frame was real; only the spinning between frames went away.
 
 Frames per reply come from `--trace-nic` (one line per frame; a TX line has
 the busy cycles since the last RX).
