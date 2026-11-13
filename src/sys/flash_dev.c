@@ -1,5 +1,5 @@
-/* flash_dev.c - see flash_dev.h. A faithful SPI-NOR model for host tests. */
-#include "flash_dev.h"
+/* flash_dev.c - see flash_dev.h. A faithful SPI-NOR model; MIT, see there. */
+#include "sys/flash_dev.h"
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>

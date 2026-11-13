@@ -2,7 +2,7 @@
 CXX ?= g++
 CXXFLAGS ?= -O2 -g
 CXXFLAGS += -std=c++20 -Wall -Wno-unused-parameter -MMD -MP
-CPPFLAGS += -Isrc/shim -Ithird_party/mame/mcs51 -Ithird_party/rtlplayground -Isrc -I$(BUILD)
+CPPFLAGS += -Isrc/shim -Ithird_party/mame/mcs51 -Isrc -I$(BUILD)
 CFLAGS ?= -O2 -g
 CFLAGS += -std=c11 -Wall -MMD -MP
 
@@ -12,7 +12,7 @@ RTLPG ?= $(HOME)/src/RTLPlayground
 BUILD = build
 MAME_SRC = $(addprefix third_party/mame/mcs51/,i8051.cpp mcs51ops.cpp i8052.cpp dw8051.cpp mcs51dasm.cpp)
 SIM_SRC = $(wildcard src/cpu/*.cpp) $(wildcard src/sys/*.cpp) $(wildcard src/net/*.cpp) $(wildcard src/fabric/*.cpp)
-C_SRC = third_party/rtlplayground/flash_dev.c
+C_SRC = src/sys/flash_dev.c
 MAIN_SRC = src/main.cpp
 
 MAME_OBJ = $(MAME_SRC:%.cpp=$(BUILD)/%.o)
@@ -41,7 +41,13 @@ $(BUILD)/src/sys/switch_core.o: $(BUILD)/regnames.inc
 # A firmware image for tests/fw: the newest RTLPlayground build for the bench board
 FW_IMAGE ?= $(firstword $(shell ls -t $(RTLPG)/output/SWGT024_V2_0_UNMANAGED-compact/rtlplayground-v*-compact.bin 2>/dev/null))
 
-test: $(BUILD)/rtlsim
+# the flash model's own test, on the host
+$(BUILD)/test_flash_dev: tests/flash/test_flash_dev.c src/sys/flash_dev.c src/sys/flash_dev.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -fsanitize=address,undefined -Isrc -o $@ tests/flash/test_flash_dev.c src/sys/flash_dev.c
+
+test: $(BUILD)/rtlsim $(BUILD)/test_flash_dev
+	$(BUILD)/test_flash_dev
 	$(MAKE) -C tests/isa RTLSIM=$(abspath $(BUILD)/rtlsim)
 	$(MAKE) -C tests/bank RTLSIM=$(abspath $(BUILD)/rtlsim)
 ifneq ($(FW_IMAGE),)

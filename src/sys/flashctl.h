@@ -1,5 +1,5 @@
 // flashctl.h - the RTL837x SPI flash controller (SFRs), over a modelled
-// SPI-NOR chip (third_party/rtlplayground/flash_dev).
+// SPI-NOR chip (sys/flash_dev.h).
 //
 // From RTLPlayground's rtl837x_flash.c: a transaction is set up in TCONF
 // (0x9e) and started with the GO bit (0x80.2); BUSY (0x80.0) reads clear
@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 extern "C" {
-#include "flash_dev.h"
+#include "sys/flash_dev.h"
 }
 
 class flash_controller

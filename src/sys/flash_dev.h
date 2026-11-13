@@ -1,5 +1,14 @@
 /*
- * flash_dev.h - a faithful SPI-NOR flash device model for the host test bench.
+ * flash_dev.h - a faithful SPI-NOR flash device model: the chip behind
+ * rtlsim's flash controller (sys/flashctl.h), and a host test bench of its
+ * own (tests/flash).
+ *
+ * Written for RTLPlayground's host tests (its test/flash_dev.c, 12817bb),
+ * and maintained here. MIT licence: Copyright (c) 2026 Michael
+ * <sirmick@gmail.com>; permission is hereby granted, free of charge, to any
+ * person obtaining a copy of this software, to deal in it without
+ * restriction, provided this notice is kept. It is provided "as is",
+ * without warranty of any kind.
  *
  * Models the properties that make flashing dangerous, so the update/boot-copy
  * logic can be tested natively without a programmer or a switch:

@@ -101,7 +101,7 @@ on our core, and compare with ucsim on the same binaries.
 |---|---|---|
 | 0x98/0x99 (SCON/SBUF), T1/T2 | UART | pty or TCP; ^R ^R reset, XMODEM to the #852 loader work as on the bench |
 | T0, T2, IE/EIE/EXIF | timers, IRQs | from the core, plus the switch and NIC interrupt sources |
-| 0x80, 0x9a-0x9e, 0xa9-0xaf, 0xb1/0xb2, 0xbc | flash controller | SPI-NOR model over a file (port `RTLPlayground/test/flash_dev.c`, MIT): erase granularity, page-program wrap, chip-size wrap, JEDEC ID from the board JSON |
+| 0x80, 0x9a-0x9e, 0xa9-0xaf, 0xb1/0xb2, 0xbc | flash controller | SPI-NOR model over a file (`src/sys/flash_dev.h`, MIT; written for RTLPlayground's host tests and kept here): erase granularity, page-program wrap, chip-size wrap, JEDEC ID from the board JSON |
 | 0xa0-0xa7 | switch register handshake | `EXEC_GO` 1/3 = reg read/write (16-bit addr, 32-bit data) → register file; `EXEC_STATUS` reads 0 at once |
 | 0x93/0x94 + EXEC 5/7 | SerDes | register store; link state from the PHY model |
 | 0xc2-0xc5 + EXEC 9/11 | SMI / MDIO | PHY model: IDs, BMSR/link/speed from the board's port state |
@@ -384,7 +384,7 @@ hosts:
   libopenvswitch-dev, so the controller speaks a minimal OpenFlow 1.3 itself
   (hello, echo, features, packet-in/out, bundles, flow-mods); flow text can
   also go through `ovs-ofctl`.
-- **Licence:** MIT (RTLPlayground, whose `flash_dev.c` we port) or Apache-2.0
+- **Licence:** MIT (as RTLPlayground, and the flash model, `flash_dev.c`) or Apache-2.0
   (OVS). MAME's mcs51 is BSD-3, compatible with both.
 - **Repo:** github.com/sirmick/ovs-rtlpg. Developed on devel (the Incus CT on
   buzz: taps, network namespaces, KVM, userspace OVS; nothing on the host).

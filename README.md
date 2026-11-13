@@ -15,7 +15,7 @@ through the web UI install on the simulated flash.
   `third_party/mame`, behind `src/shim/emu.h`), the RTL837x variant, and an
   idle fast-forward (the firmware sleeps in `delay()` between ticks).
 - `src/sys`: code banking and the flash image; the flash controller over
-  RTLPlayground's SPI-NOR model (`third_party/rtlplayground`); the switch
+  a SPI-NOR model (`flash_dev.h`, with its own test in `tests/flash`); the switch
   core (register handshake, SerDes, SMI/PHY) and its table engine (VLAN, L2,
   flush, counters, ported from RTLPlayground's `test/hw_mock.c`); the CPU
   port's NIC (`nic.h`: DMA, RX ring, TX area, INT1, checksum offload); the
