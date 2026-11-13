@@ -1,0 +1,12 @@
+{
+  "name": "ampcom_wam902",
+  "comment": "AMPCOM WAM902 / SWTG018AS (RTLPlayground machine/AMPCOM_WAM902_SWTG018AS.c): RTL8373, 8 x 2.5G + 1 SFP+, 2 MiB flash, factory MAC at 0x1FC000.",
+  "chip": "RTL8373",
+  "flash": { "size": "2M", "jedec": "ef40" },
+  "ports": [
+    { "phys": 0, "front": "1" }, { "phys": 1, "front": "2" }, { "phys": 2, "front": "3" },
+    { "phys": 3, "front": "4" }, { "phys": 4, "front": "5" }, { "phys": 5, "front": "6" },
+    { "phys": 6, "front": "7" }, { "phys": 7, "front": "8" },
+    { "phys": 8, "front": "SFP1", "sfp": { "slot": 1, "detect_gpio": 38, "los_gpio": null, "i2c": [39, 40], "module": null } }
+  ]
+}
