@@ -91,6 +91,7 @@ private:
 	void model_gpio();
 	void model_los();
 	void model_pse();
+	void model_code_ram_load();
 
 	rtl837x_cpu m_cpu;
 	std::unique_ptr<flash_controller> m_flash;

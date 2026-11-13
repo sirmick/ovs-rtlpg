@@ -78,6 +78,7 @@ test-update: $(BUILD)/rtlsim
 test-flash: $(BUILD)/rtlsim
 	python3 tests/flash/test_pse.py --rtlsim $(BUILD)/rtlsim
 	python3 tests/flash/test_migrate.py --rtlsim $(BUILD)/rtlsim
+	python3 tests/flash/test_loader.py --rtlsim $(BUILD)/rtlsim
 
 # A power cut at every step of a firmware install (rtlsim --powercut-after;
 # no sudo; minutes, in parallel). FW_OLD is what the switch runs before.

@@ -15,6 +15,7 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 	model_links();
 	model_gpio();
 	model_pse();
+	model_code_ram_load();
 	m_cpu.start();
 	m_cpu.space(AS_PROGRAM).set_external([this](offs_t a) { return code_read(a); }, [](offs_t, u8) {});
 	m_cpu.space(AS_DATA).set_external([this](offs_t a) { return xdata_r(a); }, [this](offs_t a, u8 d) { xdata_w(a, d); });
@@ -134,6 +135,22 @@ void rtl837x_system::model_pse()
 				return v;
 			});
 	}
+}
+
+// Loading the common code RAM (0x0000-0x3fff) from software, as RTLPlayground's
+// loader does (loader/loader_alias.c app_start()) to start an application:
+// with HW_CONF (0x6040) bit 1 set, bits 3:2 pick a 4 KiB chunk, and a write
+// to register 0x80b0 + 4 * i puts its data's low byte at chunk * 0x1000 + i.
+// The loader reads it back with movc and jumps to 0, so it runs at once.
+void rtl837x_system::model_code_ram_load()
+{
+	for (u32 i = 0; i < 0x1000; i++)
+		m_core.on_write(u16(0x80b0 + 4 * i), [this, i](u32 v) {
+			u32 const conf = m_core.reg(0x6040);
+			if (conf & 0x02)
+				m_code_ram[((conf >> 2) & 3) * 0x1000 + i] = u8(v);
+			return v;
+		});
 }
 
 void rtl837x_system::set_link(unsigned phys_port, int speed)
