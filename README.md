@@ -52,6 +52,12 @@ firmware's clock is held to the wall clock (`--no-realtime` turns that off).
 firmware's address is 192.168.2.2 unless its saved config says otherwise
 (CLI: `ip`), and the web password is 1234.
 
+`--board FILE` describes the hardware around the chip (`src/sys/board.h`,
+`boards/swtg024as.json`): the chip's type, revision, UUID and lot number
+(the default MAC comes from these), the flash chip, the front ports and the
+SFP cages (slot, detect and LOS pins, I2C pins), and the modules in them.
+Without it, the bench SWTG024AS is built in.
+
 `--sfp SLOT=EEPROM.bin` puts a module in SFP cage 1 or 2 (the firmware's
 slot numbers): its detect pin goes low and its EEPROM (SFF-8472 A0h, and A2h
 if the file has 512 bytes) answers on the cage's I2C bus. Empty cages NACK.

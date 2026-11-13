@@ -14,10 +14,12 @@ silicon.
 - With a 10G module in SFP slot 1 (tools/mksfp.py), the firmware reads its
   EEPROM over I2C when its SFP poll finds it, and in the sfp command; slot 2
   stays empty.
+- A board file (--board) sets the chip's identity (another UUID: another
+  default MAC) and the modules in the cages (a path relative to it).
 - With --flash, the chip persists: the first boot writes the default config,
   the second finds it.
 """
-import argparse, os, re, subprocess, sys, tempfile, time
+import argparse, json, os, re, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from console import Console, PROMPT
 
@@ -103,6 +105,21 @@ def main():
         ok, out = run(c, "sfp")
         check(ok and "Slot 1 - Rate: 67" in out and "Options: 68" in out and "Vcc: 80e8" in out
               and "Slot 2 - empty" in out, "the sfp command reads its identity and diagnostics")
+        c.close()
+
+    with tempfile.TemporaryDirectory() as d:
+        subprocess.run([sys.executable, os.path.join(HERE, "../../tools/mksfp.py"), os.path.join(d, "m.bin"),
+                        "--vendor", "BOARDFILE"], check=True)
+        b = json.load(open(os.path.join(HERE, "../../boards/swtg024as.json")))
+        b["uuid"] = "0x12345600"
+        b["ports"][4]["sfp"]["module"] = "m.bin"
+        json.dump(b, open(os.path.join(d, "board.json"), "w"))
+        c = Console(a.rtlsim, a.image, ["--board", os.path.join(d, "board.json"), "--link", "8=10g"])
+        up = c.expect(PROMPT, 120) and c.expect(b"Module: BOARDFILE", 30)
+        mac = re.search(rb"Setting MAC to: ([0-9a-f:]+)", c.log)
+        check(up and mac is not None and mac.group(1) != b"06:0f:00:c8:54:07",
+              f"a board file: another UUID gives another MAC ({mac.group(1).decode() if mac else None}), "
+              "and its module is in slot 1")
         c.close()
 
     with tempfile.TemporaryDirectory() as d:

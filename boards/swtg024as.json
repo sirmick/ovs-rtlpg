@@ -1,0 +1,17 @@
+{
+  "name": "swtg024as",
+  "comment": "The bench Sodola SWTG024AS V2.0 (PCB_SWTG024AS_V2_0_17452): RTL8372 rev 0x68, MAC 06:0f:00:c8:54:07 from its UUID and lot number, 512 KiB Winbond flash. Same as the built-in board.",
+  "chip": "RTL8372",
+  "revision": "0x68",
+  "uuid": "0xc8540700",
+  "lot": "0x0f000000",
+  "flash": { "size": "512K", "jedec": "ef40" },
+  "ports": [
+    { "phys": 4, "front": "1" },
+    { "phys": 5, "front": "2" },
+    { "phys": 6, "front": "3" },
+    { "phys": 7, "front": "4" },
+    { "phys": 8, "front": "SFP1", "sfp": { "slot": 1, "detect_gpio": 30, "los_gpio": null, "i2c": [39, 40], "module": null } },
+    { "phys": 3, "front": "SFP2", "sfp": { "slot": 2, "detect_gpio": 50, "los_gpio": null, "i2c": [41, 40], "module": null } }
+  ]
+}

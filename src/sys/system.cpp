@@ -7,9 +7,9 @@ static constexpr u32 COMMON_LEN = 0x3ffe;	// imagebuilder: bank 0 is 0x0000-0x3f
 static constexpr u32 XRAM_LEN = 0xc000;		// --xram-size 49151
 static constexpr u8 SFR_MAP_FLASH = 0x97;	// MAP_FLASH_PAGE_TO_XDATA
 
-rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const chip_identity &id)
-	: m_cpu(125000000), m_flash(std::move(flash)),
-	  m_code_ram(0x4000, 0xff), m_xdata(0x10000, 0), m_id(id)
+rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const board &b)
+	: m_cpu(125000000), m_flash(std::move(flash)), m_board(b),
+	  m_code_ram(0x4000, 0xff), m_xdata(0x10000, 0)
 {
 	seed_chip();
 	model_links();
@@ -118,9 +118,10 @@ void rtl837x_system::set_link(unsigned phys_port, int speed)
 
 bool rtl837x_system::set_sfp(unsigned slot, const std::vector<u8> &eeprom)
 {
-	if (slot < 1 || slot > m_board.sfp.size())
+	board_sfp const *cp = m_board.cage(slot);
+	if (!cp)
 		return false;
-	board_sfp const &c = m_board.sfp[slot - 1];
+	board_sfp const &c = *cp;
 	bool const in = !eeprom.empty();
 	std::vector<u8> a0, a2;
 	if (in) {
@@ -133,7 +134,7 @@ bool rtl837x_system::set_sfp(unsigned slot, const std::vector<u8> &eeprom)
 	m_i2c.attach(c.i2c_bus, 0x51, a2);
 	set_gpio(c.detect_gpio, !in);
 	m_sfp_in.resize(m_board.sfp.size());
-	m_sfp_in[slot - 1] = in;
+	m_sfp_in[cp - m_board.sfp.data()] = in;
 	model_los();
 	return true;
 }

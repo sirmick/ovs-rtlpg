@@ -307,9 +307,12 @@ on the board, so a wrong machine file shows up as a misbehaving switch.
   "i2c_devices": []
 }
 ```
-A tool can draft the JSON from an RTLPlayground machine `.c`. Until the JSON
-exists, `src/sys/board.h` builds in the bench board's SFP wiring, and
-`--sfp SLOT=EEPROM.bin` inserts a module (`tools/mksfp.py` writes one). `i2c_devices`
+A tool can draft the JSON from an RTLPlayground machine `.c`. Built so far
+(`--board FILE`, `src/sys/board.h`): `chip`, `revision`, `uuid`, `lot`,
+`flash.size`/`jedec`, and `ports` with `phys`, `front` and `sfp` (`slot`,
+`detect_gpio`, `los_gpio`, `i2c`, `module`); `boards/swtg024as.json` is the
+bench board, which is also built in. `--sfp SLOT=EEPROM.bin` inserts a
+module (`tools/mksfp.py` writes one). `i2c_devices`
 covers later additions: SFP EEPROMs (module dumps), and the POE-2G040210GSM's
 RTL8238B as a stub.
 
@@ -376,4 +379,7 @@ hosts:
 - Which registers the boot polls, and with what expected values.
 - The table-access protocol per table (`TBL_CTRL` encoding), flood-mask
   registers, mirroring registers.
-- Whether OVS accepts packet-out `in_port=CONTROLLER` + `resubmit` for "normal lookup".
+- ~~Whether OVS accepts packet-out `in_port=CONTROLLER` + `resubmit`~~: it
+  does (OVS 3.5, OpenFlow 1.3): the frame enters table 0 with
+  `in_port=CONTROLLER` and runs through the pipeline, so "normal lookup"
+  needs no reserved port.

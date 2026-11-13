@@ -26,23 +26,12 @@
 #include <string>
 #include <vector>
 
-// What the chip reports about itself. Defaults: the SWTG024AS on the bench
-// (RTL8372, revision 0x68, MAC 06:0f:00:c8:54:07 from its UUID and lot
-// number). TODO: from the board JSON.
-struct chip_identity {
-	bool rtl8373 = false;
-	bool n_variant = false;
-	u8 revision = 0x68;
-	u32 uuid = 0xc8540700;
-	u32 lot_no = 0x0f000000;
-};
-
 class rtl837x_system
 {
 public:
-	explicit rtl837x_system(std::unique_ptr<flash_controller> flash, const chip_identity &id = {});
-	rtl837x_system(const std::vector<u8> &image, u32 flash_size, const chip_identity &id = {})
-		: rtl837x_system(std::make_unique<flash_controller>(image, flash_size), id) {}
+	explicit rtl837x_system(std::unique_ptr<flash_controller> flash, const board &b = board_swtg024as());
+	rtl837x_system(const std::vector<u8> &image, u32 flash_size, const board &b = board_swtg024as())
+		: rtl837x_system(std::make_unique<flash_controller>(image, flash_size), b) {}
 
 	void reset();
 	// Run about `cycles` machine cycles. Returns false once halted.
@@ -69,7 +58,7 @@ public:
 	// read 1 (pulled up), so an empty SFP cage reads "no module".
 	void set_gpio(unsigned pin, bool level) { if (pin < 64) m_gpio_ext = (m_gpio_ext & ~(1ull << pin)) | (u64(level) << pin); }
 
-	// An SFP module in cage `slot` (1-based): its EEPROM, 256 bytes at I2C
+	// An SFP module in cage `slot` (the firmware's, 1-based): its EEPROM, 256 bytes at I2C
 	// 0x50 and, if there are 512, the diagnostics at 0x51. Empty: pull it.
 	// False if the board has no such cage.
 	bool set_sfp(unsigned slot, const std::vector<u8> &eeprom);
@@ -106,8 +95,8 @@ private:
 	switch_tables m_tables{m_core};
 	cpu_nic m_nic{m_core, m_tables};
 	i2c_controller m_i2c{m_core};
-	board m_board = board_swtg024as();
-	std::vector<bool> m_sfp_in;
+	board m_board;
+	std::vector<bool> m_sfp_in;	// by index into m_board.sfp
 	std::vector<u8> m_code_ram;		// the common code, 0x0000-0x3fff
 	std::vector<u8> m_xdata;
 	u8 m_sfr[256] = {};			// SFRs nobody models yet
@@ -117,7 +106,7 @@ private:
 	bool m_reset_pending = false;
 	std::deque<u8> m_rx;
 	std::unique_ptr<util::disasm_interface> m_dasm;
-	chip_identity m_id;
+	chip_identity const &m_id = m_board.id;
 	u8 m_len[256] = {};
 	int m_link[10] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 	bool m_int0_pulse = false;

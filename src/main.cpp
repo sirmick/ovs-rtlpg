@@ -4,7 +4,7 @@
 //   rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace]
 //          [--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]
 //          [--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime]
-//          [--sfp SLOT=EEPROM.bin] [--trace-i2c] [--ofp PATH] [--trace-of]
+//          [--sfp SLOT=EEPROM.bin] [--trace-i2c] [--ofp PATH] [--trace-of] [--board FILE]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -30,6 +30,11 @@
 // TCP timers and the firmware's agree; it is on with --nic. With no peer
 // nobody sees the clock, so the boot still takes a fraction of a second
 // instead of silicon's 8 s. Without it the simulation runs as fast as it can.
+//
+// --board FILE describes the hardware around the chip (sys/board.h): the
+// chip's identity, the flash chip (its size unless --flash-size says
+// otherwise), the front ports and SFP cages, and the modules in them. Without
+// it, the bench SWTG024AS (boards/swtg024as.json).
 //
 // --sfp SLOT=FILE puts a module in SFP cage SLOT (1, 2): FILE is its EEPROM,
 // 256 bytes (SFF-8472 A0h) or 512 (A0h, then the A2h diagnostics); see
@@ -112,6 +117,8 @@ static bool pump_stdin(rtl837x_system &sys)
 int main(int argc, char **argv)
 {
 	const char *image = nullptr, *flash_file = nullptr, *check_map = nullptr, *nic_path = nullptr, *ofp_path = nullptr;
+	const char *board_file = nullptr;
+	bool flash_size_given = false;
 	int nic_port = -1, realtime = -1;
 	bool trace_nic = false, trace_i2c = false, trace_of = false;
 	std::vector<std::pair<unsigned, std::string>> sfps;
@@ -143,7 +150,9 @@ int main(int argc, char **argv)
 				return 1;
 			}
 			sfps.emplace_back(atoi(argv[i]), eq + 1);
-		} else if (!strcmp(argv[i], "--ofp") && i + 1 < argc)
+		} else if (!strcmp(argv[i], "--board") && i + 1 < argc)
+			board_file = argv[++i];
+		else if (!strcmp(argv[i], "--ofp") && i + 1 < argc)
 			ofp_path = argv[++i];
 		else if (!strcmp(argv[i], "--trace-of"))
 			trace_of = true;
@@ -159,9 +168,10 @@ int main(int argc, char **argv)
 			check_map = argv[++i];
 		else if (!strcmp(argv[i], "--cycles") && i + 1 < argc)
 			cycles = atoll(argv[++i]);
-		else if (!strcmp(argv[i], "--flash-size") && i + 1 < argc)
+		else if (!strcmp(argv[i], "--flash-size") && i + 1 < argc) {
 			flash_size = parse_size(argv[++i]);
-		else if (!strcmp(argv[i], "--trace"))
+			flash_size_given = true;
+		} else if (!strcmp(argv[i], "--trace"))
 			trace = true;
 		else if (!strcmp(argv[i], "--trace-sfr"))
 			trace_sfr = true;
@@ -177,7 +187,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
 				"[--trace-sfr] [--trace-reg] [--trace-flash] [--link P=SPEED] [--check-banks MAP] [--quiet] [--stats] "
 				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime] [--sfp SLOT=EEPROM.bin] [--trace-i2c] "
-				"[--ofp PATH] [--trace-of]\n");
+				"[--ofp PATH] [--trace-of] [--board FILE]\n");
 			return 1;
 		}
 	}
@@ -189,6 +199,17 @@ int main(int argc, char **argv)
 		fprintf(stderr, "rtlsim: --nic PATH and --nic-port N (physical port 0-9) go together\n");
 		return 1;
 	}
+	board brd = board_swtg024as();
+	if (board_file) {
+		try {
+			brd = load_board(board_file);
+		} catch (const std::exception &e) {
+			fprintf(stderr, "rtlsim: %s\n", e.what());
+			return 1;
+		}
+		if (!flash_size_given)
+			flash_size = brd.flash_size;
+	}
 	if (flash_size & (flash_size - 1)) {
 		fprintf(stderr, "rtlsim: --flash-size must be a power of two\n");
 		return 1;
@@ -197,13 +218,13 @@ int main(int argc, char **argv)
 	std::vector<u8> img = image ? load(image) : std::vector<u8>();
 	std::unique_ptr<flash_controller> flash;
 	try {
-		flash = flash_file ? std::make_unique<flash_controller>(flash_file, img, flash_size)
-				   : std::make_unique<flash_controller>(img, flash_size);
+		flash = flash_file ? std::make_unique<flash_controller>(flash_file, img, flash_size, brd.jedec_mfr, brd.jedec_type)
+				   : std::make_unique<flash_controller>(img, flash_size, brd.jedec_mfr, brd.jedec_type);
 	} catch (const std::exception &e) {
 		fprintf(stderr, "rtlsim: %s\n", e.what());
 		return 1;
 	}
-	rtl837x_system sys(std::move(flash));
+	rtl837x_system sys(std::move(flash), brd);
 	sys.trace_insn = trace;
 	sys.trace_sfr = trace_sfr;
 	sys.core().trace = trace_reg;
@@ -212,6 +233,13 @@ int main(int argc, char **argv)
 	for (auto &[p, sp] : links)
 		sys.set_link(p, sp);
 	sys.i2c().trace = trace_i2c;
+	for (auto &c : brd.sfp) {	// the board's modules, unless --sfp says otherwise
+		bool given = false;
+		for (auto &[slot, path] : sfps)
+			given |= slot == c.slot;
+		if (!c.module.empty() && !given)
+			sfps.emplace_back(c.slot, c.module);
+	}
 	for (auto &[slot, path] : sfps) {
 		std::vector<u8> e = load(path.c_str());
 		if (e.size() != 256 && e.size() != 512) {
@@ -219,7 +247,7 @@ int main(int argc, char **argv)
 			return 1;
 		}
 		if (!sys.set_sfp(slot, e)) {
-			fprintf(stderr, "rtlsim: the %s board has no SFP slot %u\n", sys.board_info().name, slot);
+			fprintf(stderr, "rtlsim: the %s board has no SFP slot %u\n", sys.board_info().name.c_str(), slot);
 			return 1;
 		}
 	}
