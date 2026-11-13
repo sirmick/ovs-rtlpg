@@ -1,6 +1,7 @@
 # rtlsim — an RTL837x switch, simulated as an Open vSwitch bridge
 
-Status: phases 1-2 built (see README.md); next the CPU-port NIC, then OVS.
+Status: phases 1-2 built, and the CPU port's NIC with one front port on a
+socket (see README.md); next OVS.
 
 ## Goal
 
@@ -163,6 +164,11 @@ fabric, as on silicon: ARP floods reach the CPU, the reply is a packet-out.
 Reach it from the host by putting a veth or tap with an address in the same
 subnet on a front port.
 
+Until the fabric exists, `--nic PATH --nic-port N` wires one front port
+straight to the CPU over a socket (`src/sys/nic.h`): every frame from it goes
+to the CPU if its VLAN has the CPU, and the CPU's frames go to it if the
+pmask or the VLAN says so, with the VLAN's untag mask applied.
+
 ### The CPU port's ring (RTLPlayground rtl837x_nic.c, doc/CpuPort.md)
 The NIC has its own packet memory on the ASIC side, which the 8051 reaches
 only through a DMA engine in SFRs: 0xb3/0xb4 the xdata address, 0xb5/0xb6
@@ -188,20 +194,42 @@ the ring address (bit 15 set: the TX area), 0xb7 the number of 8-byte words
   is empty.
 
 **How fast.** The 8051 is a four-clock DW8051 at 125 MHz: 31.25 M machine
-cycles/s, ~15 MIPS. A register handshake is ~30-40 cycles (~1 µs), so the
-ring bookkeeping of one RX frame (two register reads, two DMAs, the release)
-is ~5-10 µs; the frame's protocol work dominates. uIP verifies checksums in
-software, ~10-15 cycles a byte, so a full TCP segment costs ~0.5-0.7 ms before
-the application sees it; TX checksums are offloaded. Estimates: a few
-thousand small frames/s (ARP, ICMP), and TCP well under the wire's speed: uIP
-keeps one segment in flight (uip-split is linked but never called), so a
-peer's delayed ACK can hold it to one segment per ACK timeout (Linux: ≥40 ms,
-~36 KB/s) where quick-ACK doesn't kick in. The 10 KiB RX ring holds ~6
-full-size or ~140 minimum frames: at 2.5 Gb/s that is ~33 µs of traffic, so a
-flood towards the CPU overflows it within one main-loop pass. Hence the traps
-and storm control. In rtlsim the DMA and handshakes are instant and the
-firmware's cost is exact in machine cycles, so these numbers can be measured
-per frame instead of estimated.
+cycles/s, ~15 MIPS. The 10 KiB RX ring holds ~6 full-size or ~140 minimum
+frames: at 2.5 Gb/s that is ~33 µs of traffic, so a flood towards the CPU
+overflows it within one main-loop pass. Hence the traps and storm control.
+
+Measured on rtlsim (`make test-net`, the SWTG024AS compact image against
+Linux in a netns). The cost is the CPU's busy machine cycles from a frame
+landing in the ring to the reply's `NIC_TXCMD`. In rtlsim DMA, register
+handshakes and flash reads are instant, so silicon is somewhat slower:
+
+| frame in → reply out | machine cycles | time |
+|---|---|---|
+| ARP request → reply | ~5,100 | 164 µs |
+| ICMP echo → reply | ~4,550 | 146 µs |
+| TCP SYN → SYN-ACK | ~6,300 | 203 µs |
+| HTTP GET → first segment | ~275,000 | 8.8 ms |
+| TCP ACK → next full segment (1460 B) | ~154,000 | 4.9 ms |
+
+- Small frames: a few thousand a second, as estimated. Ping's RTT is 0.4-0.7 ms.
+- uIP doesn't check checksums on input: the IPv4 header check is commented
+  out and TCP has none; only a nonzero UDP checksum is checked. On output the
+  ASIC fills in the IPv4 header, TCP and ICMP checksums (uIP turns an echo
+  into its reply without fixing the ICMP checksum). The old estimate of
+  ~0.5 ms per inbound segment for checksums was wrong.
+- A served segment costs ~100 cycles a byte, nearly all in
+  `flash_read_bulk()` (the web UI is gzipped in flash) and SDCC's
+  generic-pointer `memcpy()`. That bounds TCP: app.js (53 KB) comes in at
+  270-280 KiB/s, which is the CPU's speed. uIP keeps one segment in flight,
+  but Linux ACKed every segment at once: wall time matched CPU time, with no
+  delayed-ACK stalls in these transfers. The ~36 KB/s estimate assumed stalls
+  that didn't happen.
+- The web UI, after the login (0.04 s): `/` and `/app.js` (8 + 53 KB) in 0.24 s.
+- The firmware never idles after its boot (see README.md, "Found"), so these
+  latencies include up to one main-loop pass before `handle_rx()` runs.
+
+Frames per reply come from `--trace-nic` (one line per frame; a TX line has
+the busy cycles since the last RX).
 
 ### Bridge setup
 rtlsim creates `sw-<name>` on start: `datapath_type=netdev`,
@@ -328,7 +356,10 @@ hosts:
 ## Open questions (resolve on the bench)
 - PSBANK=0 mapping, image header offset, exact interrupt vectors and sources.
 - The 8051 clock (CKCON, timer reloads vs measured tick).
-- NIC ring / descriptor format and the TX header (`rtl837x_nic.c` is the spec).
+- NIC, modelled after `rtl837x_nic.c`; still unknown: whether the RX length
+  counts the FCS (rtlsim leaves it out, and pads to 60 first), descriptor
+  bytes 1-2 and 6-7, whether `NIC_RX_BUFF_DATA` counts slots or bytes,
+  whether the ASIC fills in UDP checksums, whether TX DMA wraps.
 - Which registers the boot polls, and with what expected values.
 - The table-access protocol per table (`TBL_CTRL` encoding), flood-mask
   registers, mirroring registers.
