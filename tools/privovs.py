@@ -6,6 +6,7 @@ of the system's OVS (/var/run/openvswitch, /etc/openvswitch) is used.
     o = Ovs(ns, dir); o.start()
     o.bridge("sw0", controller=sock)          # rtlsim --ofp sock (None: later)
     o.veth("sw0", "h1", ofport=5)             # h1 in the namespace <-> port 5
+    o.port("sw0", "eth1", ofport=6)           # a real interface as port 6
     ...
     o.stop()
 """
@@ -66,9 +67,41 @@ class Ovs:
         self.vsctl("add-port", bridge, sw, "--", "set", "interface", sw, f"ofport_request={ofport}")
         return sw
 
+    def port(self, bridge, iface, ofport):
+        """A real interface as OpenFlow port `ofport`: moved into the
+        namespace (it leaves the host's own networking until stop()), with no
+        address, IPv6 off so the kernel sends nothing of its own, and offloads
+        off, as the userspace datapath wants whole frames."""
+        if iface == "eth0" or iface.startswith("eth0@"):
+            raise RuntimeError("privovs: eth0 is the host's uplink, never a switch port")
+        ip = ["ip", "netns", "exec", self.ns]
+        sudo("ip", "link", "set", iface, "down")
+        sudo("ip", "link", "set", iface, "netns", self.ns)
+        self.moved = getattr(self, "moved", []) + [iface]
+        sudo(*ip, "sysctl", "-q", "-w", f"net.ipv6.conf.{iface}.disable_ipv6=1")
+        sudo(*ip, "ip", "addr", "flush", "dev", iface)
+        sudo(*ip, "ethtool", "-K", iface, "gro", "off", "gso", "off", "tso", "off", check=False)
+        sudo(*ip, "ip", "link", "set", iface, "up")
+        self.vsctl("add-port", bridge, iface, "--", "set", "interface", iface, f"ofport_request={ofport}")
+        return iface
+
     def stop(self):
         for p in ("vswitchd", "ovsdb"):
             pid = os.path.join(self.d, f"{p}.pid")
             if os.path.exists(pid):
                 sudo("kill", open(pid).read().strip(), check=False)
         time.sleep(0.2)
+        self.give_back()
+
+    def give_back(self):
+        """Hand the real interfaces back, down: to the namespace of PID 1, the
+        one they came from. Left in the namespace, a deleted namespace would
+        return them to the kernel's first namespace, which in a container is
+        the host's. Raises if one can't be moved, so the caller keeps the
+        namespace (and the interface) rather than lose it."""
+        for iface in list(getattr(self, "moved", [])):
+            ip = ["ip", "netns", "exec", self.ns]
+            sudo(*ip, "ip", "link", "set", iface, "down", check=False)
+            sudo(*ip, "ip", "link", "set", iface, "netns", "1")
+            sudo("ip", "link", "set", iface, "down")
+            self.moved.remove(iface)

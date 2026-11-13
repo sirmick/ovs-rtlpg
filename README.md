@@ -86,8 +86,13 @@ time (300 s).
 on it from a board file. Every front port becomes an OVS port (a veth), and
 each `--host FRONT=ADDR/LEN` gets a namespace of its own, `rtl-sw0-FRONT`,
 with Linux on that port: `sudo ip netns exec rtl-sw0-1 curl
-http://192.168.2.2/`. The switch's console is the terminal, and `^C`
-removes everything.
+http://192.168.2.2/`. `--port FRONT=IFACE` puts a real interface there
+instead (`--port 1=eth1`): it moves into the switch's namespace while the
+switch runs, with no address and IPv6 off, and goes back to the host down;
+eth0 is refused. `--flash FILE` keeps the switch's flash, and with it its
+saved config; `tools/flashcfg.py FILE --set "ip 172.16.16.245" ...` edits
+that config with the switch off. The switch's console is the terminal, and
+`^C` removes everything.
 
 UART is stdin/stdout. Registers nobody has modelled are plain storage, and
 the first access to each is logged ("unmodelled reg ...").
