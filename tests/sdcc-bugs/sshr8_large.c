@@ -7,8 +7,8 @@
  * the sign, and does not reload A before the "rrc a" loop (the small model
  * emits "mov a,r4" there). The result is one shift short, with a stray bit:
  * -24 >> 2 gives -12, not -6. It happens whenever the operand is in A first
- * (a volatile xdata variable loaded with movx does it too). Found by tests/isa/t_arith.c. Not yet checked
- * against a stock SDCC build.
+ * (a volatile xdata variable loaded with movx does it too). Found by tests/isa/t_arith.c.
+ * Also in stock SDCC 4.6.0 #16555 (no patches): an upstream bug.
  */
 #include <stdint.h>
 void f(uint8_t v);

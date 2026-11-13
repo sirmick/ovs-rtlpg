@@ -5,9 +5,8 @@
  *
  * t1 passes the 16-bit sum, sign-extended (dph = high byte of a + b), where
  * C requires (a + b) & 0xff. t2, through a uint8_t variable, is right.
- * Found by rtlsim's differential ISA test (tests/isa/t_arith.c). Not yet
- * checked against a stock SDCC build, so it may come from one of the
- * RTLPlayground codegen patches (0001 positionRegs, 0002 spillThis).
+ * Found by rtlsim's differential ISA test (tests/isa/t_arith.c).
+ * Also in stock SDCC 4.6.0 #16555 (no patches): an upstream bug.
  */
 #include <stdint.h>
 
