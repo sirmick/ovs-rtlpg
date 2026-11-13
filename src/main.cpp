@@ -4,7 +4,7 @@
 //   rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace]
 //          [--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]
 //          [--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime]
-//          [--sfp SLOT=EEPROM.bin] [--trace-i2c]
+//          [--sfp SLOT=EEPROM.bin] [--trace-i2c] [--ofp PATH] [--trace-of]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -16,6 +16,14 @@
 // through a UNIX stream socket at PATH in QEMU -netdev stream framing (see
 // net/stream.h); the port gets a 1G link unless --link says otherwise.
 // --trace-nic logs every frame, with the CPU's busy cycles per reply.
+//
+// --ofp PATH makes rtlsim the OpenFlow controller of an OVS bridge, which
+// connects to the UNIX socket at PATH (see net/openflow.h): OpenFlow port N
+// is physical port N - 1, its link follows the OVS port's (at the --link
+// speed if given, else 1G), frames from it reach the CPU as packet-ins and
+// the CPU's frames for it go out as packet-outs. --trace-of logs the
+// connection and port changes. --nic and --ofp can be used together, on
+// different ports.
 //
 // --realtime keeps the firmware's clock (31.25 M machine cycles a second)
 // from running ahead of the wall clock while a peer is connected, so a peer's
@@ -35,6 +43,7 @@
 // the bank check found something.
 #include "sys/system.h"
 #include "net/stream.h"
+#include "net/openflow.h"
 
 #include <chrono>
 #include <cstring>
@@ -102,9 +111,9 @@ static bool pump_stdin(rtl837x_system &sys)
 
 int main(int argc, char **argv)
 {
-	const char *image = nullptr, *flash_file = nullptr, *check_map = nullptr, *nic_path = nullptr;
+	const char *image = nullptr, *flash_file = nullptr, *check_map = nullptr, *nic_path = nullptr, *ofp_path = nullptr;
 	int nic_port = -1, realtime = -1;
-	bool trace_nic = false, trace_i2c = false;
+	bool trace_nic = false, trace_i2c = false, trace_of = false;
 	std::vector<std::pair<unsigned, std::string>> sfps;
 	std::vector<std::pair<unsigned, int>> links;
 	long long cycles = 100000000;
@@ -134,7 +143,11 @@ int main(int argc, char **argv)
 				return 1;
 			}
 			sfps.emplace_back(atoi(argv[i]), eq + 1);
-		} else if (!strcmp(argv[i], "--trace-i2c"))
+		} else if (!strcmp(argv[i], "--ofp") && i + 1 < argc)
+			ofp_path = argv[++i];
+		else if (!strcmp(argv[i], "--trace-of"))
+			trace_of = true;
+		else if (!strcmp(argv[i], "--trace-i2c"))
 			trace_i2c = true;
 		else if (!strcmp(argv[i], "--trace-nic"))
 			trace_nic = true;
@@ -163,7 +176,8 @@ int main(int argc, char **argv)
 		else {
 			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
 				"[--trace-sfr] [--trace-reg] [--trace-flash] [--link P=SPEED] [--check-banks MAP] [--quiet] [--stats] "
-				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime] [--sfp SLOT=EEPROM.bin] [--trace-i2c]\n");
+				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime] [--sfp SLOT=EEPROM.bin] [--trace-i2c] "
+				"[--ofp PATH] [--trace-of]\n");
 			return 1;
 		}
 	}
@@ -210,22 +224,48 @@ int main(int argc, char **argv)
 		}
 	}
 	std::unique_ptr<stream_port> wire;
-	if (nic_path) {
-		try {
+	std::unique_ptr<of_controller> ofp;
+	try {
+		if (nic_path)
 			wire = std::make_unique<stream_port>(nic_path);
-		} catch (const std::exception &e) {
-			fprintf(stderr, "rtlsim: %s\n", e.what());
-			return 1;
-		}
-		signal(SIGPIPE, SIG_IGN);
+		if (ofp_path)
+			ofp = std::make_unique<of_controller>(ofp_path);
+	} catch (const std::exception &e) {
+		fprintf(stderr, "rtlsim: %s\n", e.what());
+		return 1;
+	}
+	signal(SIGPIPE, SIG_IGN);
+	if (wire) {
 		if (sys.link(nic_port) == rtl837x_system::LINK_DOWN)
 			sys.set_link(nic_port, 2);
 		sys.nic().peers = 1u << nic_port;
-		sys.nic().transmit = [&wire](unsigned, const std::vector<u8> &f) { wire->send(f); };
 	}
+	if (ofp) {
+		ofp->trace = trace_of;
+		ofp->packet_in = [&](unsigned p, const u8 *f, size_t n) {
+			if (int(p) != nic_port)
+				sys.nic().receive(p, f, n);
+		};
+		ofp->port_status = [&](unsigned p, bool exists, bool up) {
+			if (int(p) == nic_port)
+				return;
+			int speed = 2;
+			for (auto &[lp, sp] : links)
+				if (lp == p && sp != rtl837x_system::LINK_DOWN)
+					speed = sp;
+			sys.set_link(p, up ? speed : rtl837x_system::LINK_DOWN);
+			sys.nic().peers = (sys.nic().peers & ~(1u << p)) | (u16(exists) << p);
+		};
+	}
+	sys.nic().transmit = [&](unsigned p, const std::vector<u8> &f) {
+		if (wire && int(p) == nic_port)
+			wire->send(f);
+		else if (ofp)
+			ofp->packet_out(p, f);
+	};
 	sys.nic().trace = trace_nic;
 	if (realtime < 0)
-		realtime = nic_path != nullptr;
+		realtime = wire || ofp;
 	if (check_map) {
 		sys.bankcheck = std::make_unique<bank_checker>();
 		if (!sys.bankcheck->load_map(check_map)) {
@@ -241,13 +281,15 @@ int main(int argc, char **argv)
 	int rc = 2;
 	for (u64 done = 0; cycles == 0 || done < u64(cycles);) {
 		// slices of 100 us of firmware time when paced, so frames wait little
-		bool const paced = realtime && wire && wire->connected();
+		bool const paced = realtime && ((wire && wire->connected()) || (ofp && ofp->connected()));
 		int const slice = paced ? 3125 : 100000;
 		done += slice;
 		if (stdin_open && sys.uart_idle())
 			stdin_open = pump_stdin(sys);
 		if (wire)
 			wire->poll([&](const u8 *f, size_t n) { sys.nic().receive(nic_port, f, n); });
+		if (ofp)
+			ofp->poll();
 		if (!sys.run(slice)) {
 			rc = 0;
 			break;
@@ -262,15 +304,16 @@ int main(int argc, char **argv)
 			double const wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - pace_t0).count();
 			double const ahead = (sys.cycles - pace_c0) / CYCLES_PER_S - wall;
 			if (ahead > 0) {
-				struct pollfd p[2] = { { stdin_open ? 0 : -1, POLLIN, 0 }, { wire ? wire->fd() : -1, POLLIN, 0 } };
+				struct pollfd p[3] = { { stdin_open ? 0 : -1, POLLIN, 0 }, { wire ? wire->fd() : -1, POLLIN, 0 },
+						       { ofp ? ofp->fd() : -1, POLLIN, 0 } };
 				struct timespec ts = { time_t(ahead), long((ahead - time_t(ahead)) * 1e9) };
-				ppoll(p, 2, &ts, nullptr);
+				ppoll(p, 3, &ts, nullptr);
 			} else if (ahead < -0.1) {
 				pace_t0 = std::chrono::steady_clock::now();
 				pace_c0 = sys.cycles;
 			}
 		}
-		if (!stdin_open && !wire && sys.uart_idle() && cycles == 0) {
+		if (!stdin_open && !wire && !ofp && sys.uart_idle() && cycles == 0) {
 			// input ended: let the firmware finish its answer, then stop
 			sys.run(20000000);
 			rc = 3;
@@ -286,7 +329,7 @@ int main(int argc, char **argv)
 			(unsigned long long)sys.cycles, s, sys.cycles / s / 1e6, (unsigned long long)sys.cpu().busy_cycles,
 			(unsigned long long)sys.cpu().idle_skipped, (unsigned long long)sys.resets);
 		auto &n = sys.nic().stats;
-		if (wire)
+		if (wire || ofp)
 			fprintf(stderr, "rtlsim: NIC rx %llu (%llu dropped), tx %llu (%llu dropped)\n",
 				(unsigned long long)n.rx, (unsigned long long)n.rx_dropped,
 				(unsigned long long)n.tx, (unsigned long long)n.tx_dropped);
