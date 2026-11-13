@@ -11,10 +11,13 @@ silicon.
   port table's State and Link columns match silicon's.
 - The prompt comes up, and CLI commands work against the modelled chip:
   registers, the VLAN table, the L2 table.
+- With a 10G module in SFP slot 1 (tools/mksfp.py), the firmware reads its
+  EEPROM over I2C when its SFP poll finds it, and in the sfp command; slot 2
+  stays empty.
 - With --flash, the chip persists: the first boot writes the default config,
   the second finds it.
 """
-import argparse, os, re, sys, tempfile, time
+import argparse, os, re, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from console import Console, PROMPT
 
@@ -86,6 +89,21 @@ def main():
     check(ok and re.search(r"06:0f:00:c8:54:07\s+0x0001\s+static\s+CPU", out) is not None,
           "the L2 table holds the CPU's MAC (static, VLAN 1)")
     c.close()
+
+    with tempfile.TemporaryDirectory() as d:
+        sfp = os.path.join(d, "sfp.bin")
+        subprocess.run([sys.executable, os.path.join(HERE, "../../tools/mksfp.py"), sfp, "--vendor", "ACME"], check=True)
+        c = Console(a.rtlsim, a.image, ["--sfp", f"1={sfp}", "--link", "8=10g"])
+        # the main loop's SFP poll finds it after the prompt
+        up = c.expect(PROMPT, 120) and c.expect(b"Module: ACME", 30)
+        boot = c.log.decode(errors="replace")
+        check(up and re.search(r"<MODULE INSERTED>  Slot: 1  Rate: 67  Encoding: 06  Module: ACME ", boot) is not None
+              and re.search(r"\tSFP IN\t10G\t", boot) is not None,
+              "an SFP module in slot 1: its port is up at 10G, the firmware reads its EEPROM")
+        ok, out = run(c, "sfp")
+        check(ok and "Slot 1 - Rate: 67" in out and "Options: 68" in out and "Vcc: 80e8" in out
+              and "Slot 2 - empty" in out, "the sfp command reads its identity and diagnostics")
+        c.close()
 
     with tempfile.TemporaryDirectory() as d:
         state = os.path.join(d, "flash.bin")

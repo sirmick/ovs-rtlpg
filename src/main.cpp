@@ -4,6 +4,7 @@
 //   rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace]
 //          [--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]
 //          [--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime]
+//          [--sfp SLOT=EEPROM.bin] [--trace-i2c]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -21,6 +22,10 @@
 // TCP timers and the firmware's agree; it is on with --nic. With no peer
 // nobody sees the clock, so the boot still takes a fraction of a second
 // instead of silicon's 8 s. Without it the simulation runs as fast as it can.
+//
+// --sfp SLOT=FILE puts a module in SFP cage SLOT (1, 2): FILE is its EEPROM,
+// 256 bytes (SFF-8472 A0h) or 512 (A0h, then the A2h diagnostics); see
+// tools/mksfp.py. --trace-i2c logs every I2C transfer.
 //
 // --check-banks MAP reports constants read with movc from bytes that ran as
 // code in the same bank (the const-bank bug class; see sys/bankcheck.h).
@@ -99,7 +104,8 @@ int main(int argc, char **argv)
 {
 	const char *image = nullptr, *flash_file = nullptr, *check_map = nullptr, *nic_path = nullptr;
 	int nic_port = -1, realtime = -1;
-	bool trace_nic = false;
+	bool trace_nic = false, trace_i2c = false;
+	std::vector<std::pair<unsigned, std::string>> sfps;
 	std::vector<std::pair<unsigned, int>> links;
 	long long cycles = 100000000;
 	u32 flash_size = 0x80000;
@@ -121,6 +127,15 @@ int main(int argc, char **argv)
 			nic_path = argv[++i];
 		else if (!strcmp(argv[i], "--nic-port") && i + 1 < argc)
 			nic_port = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--sfp") && i + 1 < argc) {
+			const char *eq = strchr(argv[++i], '=');
+			if (!eq) {
+				fprintf(stderr, "rtlsim: --sfp SLOT=EEPROM.bin\n");
+				return 1;
+			}
+			sfps.emplace_back(atoi(argv[i]), eq + 1);
+		} else if (!strcmp(argv[i], "--trace-i2c"))
+			trace_i2c = true;
 		else if (!strcmp(argv[i], "--trace-nic"))
 			trace_nic = true;
 		else if (!strcmp(argv[i], "--realtime"))
@@ -148,7 +163,7 @@ int main(int argc, char **argv)
 		else {
 			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
 				"[--trace-sfr] [--trace-reg] [--trace-flash] [--link P=SPEED] [--check-banks MAP] [--quiet] [--stats] "
-				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime]\n");
+				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime] [--sfp SLOT=EEPROM.bin] [--trace-i2c]\n");
 			return 1;
 		}
 	}
@@ -182,6 +197,18 @@ int main(int argc, char **argv)
 	sys.flash().trace = trace_flash;
 	for (auto &[p, sp] : links)
 		sys.set_link(p, sp);
+	sys.i2c().trace = trace_i2c;
+	for (auto &[slot, path] : sfps) {
+		std::vector<u8> e = load(path.c_str());
+		if (e.size() != 256 && e.size() != 512) {
+			fprintf(stderr, "rtlsim: %s: an SFP EEPROM is 256 or 512 bytes\n", path.c_str());
+			return 1;
+		}
+		if (!sys.set_sfp(slot, e)) {
+			fprintf(stderr, "rtlsim: the %s board has no SFP slot %u\n", sys.board_info().name, slot);
+			return 1;
+		}
+	}
 	std::unique_ptr<stream_port> wire;
 	if (nic_path) {
 		try {

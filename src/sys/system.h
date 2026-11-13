@@ -16,6 +16,8 @@
 #include "sys/switch_core.h"
 #include "sys/tables.h"
 #include "sys/nic.h"
+#include "sys/i2c.h"
+#include "sys/board.h"
 #include "sys/bankcheck.h"
 
 #include <cstdio>
@@ -52,6 +54,7 @@ public:
 	switch_core &core() { return m_core; }
 	switch_tables &tables() { return m_tables; }
 	cpu_nic &nic() { return m_nic; }
+	i2c_controller &i2c() { return m_i2c; }
 	u8 code_read(u16 addr);			// as the CPU sees it now
 	u32 code_flash_addr(u16 addr, u8 psbank) const;
 
@@ -65,6 +68,12 @@ public:
 	// What drives a GPIO input pin (0-63) from outside; pins nobody drives
 	// read 1 (pulled up), so an empty SFP cage reads "no module".
 	void set_gpio(unsigned pin, bool level) { if (pin < 64) m_gpio_ext = (m_gpio_ext & ~(1ull << pin)) | (u64(level) << pin); }
+
+	// An SFP module in cage `slot` (1-based): its EEPROM, 256 bytes at I2C
+	// 0x50 and, if there are 512, the diagnostics at 0x51. Empty: pull it.
+	// False if the board has no such cage.
+	bool set_sfp(unsigned slot, const std::vector<u8> &eeprom);
+	const board &board_info() const { return m_board; }
 
 	void uart_input(const std::string &s) { m_rx.insert(m_rx.end(), s.begin(), s.end()); }
 	bool uart_idle() const { return m_rx.empty(); }
@@ -89,12 +98,16 @@ private:
 	void seed_chip();
 	void model_links();
 	void model_gpio();
+	void model_los();
 
 	rtl837x_cpu m_cpu;
 	std::unique_ptr<flash_controller> m_flash;
 	switch_core m_core;
 	switch_tables m_tables{m_core};
 	cpu_nic m_nic{m_core, m_tables};
+	i2c_controller m_i2c{m_core};
+	board m_board = board_swtg024as();
+	std::vector<bool> m_sfp_in;
 	std::vector<u8> m_code_ram;		// the common code, 0x0000-0x3fff
 	std::vector<u8> m_xdata;
 	u8 m_sfr[256] = {};			// SFRs nobody models yet

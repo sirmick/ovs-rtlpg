@@ -111,8 +111,41 @@ void rtl837x_system::set_link(unsigned phys_port, int speed)
 	if (phys_port >= 10 || m_link[phys_port] == speed)
 		return;
 	m_link[phys_port] = speed;
+	model_los();
 	m_cpu.set_int0(true);		// the falling edge IT0 waits for; released after a slice
 	m_int0_pulse = true;
+}
+
+bool rtl837x_system::set_sfp(unsigned slot, const std::vector<u8> &eeprom)
+{
+	if (slot < 1 || slot > m_board.sfp.size())
+		return false;
+	board_sfp const &c = m_board.sfp[slot - 1];
+	bool const in = !eeprom.empty();
+	std::vector<u8> a0, a2;
+	if (in) {
+		a0.assign(eeprom.begin(), eeprom.begin() + std::min<size_t>(eeprom.size(), 256));
+		a0.resize(256, 0xff);
+		if (eeprom.size() > 256)
+			a2.assign(eeprom.begin() + 256, eeprom.begin() + std::min<size_t>(eeprom.size(), 512));
+	}
+	m_i2c.attach(c.i2c_bus, 0x50, a0);
+	m_i2c.attach(c.i2c_bus, 0x51, a2);
+	set_gpio(c.detect_gpio, !in);
+	m_sfp_in.resize(m_board.sfp.size());
+	m_sfp_in[slot - 1] = in;
+	model_los();
+	return true;
+}
+
+// LOS is high without light: no module, or no link on its port.
+void rtl837x_system::model_los()
+{
+	for (size_t i = 0; i < m_board.sfp.size(); i++) {
+		board_sfp const &c = m_board.sfp[i];
+		if (c.los_gpio != board::NO_GPIO)
+			set_gpio(c.los_gpio, !(i < m_sfp_in.size() && m_sfp_in[i]) || link(c.phys) == LINK_DOWN);
+	}
 }
 
 u32 rtl837x_system::code_flash_addr(u16 addr, u8 psbank) const

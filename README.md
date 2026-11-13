@@ -15,7 +15,9 @@ its web UI.
   RTLPlayground's SPI-NOR model (`third_party/rtlplayground`); the switch
   core (register handshake, SerDes, SMI/PHY) and its table engine (VLAN, L2,
   flush, counters, ported from RTLPlayground's `test/hw_mock.c`); the CPU
-  port's NIC (`nic.h`: DMA, RX ring, TX area, INT1, checksum offload).
+  port's NIC (`nic.h`: DMA, RX ring, TX area, INT1, checksum offload); the
+  I2C master (`i2c.h`) and SFP modules on it (`board.h`: the bench board's
+  cages).
 - `src/net`: a front port on a UNIX stream socket, framed as QEMU's
   `-netdev stream`.
 
@@ -48,6 +50,13 @@ firmware's clock is held to the wall clock (`--no-realtime` turns that off).
 firmware's address is 192.168.2.2 unless its saved config says otherwise
 (CLI: `ip`), and the web password is 1234.
 
+`--sfp SLOT=EEPROM.bin` puts a module in SFP cage 1 or 2 (the firmware's
+slot numbers): its detect pin goes low and its EEPROM (SFF-8472 A0h, and A2h
+if the file has 512 bytes) answers on the cage's I2C bus. Empty cages NACK.
+`tools/mksfp.py` writes an EEPROM (`--speed 10g|1g`, `--vendor`, `--model`).
+Give the cage's port a link too (`--link 8=10g` for slot 1).
+`--trace-i2c` logs each transfer.
+
 UART is stdin/stdout. Registers nobody has modelled are plain storage, and
 the first access to each is logged ("unmodelled reg ...").
 
@@ -64,7 +73,7 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
   TCP and VLAN frames on the socket. `test_net.py` (`make test-net`, needs
   sudo, skipped without) bridges the socket to a tap in a private network
   namespace; its Linux pings the switch, logs in, loads the web UI and
-  measures throughput. It also prints what each kind of reply cost the CPU
+  every JSON page it uses (with a module in slot 1), and measures throughput. It also prints what each kind of reply cost the CPU
   (DESIGN.md, "How fast").
 - `tests/sdcc-bugs`: two SDCC 4.6.0 miscompilations the ISA tests found.
 

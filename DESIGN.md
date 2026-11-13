@@ -290,14 +290,16 @@ on the board, so a wrong machine file shows up as a misbehaving switch.
     { "phys": 5, "front": "2", "phy": "internal-2g5", "smi": 1 },
     { "phys": 6, "front": "3", "phy": "internal-2g5", "smi": 2 },
     { "phys": 7, "front": "4", "phy": "internal-2g5", "smi": 3 },
-    { "phys": 3, "front": "SFP1", "sds": 1, "sfp": { "detect_gpio": 30, "los_gpio": 37, "i2c": [39, 40], "module": "10g-sr.bin" } },
-    { "phys": 8, "front": "SFP2", "sds": 0, "sfp": { "detect_gpio": 50, "los_gpio": 51, "i2c": [41, 40], "module": null } }
+    { "phys": 8, "front": "SFP1", "sds": 1, "sfp": { "detect_gpio": 30, "los_gpio": null, "i2c": [39, 40], "module": "10g-sr.bin" } },
+    { "phys": 3, "front": "SFP2", "sds": 0, "sfp": { "detect_gpio": 50, "los_gpio": null, "i2c": [41, 40], "module": null } }
   ],
   "gpio": { "reset": null },
   "i2c_devices": []
 }
 ```
-A tool can draft the JSON from an RTLPlayground machine `.c`. `i2c_devices`
+A tool can draft the JSON from an RTLPlayground machine `.c`. Until the JSON
+exists, `src/sys/board.h` builds in the bench board's SFP wiring, and
+`--sfp SLOT=EEPROM.bin` inserts a module (`tools/mksfp.py` writes one). `i2c_devices`
 covers later additions: SFP EEPROMs (module dumps), and the POE-2G040210GSM's
 RTL8238B as a stub.
 

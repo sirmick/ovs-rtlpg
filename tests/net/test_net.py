@@ -10,14 +10,18 @@ and the namespace's Linux pings the switch and loads its web UI. Needs sudo
 namespace is touched.
 
 Also measures: the firmware's machine cycles per reply (from --trace-nic),
-the time to load the web UI, and TCP throughput.
+the time to load the web UI, and TCP throughput. A 10G SFP module
+(tools/mksfp.py) sits in slot 1, so the pages that read its EEPROM have one.
 """
-import argparse, os, re, shutil, statistics, subprocess, sys, tempfile, time
+import argparse, json, os, re, shutil, statistics, subprocess, sys, tempfile, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "../fw"))
 from console import Console, PROMPT
 
 CYCLES_PER_S = 125e6 / 4
+# Every JSON page app.js fetches
+PAGES = ["information", "ports", "counters", "traffic", "vlan", "vlanlist", "lag", "isolation", "mirror",
+         "storm", "bandwidth", "eee", "lldp", "stp", "stpcnt"]
 failures = 0
 
 
@@ -74,7 +78,10 @@ def main():
     d = tempfile.mkdtemp(prefix="rtlsim-net-")
     sock, ns, tap = os.path.join(d, "nic.sock"), f"rtlsim{os.getpid()}", "rtap0"
     err = open(os.path.join(d, "rtlsim.err"), "w+")
-    c = Console(a.rtlsim, a.image, ["--nic", sock, "--nic-port", str(a.port), "--trace-nic"], stderr=err)
+    sfp = os.path.join(d, "sfp.bin")
+    subprocess.run([sys.executable, os.path.join(HERE, "../../tools/mksfp.py"), sfp], check=True)
+    c = Console(a.rtlsim, a.image, ["--nic", sock, "--nic-port", str(a.port), "--trace-nic",
+                                    "--sfp", f"1={sfp}", "--link", "8=10g"], stderr=err)
     bridge = None
     try:
         check(c.expect(PROMPT, 30), "boots to the prompt")
@@ -121,6 +128,22 @@ def main():
         sizes = "+".join(row[2] for row in rows) if ok else ""
         check(ok, f"the web UI (/ and /app.js, {sizes} bytes) loads in {load:.2f} s"
               + ("" if ok else f": {r.stdout} {r.stderr}"))
+
+        bad, seen = [], ""
+        for page in PAGES:
+            r = sudo(*nsx, "curl", "-s", "--max-time", "10", "-b", jar, "-w", r"\n%{http_code}",
+                     f"http://{ip}/{page}.json", timeout=30)
+            body, _, code = r.stdout.rpartition("\n")
+            try:
+                json.loads(body)
+                ok = code == "200"
+            except ValueError:
+                ok = False
+            if not ok:
+                bad.append(f"{page} ({code}: {body[:60]!r})")
+            seen += body
+        check(not bad, f"all {len(PAGES)} JSON pages answer with JSON" + (f"; not: {', '.join(bad)}" if bad else ""))
+        check("RTLSIM" in seen, "the SFP module's vendor shows in the web UI's data")
 
         r = sudo(*curl, "-o", "/dev/null", f"http://{ip}/app.js", timeout=90)
         _, code, size, secs = (r.stdout.split() + ["", "", "0", "0"])[:4]
