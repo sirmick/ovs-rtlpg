@@ -1,0 +1,23 @@
+{
+  "name": "mokerlink_2g040210gsm",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/MOKERLINK_2G040210GSM.{h,c} (2M_PCB43_V1_1.c).",
+  "model": "MokerLink 2G040210GSM",
+  "chip": "RTL8372",
+  "uuid": "0x7ff24200",
+  "lot": "0x4b000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "factory_mac_at": "0x1FC000",
+  "reset_gpio": 54,
+  "ports": [
+    {"phys": 4, "front": "1"},
+    {"phys": 5, "front": "2"},
+    {"phys": 6, "front": "3"},
+    {"phys": 7, "front": "4"},
+    {"phys": 3, "front": "5", "sfp": {"slot": 1, "detect_gpio": 50, "los_gpio": 10, "i2c": [41, 40], "module": null}},
+    {"phys": 8, "front": "6", "sfp": {"slot": 2, "detect_gpio": 30, "los_gpio": 37, "i2c": [39, 40], "module": null}}
+  ]
+}

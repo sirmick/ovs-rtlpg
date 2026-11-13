@@ -1,0 +1,29 @@
+{
+  "name": "hasivo_s1100p_8gt_1sx_s",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/HASIVO_S1100P_8GT_1SX_S.{h,c} (S1100P_8GT_1SX_73N_S_V1_01.c).",
+  "model": "Hasivo S1100P-8GT-1SX-S",
+  "chip": "RTL8373",
+  "uuid": "0xd872bf00",
+  "lot": "0xd9000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "factory_mac_at": "0x1FC000",
+  "reset_gpio": 54,
+  "ports": [
+    {"phys": 0, "front": "1"},
+    {"phys": 1, "front": "2"},
+    {"phys": 2, "front": "3"},
+    {"phys": 3, "front": "4"},
+    {"phys": 4, "front": "5"},
+    {"phys": 5, "front": "6"},
+    {"phys": 6, "front": "7"},
+    {"phys": 7, "front": "8"},
+    {"phys": 8, "front": "9", "sfp": {"slot": 1, "detect_gpio": 38, "los_gpio": 37, "i2c": [39, 40], "module": null}}
+  ],
+  "chips": [
+    {"type": "rtl8224", "comment": "the RTL8373 path's PHYs; not modelled yet"}
+  ]
+}

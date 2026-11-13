@@ -1,0 +1,21 @@
+{
+  "name": "zoerax_hg0402xg",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/ZOERAX_HG0402XG.{h,c} (HG0402XG_V1_1.c).",
+  "model": "ZoeRax HG0402XG",
+  "chip": "RTL8372",
+  "uuid": "0x7fe24000",
+  "lot": "0xd3000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "ports": [
+    {"phys": 4, "front": "1"},
+    {"phys": 5, "front": "2"},
+    {"phys": 6, "front": "3"},
+    {"phys": 7, "front": "4"},
+    {"phys": 3, "front": "5", "sfp": {"slot": 1, "detect_gpio": 30, "los_gpio": null, "i2c": [39, 40], "module": null}},
+    {"phys": 8, "front": "6", "sfp": {"slot": 2, "detect_gpio": 50, "los_gpio": null, "i2c": [41, 40], "module": null}}
+  ]
+}

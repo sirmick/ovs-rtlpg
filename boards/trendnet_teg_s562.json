@@ -1,0 +1,21 @@
+{
+  "name": "trendnet_teg_s562",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/TRENDNET_TEG_S562.{h,c} (270_NB1_MS206B004A1_REV_A1.c).",
+  "model": "Trendnet TEG-S562",
+  "chip": "RTL8372",
+  "uuid": "0x99b34100",
+  "lot": "0xbd000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "ports": [
+    {"phys": 4, "front": "1"},
+    {"phys": 5, "front": "2"},
+    {"phys": 6, "front": "3"},
+    {"phys": 7, "front": "4"},
+    {"phys": 8, "front": "5", "sfp": {"slot": 2, "detect_gpio": 36, "los_gpio": 37, "i2c": [49, 48], "module": null}},
+    {"phys": 3, "front": "6", "sfp": {"slot": 1, "detect_gpio": 38, "los_gpio": 50, "i2c": [47, 46], "module": null}}
+  ]
+}

@@ -36,7 +36,7 @@
 // --board FILE describes the hardware around the chip (sys/board.h): the
 // chip's identity, the flash chip (its size unless --flash-size says
 // otherwise), the front ports and SFP cages, and the modules in them. Without
-// it, the bench SWTG024AS (boards/swtg024as.json).
+// it, the bench SWTG024AS (boards/swgt024_v2_0_unmanaged.json).
 //
 // --sfp SLOT=FILE puts a module in SFP cage SLOT (1, 2): FILE is its EEPROM,
 // 256 bytes (SFF-8472 A0h) or 512 (A0h, then the A2h diagnostics); see

@@ -1,0 +1,23 @@
+{
+  "name": "sirivision_s25g2206fp_v1_1",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/SIRIVISION_S25G2206FP_V1_1.{h,c} (S25G2206FP_V1_1.c).",
+  "model": "SIRIVISION S25G2206FP V1.1",
+  "chip": "RTL8372",
+  "uuid": "0x09fc9300",
+  "lot": "0x07000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "factory_mac_at": "0x1FC000",
+  "reset_gpio": 36,
+  "ports": [
+    {"phys": 4, "front": "1"},
+    {"phys": 5, "front": "2"},
+    {"phys": 6, "front": "3"},
+    {"phys": 7, "front": "4"},
+    {"phys": 8, "front": "5", "sfp": {"slot": 1, "detect_gpio": 30, "los_gpio": 37, "i2c": [39, 40], "module": null}},
+    {"phys": 3, "front": "6", "sfp": {"slot": 2, "detect_gpio": 50, "los_gpio": 51, "i2c": [41, 40], "module": null}}
+  ]
+}

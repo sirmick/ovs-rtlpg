@@ -3,12 +3,16 @@
 // is wired to the SFP cages. Built in for the bench board, or read from a
 // board file (boards/*.json, DESIGN.md "Board JSON"):
 //
-//   { "name": "swtg024as", "chip": "RTL8372", "revision": "0x68",
+//   { "name": "swgt024_v2_0_unmanaged", "chip": "RTL8372", "revision": "0x68",
 //     "uuid": "0xc8540700", "lot": "0x0f000000",
 //     "flash": { "size": "512K", "jedec": "ef40" },
 //     "ports": [ { "phys": 4, "front": "1" }, ...,
-//       { "phys": 8, "front": "SFP1", "sfp": { "slot": 1, "detect_gpio": 30,
-//         "los_gpio": null, "i2c": [39, 40], "module": "sfp-10g.bin" } } ] }
+//       { "phys": 8, "front": "5", "sfp": { "slot": 1, "detect_gpio": 30,
+//         "los_gpio": 37, "i2c": [39, 40], "module": "sfp-10g.bin" } } ] }
+//
+// tools/mkboard.py drafts one from RTLPlayground's machine sources; boards/
+// has a draft for every machine there. Fields rtlsim doesn't use yet
+// ("model", "factory_mac_at", "reset_gpio", "chips") are ignored.
 //
 // "i2c" is [SDA pin, SCL pin], as RTLPlayground's machine files give them
 // (I2CBUS() in machine/machine_defs.h); the SDA pin picks the bus. A
@@ -63,11 +67,12 @@ struct board {
 	}
 };
 
-// The bench SWTG024AS (RTL8372 rev 0x68, MAC 06:0f:00:c8:54:07):
-// machine/pcb/PCB_SWTG024AS_V2_0_17452.c, is_sfp in
-// machine/SWGT024_V2_0_UNMANAGED.c. Slot 1 is the left cage (J4), physical
-// port 8 on SerDes 1; slot 2 the right one (J2), physical port 3 on SerDes 0.
-// Same as boards/swtg024as.json.
+// The bench SWTG024AS (RTL8372 rev 0x68, MAC 06:0f:00:c8:54:07), as
+// tools/mkboard.py drafts it from RTLPlayground's
+// machine/SWGT024_V2_0_UNMANAGED.c (pcb/PCB_SWTG024AS_V2_0_17452__UNMANAGED.c):
+// cage 1, front port 5, is physical port 8 (detect GPIO30, LOS GPIO37,
+// I2C SDA4); cage 2, front port 6, is physical port 3 (GPIO50, GPIO51, SDA3).
+// Same as boards/swgt024_v2_0_unmanaged.json.
 board board_swtg024as();
 
 // Reads a board file; throws std::runtime_error saying what is wrong.

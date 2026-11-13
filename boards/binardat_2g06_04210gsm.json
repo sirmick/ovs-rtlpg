@@ -1,0 +1,22 @@
+{
+  "name": "binardat_2g06_04210gsm",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/BINARDAT_2G06_04210GSM.{h,c} (NONAME_20240111.c).",
+  "model": "Binardat 2G06-04210GSM",
+  "chip": "RTL8372",
+  "uuid": "0x562f6900",
+  "lot": "0x0d000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "factory_mac_at": "0x1FC000",
+  "ports": [
+    {"phys": 7, "front": "1"},
+    {"phys": 6, "front": "2"},
+    {"phys": 5, "front": "3"},
+    {"phys": 4, "front": "4"},
+    {"phys": 3, "front": "5", "sfp": {"slot": 1, "detect_gpio": 37, "los_gpio": null, "i2c": [41, 40], "module": null}},
+    {"phys": 8, "front": "6", "sfp": {"slot": 2, "detect_gpio": 38, "los_gpio": null, "i2c": [39, 40], "module": null}}
+  ]
+}

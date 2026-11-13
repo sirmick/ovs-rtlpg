@@ -9,7 +9,7 @@ IGMP). See README.md.
 
 ## Goal
 
-    rtlsim --image rtlplayground.bin --board swtg024as.json [--map rtlplayground.map]
+    rtlsim --image rtlplayground.bin --board boards/swgt024_v2_0_unmanaged.json [--map rtlplayground.map]
 
 brings up **one switch**: the real, unmodified firmware image running on an
 emulated 8051 (with code banking), the RTL837x switch core reproduced as an
@@ -310,28 +310,34 @@ machine` (port mapping, SFP pins, LEDs); the JSON describes what is actually
 on the board, so a wrong machine file shows up as a misbehaving switch.
 ```json
 {
-  "name": "swtg024as",
+  "name": "poe_2g040210gsm",
+  "model": "MokerLink POE-2G040210GSM",
   "chip": "RTL8372",
-  "cpu_clock_hz": null,
-  "flash": { "jedec": "ef4013", "size": "512K" },
-  "factory": { "mac": "1c:2a:a3:00:00:01" },
+  "uuid": "0x69253500", "lot": "0xcf000000",
+  "flash": { "size": "2M", "jedec": "ef40" },
+  "factory_mac_at": "0x1FC000",
+  "reset_gpio": 48,
   "ports": [
-    { "phys": 4, "front": "1", "phy": "internal-2g5", "smi": 0 },
-    { "phys": 5, "front": "2", "phy": "internal-2g5", "smi": 1 },
-    { "phys": 6, "front": "3", "phy": "internal-2g5", "smi": 2 },
-    { "phys": 7, "front": "4", "phy": "internal-2g5", "smi": 3 },
-    { "phys": 8, "front": "SFP1", "sds": 1, "sfp": { "detect_gpio": 30, "los_gpio": null, "i2c": [39, 40], "module": "10g-sr.bin" } },
-    { "phys": 3, "front": "SFP2", "sds": 0, "sfp": { "detect_gpio": 50, "los_gpio": null, "i2c": [41, 40], "module": null } }
+    {"phys": 4, "front": "1"}, {"phys": 5, "front": "2"}, {"phys": 6, "front": "3"}, {"phys": 7, "front": "4"},
+    {"phys": 8, "front": "5", "sfp": {"slot": 1, "detect_gpio": 38, "los_gpio": null, "i2c": [39, 40], "module": null}},
+    {"phys": 3, "front": "6", "sfp": {"slot": 2, "detect_gpio": 37, "los_gpio": null, "i2c": [41, 40], "module": null}}
   ],
-  "gpio": { "reset": null },
-  "i2c_devices": []
+  "chips": [ {"type": "rtl8238b", "i2c": [47, 46], "addr": "0x20"} ]
 }
 ```
-A tool can draft the JSON from an RTLPlayground machine `.c`. Built so far
-(`--board FILE`, `src/sys/board.h`): `chip`, `revision`, `uuid`, `lot`,
-`flash.size`/`jedec`, and `ports` with `phys`, `front` and `sfp` (`slot`,
-`detect_gpio`, `los_gpio`, `i2c`, `module`); `boards/swtg024as.json` is the
-bench board, which is also built in. `--sfp SLOT=EEPROM.bin` inserts a
+It describes the hardware, not the firmware, so old and new firmware run on
+the same file: the board data the firmware carries (`struct machine`, whose
+form changes with firmware versions) is the firmware's business, and a wrong
+one misbehaves as it would on silicon. `tools/mkboard.py` drafts the files
+from RTLPlayground's machine sources: chipset, port map, SFP wiring, factory
+MAC offset, reset pin, and the extra chips (RTL8224 PHYs on RTL8373 boards,
+an RTL8238B where the init code loads one). The source doesn't give the
+flash size, so a table in the tool does (2M assumed otherwise). The UUID and
+lot come from the machine name, so boards don't share a MAC. `boards/` has a
+draft for each machine. rtlsim reads `chip`, `revision`, `uuid`, `lot`,
+`flash`, and `ports` with `phys`, `front` and `sfp`; `chips` waits for the
+RTL8224 and RTL8238B models. The bench board (`swgt024_v2_0_unmanaged`) is
+also built in. `--sfp SLOT=EEPROM.bin` inserts a
 module (`tools/mksfp.py` writes one). `i2c_devices`
 covers later additions: SFP EEPROMs (module dumps), and the POE-2G040210GSM's
 RTL8238B as a stub.
@@ -339,7 +345,7 @@ RTL8238B as a stub.
 ### Topology file (tests, several switches)
 ```yaml
 switches:
-  a: { image: build/a.bin, board: boards/swtg024as.json }
+  a: { image: build/a.bin, board: boards/swgt024_v2_0_unmanaged.json }
   b: { image: build/b.bin, board: boards/poe-2g040210gsm.json }
 links:
   - [a.SFP1, b.SFP1]          # patch ports

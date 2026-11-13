@@ -1,0 +1,21 @@
+{
+  "name": "swtg024as_a_v2_0_1_5c_1sfp",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/SWTG024AS_A_V2_0_1_5C_1SFP.{h,c} (PCB_SWTG024AS_V2_0_16895.c).",
+  "model": "SWTG024AS-A-V2.0.1-5C-1SFP",
+  "chip": "RTL8372",
+  "uuid": "0x772b5700",
+  "lot": "0xa9000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "ports": [
+    {"phys": 4, "front": "1"},
+    {"phys": 5, "front": "2"},
+    {"phys": 6, "front": "3"},
+    {"phys": 7, "front": "4"},
+    {"phys": 3, "front": "5"},
+    {"phys": 8, "front": "6", "sfp": {"slot": 1, "detect_gpio": 38, "los_gpio": null, "i2c": [39, 40], "module": null}}
+  ]
+}

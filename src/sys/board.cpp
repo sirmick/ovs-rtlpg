@@ -10,9 +10,9 @@
 board board_swtg024as()
 {
 	board b;
-	b.name = "swtg024as";
-	b.ports = { {4, "1"}, {5, "2"}, {6, "3"}, {7, "4"}, {8, "SFP1"}, {3, "SFP2"} };
-	b.sfp = { {1, 8, 30, board::NO_GPIO, 4, ""}, {2, 3, 50, board::NO_GPIO, 3, ""} };
+	b.name = "swgt024_v2_0_unmanaged";
+	b.ports = { {4, "1"}, {5, "2"}, {6, "3"}, {7, "4"}, {8, "5"}, {3, "6"} };
+	b.sfp = { {1, 8, 30, 37, 4, ""}, {2, 3, 50, 51, 3, ""} };
 	return b;
 }
 

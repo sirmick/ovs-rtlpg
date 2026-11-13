@@ -1,0 +1,27 @@
+{
+  "name": "lianguo_hyws_sgt0108s",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/LIANGUO_HYWS_SGT0108S.{h,c} (2G5F_20G_V1_01.c).",
+  "model": "Lianguo HYWS-SGT0108S",
+  "chip": "RTL8373",
+  "uuid": "0x31a00400",
+  "lot": "0xff000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "ports": [
+    {"phys": 1, "front": "1"},
+    {"phys": 0, "front": "2"},
+    {"phys": 3, "front": "3"},
+    {"phys": 2, "front": "4"},
+    {"phys": 4, "front": "5"},
+    {"phys": 5, "front": "6"},
+    {"phys": 6, "front": "7"},
+    {"phys": 7, "front": "8"},
+    {"phys": 8, "front": "9", "sfp": {"slot": 1, "detect_gpio": 30, "los_gpio": 37, "i2c": [39, 40], "module": null}}
+  ],
+  "chips": [
+    {"type": "rtl8224", "comment": "the RTL8373 path's PHYs; not modelled yet"}
+  ]
+}

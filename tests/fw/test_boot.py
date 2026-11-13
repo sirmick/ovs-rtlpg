@@ -99,9 +99,10 @@ def main():
         # the main loop's SFP poll finds it after the prompt
         up = c.expect(PROMPT, 120) and c.expect(b"Module: ACME", 30)
         boot = c.log.decode(errors="replace")
-        check(up and re.search(r"<MODULE INSERTED>  Slot: 1  Rate: 67  Encoding: 06  Module: ACME ", boot) is not None
+        check(up and "<MODULE INSERTED>  Slot: 1" in boot and "<SFP-RX OK>  Slot: 1" in boot
+              and re.search(r"Rate: 67  Encoding: 06  Module: ACME ", boot) is not None
               and re.search(r"\tSFP IN\t10G\t", boot) is not None,
-              "an SFP module in slot 1: its port is up at 10G, the firmware reads its EEPROM")
+              "an SFP module in slot 1: its port is up at 10G, its LOS pin says light, the firmware reads its EEPROM")
         ok, out = run(c, "sfp")
         check(ok and "Slot 1 - Rate: 67" in out and "Options: 68" in out and "Vcc: 80e8" in out
               and "Slot 2 - empty" in out, "the sfp command reads its identity and diagnostics")
@@ -110,7 +111,7 @@ def main():
     with tempfile.TemporaryDirectory() as d:
         subprocess.run([sys.executable, os.path.join(HERE, "../../tools/mksfp.py"), os.path.join(d, "m.bin"),
                         "--vendor", "BOARDFILE"], check=True)
-        b = json.load(open(os.path.join(HERE, "../../boards/swtg024as.json")))
+        b = json.load(open(os.path.join(HERE, "../../boards/swgt024_v2_0_unmanaged.json")))
         b["uuid"] = "0x12345600"
         b["ports"][4]["sfp"]["module"] = "m.bin"
         json.dump(b, open(os.path.join(d, "board.json"), "w"))

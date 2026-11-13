@@ -1,0 +1,22 @@
+{
+  "name": "hasivo_s600w_4gt_2xgt_se",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/HASIVO_S600W_4GT_2XGT_SE.{h,c} (NONAME_S600W_4GT_2XGT_SE.c).",
+  "model": "Hasivo S600W-4GT-2XGT-SE",
+  "chip": "RTL8372",
+  "uuid": "0x93fc3400",
+  "lot": "0x65000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "reset_gpio": 54,
+  "ports": [
+    {"phys": 4, "front": "1"},
+    {"phys": 5, "front": "2"},
+    {"phys": 6, "front": "3"},
+    {"phys": 7, "front": "4"},
+    {"phys": 3, "front": "5"},
+    {"phys": 8, "front": "6"}
+  ]
+}

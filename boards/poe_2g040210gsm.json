@@ -1,11 +1,25 @@
 {
   "name": "poe_2g040210gsm",
-  "comment": "POE-2G040210GSM (RTLPlayground machine/POE_2G040210GSM.c): RTL8372 + RTL8238B PSE, 4 x 2.5G PoE + 2 SFP+, 2 MiB flash, factory MAC at 0x1FC000.",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/POE_2G040210GSM.{h,c}.",
+  "model": "MokerLink POE-2G040210GSM",
   "chip": "RTL8372",
-  "flash": { "size": "2M", "jedec": "ef40" },
+  "uuid": "0x69253500",
+  "lot": "0xcf000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40"
+  },
+  "factory_mac_at": "0x1FC000",
+  "reset_gpio": 48,
   "ports": [
-    { "phys": 4, "front": "1" }, { "phys": 5, "front": "2" }, { "phys": 6, "front": "3" }, { "phys": 7, "front": "4" },
-    { "phys": 8, "front": "SFP1", "sfp": { "slot": 1, "detect_gpio": 38, "los_gpio": null, "i2c": [39, 40], "module": null } },
-    { "phys": 3, "front": "SFP2", "sfp": { "slot": 2, "detect_gpio": 37, "los_gpio": null, "i2c": [41, 40], "module": null } }
+    {"phys": 4, "front": "1"},
+    {"phys": 5, "front": "2"},
+    {"phys": 6, "front": "3"},
+    {"phys": 7, "front": "4"},
+    {"phys": 8, "front": "5", "sfp": {"slot": 1, "detect_gpio": 38, "los_gpio": null, "i2c": [39, 40], "module": null}},
+    {"phys": 3, "front": "6", "sfp": {"slot": 2, "detect_gpio": 37, "los_gpio": null, "i2c": [41, 40], "module": null}}
+  ],
+  "chips": [
+    {"type": "rtl8238b", "i2c": [47, 46], "addr": "0x20"}
   ]
 }

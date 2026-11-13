@@ -1,0 +1,27 @@
+{
+  "name": "goalake_ig108",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/GOALAKE_IG108.{h,c} (PB_2132.c).",
+  "model": "Goalake IG108",
+  "chip": "RTL8373",
+  "uuid": "0xa67c8800",
+  "lot": "0xc3000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "ports": [
+    {"phys": 0, "front": "1"},
+    {"phys": 1, "front": "2"},
+    {"phys": 2, "front": "3"},
+    {"phys": 3, "front": "4"},
+    {"phys": 4, "front": "5"},
+    {"phys": 5, "front": "6"},
+    {"phys": 6, "front": "7"},
+    {"phys": 7, "front": "8"},
+    {"phys": 8, "front": "9", "sfp": {"slot": 1, "detect_gpio": 30, "los_gpio": 37, "i2c": [39, 40], "module": null}}
+  ],
+  "chips": [
+    {"type": "rtl8224", "comment": "the RTL8373 path's PHYs; not modelled yet"}
+  ]
+}

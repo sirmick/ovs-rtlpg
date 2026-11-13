@@ -1,0 +1,28 @@
+{
+  "name": "dotx_dx_1009n",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/DOTX_DX_1009N.{h,c} (PCB_SWTG118AS_V1_0_11430.c).",
+  "model": "DOTX DX-1009N",
+  "chip": "RTL8373",
+  "uuid": "0x1f37c700",
+  "lot": "0xc7000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "factory_mac_at": "0",
+  "ports": [
+    {"phys": 0, "front": "1"},
+    {"phys": 1, "front": "2"},
+    {"phys": 2, "front": "3"},
+    {"phys": 3, "front": "4"},
+    {"phys": 4, "front": "5"},
+    {"phys": 5, "front": "6"},
+    {"phys": 6, "front": "7"},
+    {"phys": 7, "front": "8"},
+    {"phys": 8, "front": "9", "sfp": {"slot": 1, "detect_gpio": 30, "los_gpio": null, "i2c": [39, 40], "module": null}}
+  ],
+  "chips": [
+    {"type": "rtl8224", "comment": "the RTL8373 path's PHYs; not modelled yet"}
+  ]
+}

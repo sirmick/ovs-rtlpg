@@ -1,0 +1,22 @@
+{
+  "name": "horaco_zx310s_4t2xt",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/HORACO_ZX310S_4T2XT.{h,c} (PCB_310S_4T2XT_V1_0_0_22273.c).",
+  "model": "Horaco ZX310S-4T2XT",
+  "chip": "RTL8372",
+  "uuid": "0xf936a100",
+  "lot": "0x9b000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "reset_gpio": 48,
+  "ports": [
+    {"phys": 4, "front": "1"},
+    {"phys": 5, "front": "2"},
+    {"phys": 6, "front": "3"},
+    {"phys": 7, "front": "4"},
+    {"phys": 3, "front": "5"},
+    {"phys": 8, "front": "6"}
+  ]
+}

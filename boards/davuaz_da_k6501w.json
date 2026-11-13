@@ -1,0 +1,21 @@
+{
+  "name": "davuaz_da_k6501w",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/DAVUAZ_DA_K6501W.{h,c} (PCB_K0501W_V2_0.c).",
+  "model": "Davuaz Da-K6501W",
+  "chip": "RTL8372",
+  "uuid": "0xf5039000",
+  "lot": "0x7d000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "ports": [
+    {"phys": 4, "front": "1"},
+    {"phys": 5, "front": "2"},
+    {"phys": 6, "front": "3"},
+    {"phys": 7, "front": "4"},
+    {"phys": 3, "front": "5"},
+    {"phys": 8, "front": "6", "sfp": {"slot": 1, "detect_gpio": 30, "los_gpio": 37, "i2c": [39, 40], "module": null}}
+  ]
+}

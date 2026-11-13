@@ -1,0 +1,21 @@
+{
+  "name": "ruiying_ry_4gt_2sx",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/RUIYING_RY_4GT_2SX.{h,c} (FG_4GT_2SX_V2_0.c).",
+  "model": "Ruiying RY-4GT-2SX",
+  "chip": "RTL8372",
+  "uuid": "0xf2447900",
+  "lot": "0x65000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "ports": [
+    {"phys": 4, "front": "1"},
+    {"phys": 5, "front": "2"},
+    {"phys": 6, "front": "3"},
+    {"phys": 7, "front": "4"},
+    {"phys": 8, "front": "5", "sfp": {"slot": 1, "detect_gpio": 38, "los_gpio": null, "i2c": [39, 40], "module": null}},
+    {"phys": 3, "front": "6", "sfp": {"slot": 2, "detect_gpio": 37, "los_gpio": null, "i2c": [41, 40], "module": null}}
+  ]
+}

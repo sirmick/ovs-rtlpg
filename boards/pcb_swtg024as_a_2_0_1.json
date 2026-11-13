@@ -1,0 +1,23 @@
+{
+  "name": "pcb_swtg024as_a_2_0_1",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/PCB_SWTG024AS_A_2_0_1.{h,c} (PCB_SWTG024AS_A_V2_0_1_19650.c).",
+  "model": "PCB-SWTG024AS-A-2.0.1",
+  "chip": "RTL8372",
+  "uuid": "0xf54c9400",
+  "lot": "0xf7000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "factory_mac_at": "0x1FC000",
+  "reset_gpio": 48,
+  "ports": [
+    {"phys": 4, "front": "1"},
+    {"phys": 5, "front": "2"},
+    {"phys": 6, "front": "3"},
+    {"phys": 7, "front": "4"},
+    {"phys": 3, "front": "5", "sfp": {"slot": 1, "detect_gpio": 37, "los_gpio": null, "i2c": [41, 40], "module": null}},
+    {"phys": 8, "front": "6", "sfp": {"slot": 2, "detect_gpio": 38, "los_gpio": null, "i2c": [39, 40], "module": null}}
+  ]
+}

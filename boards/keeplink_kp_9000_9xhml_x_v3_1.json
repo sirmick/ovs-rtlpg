@@ -1,0 +1,29 @@
+{
+  "name": "keeplink_kp_9000_9xhml_x_v3_1",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/KEEPLINK_KP_9000_9XHML_X_V3_1.{h,c} (2M_PCB23_V3_1.c).",
+  "model": "keepLink KP-9000-9XHML-X V3.1",
+  "chip": "RTL8373",
+  "uuid": "0x9e649200",
+  "lot": "0x39000000",
+  "flash": {
+    "size": "2M",
+    "jedec": "ef40",
+    "comment": "assumed: the source doesn't say"
+  },
+  "factory_mac_at": "0x1FC000",
+  "reset_gpio": 48,
+  "ports": [
+    {"phys": 0, "front": "1"},
+    {"phys": 1, "front": "2"},
+    {"phys": 2, "front": "3"},
+    {"phys": 3, "front": "4"},
+    {"phys": 4, "front": "5"},
+    {"phys": 5, "front": "6"},
+    {"phys": 6, "front": "7"},
+    {"phys": 7, "front": "8"},
+    {"phys": 8, "front": "9", "sfp": {"slot": 1, "detect_gpio": 38, "los_gpio": null, "i2c": [39, 40], "module": null}}
+  ],
+  "chips": [
+    {"type": "rtl8224", "comment": "the RTL8373 path's PHYs; not modelled yet"}
+  ]
+}

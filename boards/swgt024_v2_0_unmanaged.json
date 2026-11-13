@@ -1,0 +1,21 @@
+{
+  "name": "swgt024_v2_0_unmanaged",
+  "comment": "Drafted by tools/mkboard.py from RTLPlayground machine/SWGT024_V2_0_UNMANAGED.{h,c} (PCB_SWTG024AS_V2_0_17452__UNMANAGED.c).",
+  "model": "SWGT024 V2.0 Unmanaged",
+  "chip": "RTL8372",
+  "revision": "0x68",
+  "uuid": "0xc8540700",
+  "lot": "0x0f000000",
+  "flash": {
+    "size": "512K",
+    "jedec": "ef40"
+  },
+  "ports": [
+    {"phys": 4, "front": "1"},
+    {"phys": 5, "front": "2"},
+    {"phys": 6, "front": "3"},
+    {"phys": 7, "front": "4"},
+    {"phys": 8, "front": "5", "sfp": {"slot": 1, "detect_gpio": 30, "los_gpio": 37, "i2c": [39, 40], "module": null}},
+    {"phys": 3, "front": "6", "sfp": {"slot": 2, "detect_gpio": 50, "los_gpio": 51, "i2c": [41, 40], "module": null}}
+  ]
+}
