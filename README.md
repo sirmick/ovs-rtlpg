@@ -18,3 +18,9 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
 - `tests/bank`: code and constants in BANK1-3 called across banks through
   RTLPlayground's `crtbank.asm`, packed like the firmware (`tools/mkimage.py`).
 - `tests/sdcc-bugs`: two SDCC 4.6.0 miscompilations the ISA tests found.
+
+## Parked
+
+- The two SDCC bugs in `tests/sdcc-bugs` are upstream: stock 4.6.0 has them
+  too. To do: scan RTLPlayground for the cast pattern (`cast_u8_to_u32.c`,
+  small model, the firmware's model); report both to SDCC.
