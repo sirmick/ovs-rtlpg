@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """test_net.py - the firmware's TCP/IP stack against a real Linux one.
 
-    tests/net/test_net.py IMAGE [--rtlsim build/rtlsim] [--port 4]
+    tests/net/test_net.py IMAGE [--rtlsim build/rtlsim] [--port 4] [--via tap|ovs]
 
-rtlsim wires a physical port (default 4, front port 1) to its --nic socket,
-tests/net/tapbridge.py relays that to a tap in a private network namespace,
-and the namespace's Linux pings the switch and loads its web UI. Needs sudo
-(for the namespace and the tap); skipped without it. Nothing outside the
-namespace is touched.
+Linux, in a private network namespace, reaches a physical port of the switch
+(default 4, front port 1), pings the switch and loads its web UI. --via tap:
+rtlsim's --nic socket, relayed to a tap by tests/net/tapbridge.py. --via ovs:
+an OVS bridge (a private ovs-vswitchd in the namespace, tests/net/privovs.py)
+with rtlsim as its OpenFlow controller (--ofp), and a veth to Linux on the
+port; also pulls that veth's cable and checks the firmware sees the link go.
+Needs sudo (for the namespace, the tap, OVS); skipped without it. Nothing
+outside the namespace is touched.
 
 Also measures: the firmware's machine cycles per reply (from --trace-nic),
 the time to load the web UI, and TCP throughput. A 10G SFP module
@@ -17,6 +20,7 @@ import argparse, json, os, re, shutil, statistics, subprocess, sys, tempfile, ti
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "../fw"))
 from console import Console, PROMPT
+from privovs import Ovs
 
 CYCLES_PER_S = 125e6 / 4
 # Every JSON page app.js fetches
@@ -65,24 +69,38 @@ def costs(trace):
     return out
 
 
+def link_change(c, port, up, timeout):
+    """Waits for the firmware's "<new link: S9..S0, was ...>" line (a speed
+    digit per physical port, 0 for down) to show `port` up or down."""
+    start, end = len(c.log), time.time() + timeout
+    while time.time() < end:
+        c.expect(b">", 0.5)
+        for m in re.finditer(rb"<new link: ([0-9a-f]{10}),", c.log[start:]):
+            if (m.group(1)[9 - port:10 - port] != b"0") == up:
+                return True
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("image")
     ap.add_argument("--rtlsim", default=os.path.join(HERE, "../../build/rtlsim"))
     ap.add_argument("--port", type=int, default=4)
+    ap.add_argument("--via", choices=["tap", "ovs"], default="tap")
     a = ap.parse_args()
     if subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode:
         print("net: no passwordless sudo, skipped")
         return 0
 
     d = tempfile.mkdtemp(prefix="rtlsim-net-")
+    os.chmod(d, 0o755)	# root's OVS reads and writes in here
     sock, ns, tap = os.path.join(d, "nic.sock"), f"rtlsim{os.getpid()}", "rtap0"
+    attach = ["--nic", sock, "--nic-port", str(a.port)] if a.via == "tap" else ["--ofp", sock, "--trace-of"]
     err = open(os.path.join(d, "rtlsim.err"), "w+")
     sfp = os.path.join(d, "sfp.bin")
     subprocess.run([sys.executable, os.path.join(HERE, "../../tools/mksfp.py"), sfp], check=True)
-    c = Console(a.rtlsim, a.image, ["--nic", sock, "--nic-port", str(a.port), "--trace-nic",
-                                    "--sfp", f"1={sfp}", "--link", "8=10g"], stderr=err)
-    bridge = None
+    c = Console(a.rtlsim, a.image, [*attach, "--trace-nic", "--sfp", f"1={sfp}", "--link", "8=10g"], stderr=err)
+    bridge = ovs = None
     try:
         check(c.expect(PROMPT, 30), "boots to the prompt")
         start = len(c.log)
@@ -91,20 +109,28 @@ def main():
         m = re.search(rb"Current IP: ([\d.]+)", c.log[start:])
         ip = m.group(1).decode() if m else "192.168.2.2"
         host = re.sub(r"\.\d+$", ".1" if not ip.endswith(".1") else ".2", ip)
-        print(f"switch {ip}, Linux {host} in netns {ns}")
+        print(f"switch {ip}, Linux {host} in netns {ns}, via {a.via}")
 
-        for cmd in (["ip", "netns", "add", ns],
-                    ["ip", "netns", "exec", ns, "ip", "link", "set", "lo", "up"],
-                    ["ip", "netns", "exec", ns, "ip", "tuntap", "add", "dev", tap, "mode", "tap"],
-                    ["ip", "netns", "exec", ns, "ip", "addr", "add", f"{host}/24", "dev", tap],
-                    ["ip", "netns", "exec", ns, "ip", "link", "set", tap, "up"]):
+        nsx = ["ip", "netns", "exec", ns]
+        cmds = [["ip", "netns", "add", ns], [*nsx, "ip", "link", "set", "lo", "up"]]
+        if a.via == "tap":
+            cmds.append([*nsx, "ip", "tuntap", "add", "dev", tap, "mode", "tap"])
+        for cmd in cmds:
             r = sudo(*cmd)
             if r.returncode:
                 check(False, f"{' '.join(cmd)}: {r.stderr.strip()}")
                 return 1
-        bridge = subprocess.Popen(["sudo", "-n", "ip", "netns", "exec", ns, sys.executable,
-                                   os.path.join(HERE, "tapbridge.py"), sock, tap])
-        nsx = ["ip", "netns", "exec", ns]
+        if a.via == "tap":
+            bridge = subprocess.Popen(["sudo", "-n", *nsx, sys.executable, os.path.join(HERE, "tapbridge.py"), sock, tap])
+        else:
+            ovs = Ovs(ns, d)
+            ovs.start()
+            ovs.bridge("sw0", controller=sock)
+            ovs.veth("sw0", tap, ofport=a.port + 1)
+        for cmd in ([*nsx, "ip", "addr", "add", f"{host}/24", "dev", tap], [*nsx, "ip", "link", "set", tap, "up"]):
+            sudo(*cmd)
+        if ovs:
+            check(link_change(c, a.port, True, 10), f"the veth's link comes up on physical port {a.port}")
 
         r = sudo(*nsx, "ping", "-c", "5", "-i", "0.2", "-W", "2", ip, timeout=30)
         rtt = re.search(r"= [\d.]+/([\d.]+)/", r.stdout)
@@ -151,6 +177,18 @@ def main():
         check(code == "200" and int(size) > 0,
               f"TCP throughput: app.js, {size} bytes in {float(secs):.2f} s = {rate / 1024:.1f} KiB/s")
 
+        if ovs:
+            # pull the cable: the OVS port goes down, the firmware sees it
+            sudo(*nsx, "ip", "link", "set", tap, "down")
+            down = link_change(c, a.port, False, 10)
+            sudo(*nsx, "ip", "link", "set", tap, "up")
+            up = link_change(c, a.port, True, 10)
+            check(down and up, "a cable pull on the veth: the firmware sees the link go and come back")
+            r = sudo(*nsx, "ping", "-c", "2", "-W", "2", ip, timeout=30)
+            check(r.returncode == 0, "and the switch answers again after it")
+            flows = ovs.ofctl("dump-flows", "sw0")
+            print("OVS flows:", " | ".join(l.strip() for l in flows.splitlines() if "actions" in l))
+
         err.flush()
         err.seek(0)
         trace = err.read()
@@ -164,10 +202,12 @@ def main():
         if bridge:
             bridge.terminate()
             bridge.wait()
+        if ovs:
+            ovs.stop()
         sudo("ip", "netns", "del", ns)
         c.close()
         err.close()
-        sudo("rm", "-f", os.path.join(d, "cookies"))	# root's, from curl
+        sudo("rm", "-rf", d)	# root's files, from curl and OVS
         shutil.rmtree(d, ignore_errors=True)
 
     print(f"test_net: {'ALL PASS' if not failures else f'{failures} FAILED'}")

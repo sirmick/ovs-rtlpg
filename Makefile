@@ -53,8 +53,10 @@ endif
 
 # The firmware against Linux's TCP/IP in a network namespace (needs sudo;
 # real time, so a few seconds): ping, the web UI, and what each frame costs.
+# Once over a tap on the --nic socket, once through a private OVS bridge.
 test-net: $(BUILD)/rtlsim
-	python3 tests/net/test_net.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
+	python3 tests/net/test_net.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim --via tap
+	python3 tests/net/test_net.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim --via ovs
 
 # The bank check over a firmware boot (slower: every instruction is watched).
 FW_MAP ?= $(dir $(FW_IMAGE))rtlplayground.map
