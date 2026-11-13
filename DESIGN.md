@@ -163,6 +163,46 @@ fabric, as on silicon: ARP floods reach the CPU, the reply is a packet-out.
 Reach it from the host by putting a veth or tap with an address in the same
 subnet on a front port.
 
+### The CPU port's ring (RTLPlayground rtl837x_nic.c, doc/CpuPort.md)
+The NIC has its own packet memory on the ASIC side, which the 8051 reaches
+only through a DMA engine in SFRs: 0xb3/0xb4 the xdata address, 0xb5/0xb6
+the ring address (bit 15 set: the TX area), 0xb7 the number of 8-byte words
+(writing starts it, it reads 0 when done; a frame of up to 2040 bytes per call).
+- **RX ring:** 0x500 slots of 8 bytes (0x0000-0x27ff, 10 KiB). Each frame is
+  an 8-byte descriptor (seq, -, -, port in bits 3:0, length LE, -, -) and the
+  frame, padded to 8; the hardware wraps a transfer that crosses the end.
+  `NIC_RX_BUFF_DATA` (0x7874) is nonzero while frames wait,
+  `CPU_RX_CURR_PKT` (0x787c) the current frame's slot, `NIC_RXCMD` (0x784c) =
+  1 releases it. A frame arrives with the CPU tag after the MACs (0x8899,
+  version 4, reason, flags, port) and an 802.1Q tag after that (the PVID if it
+  came in untagged), so the EtherType is at offset 24.
+- **TX area:** 0x7fe slots. `CPU_TX_CURR_PKT` (0x7890) is where to write; the
+  firmware DMAs its descriptor (seq, 0x07 = offload the checksums, -, -, length
+  LE, -, -) plus the frame there and writes `NIC_TXCMD` (0x7850) = 1. A frame
+  with the CPU tag (EtherType 0x8899) goes out to its pmask (or, with ALLOW,
+  is looked up and limited to it); any other frame is switched as if it came
+  in on the CPU port.
+- **Interrupt:** `NIC_INT_STS` (0x7854) bit 1 RXIS, write 1 to clear; mask
+  `NIC_INT_MSK` (0x7858) bit 1. It drives INT1, level-triggered: the ISR masks
+  EX1, the main loop drains up to 4 frames per pass and unmasks when the ring
+  is empty.
+
+**How fast.** The 8051 is a four-clock DW8051 at 125 MHz: 31.25 M machine
+cycles/s, ~15 MIPS. A register handshake is ~30-40 cycles (~1 µs), so the
+ring bookkeeping of one RX frame (two register reads, two DMAs, the release)
+is ~5-10 µs; the frame's protocol work dominates. uIP verifies checksums in
+software, ~10-15 cycles a byte, so a full TCP segment costs ~0.5-0.7 ms before
+the application sees it; TX checksums are offloaded. Estimates: a few
+thousand small frames/s (ARP, ICMP), and TCP well under the wire's speed: uIP
+keeps one segment in flight (uip-split is linked but never called), so a
+peer's delayed ACK can hold it to one segment per ACK timeout (Linux: ≥40 ms,
+~36 KB/s) where quick-ACK doesn't kick in. The 10 KiB RX ring holds ~6
+full-size or ~140 minimum frames: at 2.5 Gb/s that is ~33 µs of traffic, so a
+flood towards the CPU overflows it within one main-loop pass. Hence the traps
+and storm control. In rtlsim the DMA and handshakes are instant and the
+firmware's cost is exact in machine cycles, so these numbers can be measured
+per frame instead of estimated.
+
 ### Bridge setup
 rtlsim creates `sw-<name>` on start: `datapath_type=netdev`,
 `fail_mode=secure`, `other-config:disable-in-band=true`, no STP/RSTP/LACP, and
@@ -276,12 +316,14 @@ hosts:
 6. **Networks:** topology runner, multi-switch pytest, hybrid with the bench.
 
 ## Decisions to take
-- **Language:** C++20 for rtlsim (the MAME core is C++). For OpenFlow, link
-  libopenvswitch (Apache-2.0; flow text parse/encode, bundles, NXM `learn`)
-  or write a minimal OF1.3+NX encoder. Leaning libopenvswitch.
+- **Language:** C++20 for rtlsim (the MAME core is C++). Debian ships no
+  libopenvswitch-dev, so the controller speaks a minimal OpenFlow 1.3 itself
+  (hello, echo, features, packet-in/out, bundles, flow-mods); flow text can
+  also go through `ovs-ofctl`.
 - **Licence:** MIT (RTLPlayground, whose `flash_dev.c` we port) or Apache-2.0
   (OVS). MAME's mcs51 is BSD-3, compatible with both.
-- **Repo:** `~/src/rtlsim`, forge + github like rtlplayground.
+- **Repo:** github.com/sirmick/ovs-rtlpg. Developed on devel (the Incus CT on
+  buzz: taps, network namespaces, KVM, userspace OVS; nothing on the host).
 
 ## Open questions (resolve on the bench)
 - PSBANK=0 mapping, image header offset, exact interrupt vectors and sources.
