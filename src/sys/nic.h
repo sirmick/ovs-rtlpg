@@ -25,12 +25,12 @@
 //   write 1 to clear; NIC_INT_MSK (0x7858) bit 1. INT1 is asserted while
 //   RXIS is set and unmasked (level).
 //
-// Until the fabric exists, "switched" is a stand-in for the L2 lookup: the
-// frame floods to its VLAN's members (the frame's tag, or the CPU port's
-// PVID) that have a peer, with the VLAN's untag mask applied on egress. In
-// the same way receive() takes every frame a peer sends, if its VLAN has the
-// CPU as a member. The ring and the tags are the chip's; the forwarding
-// decisions belong to the fabric and move there with OVS.
+// "Switched" frames get the L2 lookup here, against the chip's tables: a
+// unicast MAC the L2 table knows goes to its port, anything else floods its
+// VLAN (the frame's tag, or the CPU port's PVID) to the members with a peer,
+// with the VLAN's untag mask applied on egress. receive() takes a frame if
+// its VLAN has the CPU as a member; with OVS (fabric/fabric.h) the flows have
+// already decided that, and the frame comes tagged.
 #ifndef RTLSIM_NIC_H
 #define RTLSIM_NIC_H
 

@@ -13,7 +13,7 @@ enum : u16 {
 };
 enum : u32 { TBL_EXECUTE = 0x01, TBL_WRITE = 0x02, TBL_VLAN = 0x03, TBL_L2_UNICAST = 0x04, LUTREAD_MAC = 0, FLUSH_EXEC = 0x10000 };
 
-static void l2_key(const switch_tables::l2_entry &e, u8 mac[6], u16 *vid)
+void switch_tables::key(const l2_entry &e, u8 mac[6], u16 *vid)
 {
 	mac[0] = e.b >> 8; mac[1] = e.b;
 	mac[2] = e.a >> 24; mac[3] = e.a >> 16; mac[4] = e.a >> 8; mac[5] = e.a;
@@ -60,11 +60,49 @@ switch_tables::l2_entry *switch_tables::l2_find(const u8 mac[6], u16 vid)
 		u16 v;
 		if (!e.present)
 			continue;
-		l2_key(e, m, &v);
+		key(e, m, &v);
 		if (v == vid && !memcmp(m, mac, 6))
 			return &e;
 	}
 	return nullptr;
+}
+
+int switch_tables::lookup(const u8 mac[6], u16 vid) const
+{
+	const l2_entry *e = l2_find(mac, vid);
+	return e && !(mac[0] & 1) ? int(port(*e)) : -1;
+}
+
+// Word layouts: tables.h; C bits 4:2 the age, which lookups need nonzero.
+bool switch_tables::learn(const u8 mac[6], u16 vid, unsigned p)
+{
+	if (mac[0] & 1)
+		return false;
+	l2_entry *e = l2_find(mac, vid);
+	if (e && (is_static(*e) || port(*e) == p))
+		return false;
+	if (!e) {
+		e = l2_free();
+		if (!e)
+			return false;		// table full: the frame is flooded
+		e->idx = l2_hash(mac, vid);
+	}
+	e->present = true;
+	e->a = (u32(mac[2]) << 24) | (mac[3] << 16) | (mac[4] << 8) | mac[5];
+	e->b = ((p & 3u) << 30) | (1u << 29) | (u32(vid & 0xfff) << 16) | (mac[0] << 8) | mac[1];
+	e->c = (7u << 2) | (p >> 2);
+	version++;
+	return true;
+}
+
+bool switch_tables::age_out(const u8 mac[6], u16 vid, unsigned p)
+{
+	l2_entry *e = l2_find(mac, vid);
+	if (!e || is_static(*e) || port(*e) != p)
+		return false;
+	e->present = false;
+	version++;
+	return true;
 }
 
 switch_tables::l2_entry *switch_tables::l2_free()
@@ -99,8 +137,10 @@ void switch_tables::table_exec(u32 ctrl)
 	bool const write = ctrl & TBL_WRITE;
 
 	if (type == TBL_VLAN) {
-		if (write)
+		if (write) {
 			m_vlan[idx] = m_core.reg(DATA_IN_A);
+			version++;
+		}
 		else
 			m_core.set_reg(DATA_OUT_A, m_vlan[idx]);
 		return;
@@ -110,13 +150,15 @@ void switch_tables::table_exec(u32 ctrl)
 
 	u32 const d0 = m_core.reg(TBL_DATA_0);
 	u8 const method = (d0 >> 14) & 0x3;
+	if (write)
+		version++;
 	bool const clear = (d0 >> 18) & 1;
 
 	if (method == LUTREAD_MAC) {
-		l2_entry key{true, 0, m_core.reg(DATA_IN_A), m_core.reg(DATA_IN_B), m_core.reg(DATA_IN_C)};
+		l2_entry in{true, 0, m_core.reg(DATA_IN_A), m_core.reg(DATA_IN_B), m_core.reg(DATA_IN_C)};
 		u8 mac[6];
 		u16 vid;
-		l2_key(key, mac, &vid);
+		key(in, mac, &vid);
 		l2_entry *e = l2_find(mac, vid);
 		if (write) {
 			if (clear) {
@@ -132,7 +174,7 @@ void switch_tables::table_exec(u32 ctrl)
 				e->idx = l2_hash(mac, vid);
 			}
 			e->present = true;
-			e->a = key.a; e->b = key.b; e->c = key.c;
+			e->a = in.a; e->b = in.b; e->c = in.c;
 			l2_out(e, e->idx);
 			return;
 		}
@@ -178,14 +220,16 @@ void switch_tables::flush_exec(u32 ctrl)
 			continue;
 		u8 mac[6];
 		u16 vid;
-		l2_key(e, mac, &vid);
+		key(e, mac, &vid);
 		bool const mc = mac[0] & 1;
 		bool const st = (e.c >> 16) & 1;
 		u16 const port = mc ? 0 : (((e.b >> 30) & 0x3) | ((e.c & 0x3) << 2));
 		if (mc || (st && dynamic_only))
 			continue;
-		if ((mask >> port) & 1)
+		if ((mask >> port) & 1) {
 			e.present = false;
+			version++;
+		}
 	}
 }
 

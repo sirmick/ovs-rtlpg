@@ -34,6 +34,20 @@ public:
 
 	u32 vlan(u16 vid) const { return m_vlan[vid & 0xfff]; }
 	const std::vector<l2_entry> &l2() const { return m_l2; }
+
+	// An entry's fields (unicast: port 0-9; multicast: the member mask).
+	static void key(const l2_entry &e, u8 mac[6], u16 *vid);
+	static unsigned port(const l2_entry &e) { return ((e.b >> 30) & 0x3) | ((e.c & 0x3) << 2); }
+	static bool is_static(const l2_entry &e) { return (e.c >> 16) & 1; }
+	// The port a unicast MAC is at in a VLAN, or -1.
+	int lookup(const u8 mac[6], u16 vid) const;
+	// Hardware learning: a dynamic entry for the source of a frame from
+	// `port`, unless a static one has the MAC. False if nothing changed.
+	bool learn(const u8 mac[6], u16 vid, unsigned port);
+	// Ageing: drops the dynamic entry if it still says `port`.
+	bool age_out(const u8 mac[6], u16 vid, unsigned port);
+	// Bumped by every change to the VLAN or L2 table.
+	u64 version = 0;
 	void set_counter(u8 port, u8 counter, u64 v) { m_counters[port & 15][counter & 63] = v; }
 
 private:
@@ -42,6 +56,7 @@ private:
 	void stat_exec(u32 v);
 	void l2_out(const l2_entry *e, u16 idx);
 	l2_entry *l2_find(const u8 mac[6], u16 vid);
+	const l2_entry *l2_find(const u8 mac[6], u16 vid) const { return const_cast<switch_tables *>(this)->l2_find(mac, vid); }
 	l2_entry *l2_free();
 	void l2_sort();
 

@@ -261,7 +261,13 @@ void cpu_nic::forward(std::vector<u8> f)
 	if (cpu_tag && !(pmask & PMASK_ALLOW))
 		dest = pmask & 0x3ff;
 	else {
-		dest = (vlan & VLAN_VALID) ? vlan & 0x3ff & ~(1u << CPU_PORT) : 0;
+		// the lookup: a unicast MAC the L2 table knows goes to its port,
+		// anything else floods the VLAN
+		int const at = (f[0] & 1) ? -1 : m_tables.lookup(&f[0], vid);
+		if (at >= 0)
+			dest = (vlan & VLAN_VALID) ? (1u << at) & ~(1u << CPU_PORT) : 0;
+		else
+			dest = (vlan & VLAN_VALID) ? vlan & 0x3ff & ~(1u << CPU_PORT) : 0;
 		if (cpu_tag)
 			dest &= pmask;
 	}
