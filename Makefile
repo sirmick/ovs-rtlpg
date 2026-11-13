@@ -50,6 +50,12 @@ else
 	@echo "fw: no firmware image (set FW_IMAGE or build RTLPlayground), skipped"
 endif
 
+# The bank check over a firmware boot (slower: every instruction is watched).
+FW_MAP ?= $(dir $(FW_IMAGE))rtlplayground.map
+check-banks: $(BUILD)/rtlsim
+	$(BUILD)/rtlsim --image $(FW_IMAGE) --check-banks $(FW_MAP) --cycles 600000000 --quiet < /dev/null > /dev/null; \
+		test $$? -ne 4
+
 clean:
 	rm -rf $(BUILD)
 	$(MAKE) -C tests/isa clean
@@ -57,4 +63,4 @@ clean:
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
-.PHONY: all test clean
+.PHONY: all test check-banks clean

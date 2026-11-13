@@ -27,6 +27,11 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const ch
 	m_core.soc_reset = [this]() { m_reset_pending = true; };
 	m_core.pc = [this]() { return m_cpu.pc(); };
 	m_dasm = m_cpu.disassembler();
+	for (int op = 0; op < 256; op++) {
+		std::ostringstream o;
+		util::disasm_interface::data_buffer b([op](offs_t a) -> u8 { return a == 0 ? op : 0; });
+		m_len[op] = m_dasm->disassemble(o, 0, b, b) & util::disasm_interface::LENGTHMASK;
+	}
 	reset();
 }
 
@@ -139,6 +144,16 @@ void rtl837x_system::sfr_w(u8 a, u8 d)
 void rtl837x_system::on_insn(offs_t pc)
 {
 	instructions++;
+	if (bankcheck) {
+		u8 const op = code_read(pc);
+		u8 const bank = m_cpu.psbank();
+		if (pc >= 0x4000)
+			bankcheck->banked_pc(bank, pc);
+		if (op == 0x93)		// movc a,@a+dptr
+			bankcheck->movc_read(bank, pc, bank, u16(m_cpu.acc() + m_cpu.dptr()));
+		else if (op == 0x83)	// movc a,@a+pc
+			bankcheck->movc_read(bank, pc, bank, u16(m_cpu.acc() + pc + 1));
+	}
 	if (trace_insn && m_dasm) {
 		std::ostringstream s;
 		util::disasm_interface::data_buffer buf([this](offs_t a) { return code_read(a); });
@@ -157,7 +172,7 @@ bool rtl837x_system::run(int cycles)
 {
 	if (m_halted)
 		return false;
-	m_cpu.m_insn_hook = trace_insn ? std::function<void(offs_t)>([this](offs_t pc) { on_insn(pc); }) : nullptr;
+	m_cpu.m_insn_hook = (trace_insn || bankcheck) ? std::function<void(offs_t)>([this](offs_t pc) { on_insn(pc); }) : nullptr;
 	int left = cycles;
 	while (left > 0 && !m_halted) {
 		int n = m_cpu.run(std::min(left, 256));

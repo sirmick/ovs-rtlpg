@@ -20,6 +20,14 @@ modelled chip.
     build/rtlsim --image fw.bin [--flash-size 512K] [--cycles N|0] [--trace]
                  [--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]
     tests/fw/console.py fw.bin --cmd "vlan 10 1t 2" --cmd l2   # drive the CLI
+    make check-banks   # boot FW_IMAGE with the bank check (src/sys/bankcheck.h)
+
+`--check-banks MAP` reports constants read through the wrong code bank
+(code read as data, or a module's constant read with another bank mapped),
+using the SDCC `.rst` listings next to the map for every byte's bank, kind and
+label. On the pre-fix firmware (bf93461) it names the three strings of
+`rtl837x_init` read from bank 3 instead of bank 2; the current one is clean.
+`--flash state.bin` keeps the chip in a file across runs.
 
 UART is stdin/stdout. Registers nobody has modelled are plain storage, and
 the first access to each is logged ("unmodelled reg ...").

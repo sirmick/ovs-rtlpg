@@ -8,8 +8,12 @@
 // at 0) when missing, used as it is otherwise, so the saved config and
 // updates persist from run to run. Without it the chip is --image, in memory.
 //
+// --check-banks MAP reports constants read with movc from bytes that ran as
+// code in the same bank (the const-bank bug class; see sys/bankcheck.h).
+//
 // Exits 0 when the program halts ("sjmp ."), 2 when the cycle budget runs out
-// (--cycles 0: no budget), 3 when stdin closes after input was given.
+// (--cycles 0: no budget), 3 when stdin closes after input was given, 4 when
+// the bank check found something.
 #include "sys/system.h"
 
 #include <chrono>
@@ -56,7 +60,7 @@ static bool pump_stdin(rtl837x_system &sys)
 
 int main(int argc, char **argv)
 {
-	const char *image = nullptr, *flash_file = nullptr;
+	const char *image = nullptr, *flash_file = nullptr, *check_map = nullptr;
 	long long cycles = 100000000;
 	u32 flash_size = 0x80000;
 	bool trace = false, trace_sfr = false, trace_reg = false, trace_flash = false, quiet = false, stats = false;
@@ -65,6 +69,8 @@ int main(int argc, char **argv)
 			image = argv[++i];
 		else if (!strcmp(argv[i], "--flash") && i + 1 < argc)
 			flash_file = argv[++i];
+		else if (!strcmp(argv[i], "--check-banks") && i + 1 < argc)
+			check_map = argv[++i];
 		else if (!strcmp(argv[i], "--cycles") && i + 1 < argc)
 			cycles = atoll(argv[++i]);
 		else if (!strcmp(argv[i], "--flash-size") && i + 1 < argc)
@@ -83,7 +89,7 @@ int main(int argc, char **argv)
 			stats = true;
 		else {
 			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
-				"[--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]\n");
+				"[--trace-sfr] [--trace-reg] [--trace-flash] [--check-banks MAP] [--quiet] [--stats]\n");
 			return 1;
 		}
 	}
@@ -111,6 +117,13 @@ int main(int argc, char **argv)
 	sys.core().trace = trace_reg;
 	sys.core().log_unmodelled = !quiet;
 	sys.flash().trace = trace_flash;
+	if (check_map) {
+		sys.bankcheck = std::make_unique<bank_checker>();
+		if (!sys.bankcheck->load_map(check_map)) {
+			fprintf(stderr, "rtlsim: cannot read %s\n", check_map);
+			return 1;
+		}
+	}
 
 	auto t0 = std::chrono::steady_clock::now();
 	bool stdin_open = !isatty(0) || true;
@@ -131,6 +144,8 @@ int main(int argc, char **argv)
 		}
 	}
 	fflush(stdout);
+	if (sys.bankcheck && sys.bankcheck->report(stderr) && rc != 2)
+		rc = 4;
 	double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 	if (stats)
 		fprintf(stderr, "rtlsim: %llu machine cycles in %.3f s (%.1f M/s), %llu idle-skipped, %llu resets\n",

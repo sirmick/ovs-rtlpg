@@ -41,6 +41,8 @@ public:
 	bool fast_idle = true;
 	u8 psbank() const { return m_psbank; }
 	u8 sp() const { return m_sp; }
+	u8 acc() const { return m_acc; }
+	u16 dptr() const { return m_dptr; }
 	u8 iram(u8 a) const { return m_internal_ram[a]; }
 
 protected:

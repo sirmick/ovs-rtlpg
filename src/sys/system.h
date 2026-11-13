@@ -15,6 +15,7 @@
 #include "sys/flashctl.h"
 #include "sys/switch_core.h"
 #include "sys/tables.h"
+#include "sys/bankcheck.h"
 
 #include <cstdio>
 #include <deque>
@@ -57,6 +58,7 @@ public:
 
 	FILE *uart_out = stdout;
 	bool trace_insn = false;
+	std::unique_ptr<bank_checker> bankcheck;	// set to check banked constant reads
 	bool trace_sfr = false;
 	bool stop_on_halt = true;		// "sjmp ." stops the run (tests)
 	u64 instructions = 0;			// counted only while tracing
@@ -87,6 +89,7 @@ private:
 	std::deque<u8> m_rx;
 	std::unique_ptr<util::disasm_interface> m_dasm;
 	chip_identity m_id;
+	u8 m_len[256] = {};		// instruction lengths, from the disassembler
 };
 
 #endif
