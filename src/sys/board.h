@@ -12,7 +12,8 @@
 //
 // tools/mkboard.py drafts one from RTLPlayground's machine sources; boards/
 // has a draft for every machine there. Fields rtlsim doesn't use yet
-// ("model", "factory_mac_at", "reset_gpio", "chips") are ignored.
+// ("model", "factory_mac_at", "reset_gpio", "chips" but an "rtl8238b") are
+// ignored.
 //
 // "i2c" is [SDA pin, SCL pin], as RTLPlayground's machine files give them
 // (I2CBUS() in machine/machine_defs.h); the SDA pin picks the bus. A
@@ -49,6 +50,12 @@ struct board_port {
 	std::string front;	// the label on the case
 };
 
+// An RTL8238B PoE controller on bit-banged I2C (sys/rtl8238b.h)
+struct board_pse {
+	bool present = false;
+	u8 sda = 0, scl = 0, addr = 0x20;
+};
+
 struct board {
 	static constexpr u8 NO_GPIO = 0xff;
 	std::string name;
@@ -57,6 +64,7 @@ struct board {
 	u8 jedec_mfr = 0xef, jedec_type = 0x40;
 	std::vector<board_port> ports;
 	std::vector<board_sfp> sfp;
+	board_pse pse;
 
 	const board_sfp *cage(unsigned slot) const
 	{

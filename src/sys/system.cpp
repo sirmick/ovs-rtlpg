@@ -14,6 +14,7 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 	seed_chip();
 	model_links();
 	model_gpio();
+	model_pse();
 	m_cpu.start();
 	m_cpu.space(AS_PROGRAM).set_external([this](offs_t a) { return code_read(a); }, [](offs_t, u8) {});
 	m_cpu.space(AS_DATA).set_external([this](offs_t a) { return xdata_r(a); }, [this](offs_t a, u8 d) { xdata_w(a, d); });
@@ -103,6 +104,34 @@ void rtl837x_system::model_gpio()
 			u32 const ext = u32(m_gpio_ext >> (32 * half));
 			return (m_core.reg(out) & d) | (ext & ~d);
 		});
+	}
+}
+
+// The PoE controller on two GPIO pins, open drain: a pin is low while it is
+// an output (DIRECTION bit set) with its latch 0, else pulled up. A write to
+// the pins' OUTPUT or DIRECTION register gives the stub the lines; what it
+// does to SDA is that pin's outside level.
+void rtl837x_system::model_pse()
+{
+	if (!m_board.pse.present)
+		return;
+	m_pse = std::make_unique<rtl8238b>(m_board.pse.addr);
+	u8 const sda = m_board.pse.sda, scl = m_board.pse.scl;
+	for (int half = 0; half < 2; half++) {
+		u16 const out = half ? 0x40 : 0x3c, dir = half ? 0x50 : 0x4c;
+		if ((sda >> 5) != half && (scl >> 5) != half)
+			continue;
+		auto level = [this, half, out, dir](u8 pin, u16 reg, u32 v) {
+			if ((pin >> 5) != half)
+				return true;
+			u32 const o = reg == out ? v : m_core.reg(out), d = reg == dir ? v : m_core.reg(dir);
+			return !((d >> (pin & 31)) & 1) || ((o >> (pin & 31)) & 1);
+		};
+		for (u16 reg : {out, dir})
+			m_core.on_write(reg, [this, reg, level, sda, scl](u32 v) {
+				set_gpio(sda, m_pse->lines(level(scl, reg, v), level(sda, reg, v)));
+				return v;
+			});
 	}
 }
 

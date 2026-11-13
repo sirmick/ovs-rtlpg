@@ -6,6 +6,7 @@
 //          [--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime]
 //          [--sfp SLOT=EEPROM.bin] [--trace-i2c] [--ofp PATH] [--trace-of] [--board FILE]
 //          [--print-flows] [--ageing S] [--powercut-after N] [--flash-ops FILE]
+//          [--rtl8238b-e8 N] [--rtl8238b-alt-arm] [--rtl8238b-dump FILE] [--trace-pse]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -55,6 +56,12 @@
 // rtlsim exits at once with 5. With --flash the file keeps what was written,
 // so the next run is the next power-on. --flash-ops FILE logs each erase
 // ("E addr") and page program ("P addr len") done; --stats counts them.
+//
+// On a board with an RTL8238B PoE controller (sys/rtl8238b.h), --rtl8238b-e8
+// N is what its chip-type register reads (2: the firmware loads image 1),
+// --rtl8238b-alt-arm makes it arm only by the firmware's alternate sequence,
+// --rtl8238b-dump FILE writes each image it takes, and --trace-pse
+// logs its resets, arming and images.
 //
 // --check-banks MAP reports constants read with movc from bytes that ran as
 // code in the same bank (the const-bank bug class; see sys/bankcheck.h).
@@ -140,6 +147,9 @@ int main(int argc, char **argv)
 	bool trace_nic = false, trace_i2c = false, trace_of = false, print_flows = false;
 	fabric_config fcfg;
 	long powercut_after = -1;
+	long pse_e8 = 0;
+	bool pse_alt = false, trace_pse = false;
+	const char *pse_dump = nullptr;
 	const char *flash_ops = nullptr;
 	std::vector<std::pair<unsigned, std::string>> sfps;
 	std::vector<std::pair<unsigned, int>> links;
@@ -178,6 +188,14 @@ int main(int argc, char **argv)
 			powercut_after = atol(argv[++i]);
 		else if (!strcmp(argv[i], "--flash-ops") && i + 1 < argc)
 			flash_ops = argv[++i];
+		else if (!strcmp(argv[i], "--rtl8238b-e8") && i + 1 < argc)
+			pse_e8 = strtol(argv[++i], nullptr, 0);
+		else if (!strcmp(argv[i], "--rtl8238b-alt-arm"))
+			pse_alt = true;
+		else if (!strcmp(argv[i], "--rtl8238b-dump") && i + 1 < argc)
+			pse_dump = argv[++i];
+		else if (!strcmp(argv[i], "--trace-pse"))
+			trace_pse = true;
 		else if (!strcmp(argv[i], "--ageing") && i + 1 < argc)
 			fcfg.ageing_s = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--print-flows"))
@@ -216,7 +234,8 @@ int main(int argc, char **argv)
 				"[--trace-sfr] [--trace-reg] [--trace-flash] [--link P=SPEED] [--check-banks MAP] [--quiet] [--stats] "
 				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime] [--sfp SLOT=EEPROM.bin] [--trace-i2c] "
 				"[--ofp PATH] [--trace-of] [--board FILE] [--print-flows] [--ageing S] "
-				"[--powercut-after N] [--flash-ops FILE]\n");
+				"[--powercut-after N] [--flash-ops FILE] [--rtl8238b-e8 N] [--rtl8238b-alt-arm] "
+				"[--rtl8238b-dump FILE] [--trace-pse]\n");
 			return 1;
 		}
 	}
@@ -268,6 +287,18 @@ int main(int argc, char **argv)
 	for (auto &[p, sp] : links)
 		sys.set_link(p, sp);
 	sys.i2c().trace = trace_i2c;
+	if (auto *pse = sys.pse()) {
+		pse->e8 = pse_e8;
+		pse->alt_arm = pse_alt;
+		pse->trace = trace_pse;
+		if (pse_dump)
+			pse->on_image = [pse_dump](const std::vector<u8> &img) {
+				if (FILE *f = fopen(pse_dump, "wb")) {
+					fwrite(img.data(), 1, img.size(), f);
+					fclose(f);
+				}
+			};
+	}
 	for (auto &c : brd.sfp) {	// the board's modules, unless --sfp says otherwise
 		bool given = false;
 		for (auto &[slot, path] : sfps)

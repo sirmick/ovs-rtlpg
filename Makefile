@@ -72,6 +72,11 @@ test-net: $(BUILD)/rtlsim
 test-update: $(BUILD)/rtlsim
 	python3 tests/net/test_update.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 
+# Flash and board tests that take a few seconds more, and an image matrix
+# ($RTLSIM_IMAGES, ~/rtlsim/images): the PoE board loading its RTL8238B.
+test-flash: $(BUILD)/rtlsim
+	python3 tests/flash/test_pse.py --rtlsim $(BUILD)/rtlsim
+
 # A power cut at every step of a firmware install (rtlsim --powercut-after;
 # no sudo; minutes, in parallel). FW_OLD is what the switch runs before.
 FW_OLD ?= $(FW_IMAGE)
@@ -98,4 +103,4 @@ clean:
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
-.PHONY: all test test-net test-update test-powercut vm test-vm check-banks clean
+.PHONY: all test test-net test-update test-flash test-powercut vm test-vm check-banks clean

@@ -37,6 +37,7 @@ through the web UI install on the simulated flash.
     tools/rtlswitch.py fw.bin --host 1=192.168.2.1/24 --host 2=192.168.2.3/24   # a switch to play with (sudo)
     make vm            # build/vm/rtlsw.qcow2: the switch as a small Alpine VM (tools/vm/README.md)
     make test-vm       # boot it under QEMU, no root: console, ports, switching, persistence (~15 s)
+    make test-flash    # the PoE board loading its RTL8238B, and other image-matrix tests (~5 s)
     make test-update   # a web firmware update and a power cut mid-install (sudo; ~1.5 min)
     build/rtlsim --image fw.bin --cycles 0 --nic /tmp/sw.sock --nic-port 4 [--trace-nic]
 
@@ -134,6 +135,11 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
   front ports 1-3 and configures the switch through its CLI. It checks
   switching, learning (in the firmware's `l2` table), no flooding of known
   unicast, isolation, PVID and tagged VLANs, and ageing.
+- `tests/flash`: the flash model's own test (in `make test`); `test_pse.py`
+  (`make test-flash`) gives a POE_2G040210GSM image machine data with two
+  random "PSE images" and checks the firmware streams the right one to the
+  RTL8238B stub (`src/sys/rtl8238b.h`) byte for byte; `test_powercut.py`
+  (`make test-powercut`) is the power-cut sweep.
 - `tests/sdcc-bugs`: two SDCC 4.6.0 miscompilations the ISA tests found.
 
 ## Found

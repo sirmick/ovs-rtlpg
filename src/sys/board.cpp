@@ -75,6 +75,17 @@ board load_board(const std::string &path)
 		b.jedec_mfr = id >> 8;
 		b.jedec_type = id;
 	}
+	for (auto &c : j["chips"].a) {
+		if (c["type"].s != "rtl8238b")
+			continue;
+		const json &i2c = c["i2c"];
+		if (i2c.kind != json::ARR || i2c.a.size() != 2)
+			throw std::runtime_error(path + ": an rtl8238b needs \"i2c\": [SDA, SCL]");
+		b.pse.present = true;
+		b.pse.sda = i2c.a[0].num();
+		b.pse.scl = i2c.a[1].num();
+		b.pse.addr = c["addr"].num(0x20);
+	}
 	for (auto &p : j["ports"].a) {
 		long const phys = p["phys"].num(-1);
 		if (phys < 0 || phys > 9)

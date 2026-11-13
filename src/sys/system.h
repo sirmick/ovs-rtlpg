@@ -18,6 +18,7 @@
 #include "sys/nic.h"
 #include "sys/i2c.h"
 #include "sys/board.h"
+#include "sys/rtl8238b.h"
 #include "sys/bankcheck.h"
 
 #include <cstdio>
@@ -63,6 +64,7 @@ public:
 	// False if the board has no such cage.
 	bool set_sfp(unsigned slot, const std::vector<u8> &eeprom);
 	const board &board_info() const { return m_board; }
+	rtl8238b *pse() { return m_pse.get(); }	// the board's PoE controller, if any
 
 	void uart_input(const std::string &s) { m_rx.insert(m_rx.end(), s.begin(), s.end()); }
 	bool uart_idle() const { return m_rx.empty(); }
@@ -88,6 +90,7 @@ private:
 	void model_links();
 	void model_gpio();
 	void model_los();
+	void model_pse();
 
 	rtl837x_cpu m_cpu;
 	std::unique_ptr<flash_controller> m_flash;
@@ -97,6 +100,7 @@ private:
 	i2c_controller m_i2c{m_core};
 	board m_board;
 	std::vector<bool> m_sfp_in;	// by index into m_board.sfp
+	std::unique_ptr<rtl8238b> m_pse;
 	std::vector<u8> m_code_ram;		// the common code, 0x0000-0x3fff
 	std::vector<u8> m_xdata;
 	u8 m_sfr[256] = {};			// SFRs nobody models yet
