@@ -12,7 +12,7 @@ a list of points, in parallel, and writes one line per cut as it finishes.
 import collections, concurrent.futures, os, shutil, subprocess, threading
 
 SECTOR = 0x1000
-BOOT_CYCLES = 600_000_000		# a boot reaches its prompt in ~250 M
+BOOT_CYCLES = 1_200_000_000	# a boot reaches its prompt in ~250 M; an install and a boot in ~600 M
 POWER_ONS = 4
 
 
