@@ -1,0 +1,71 @@
+reset
+
+RESET
+
+Initializing Flash controller
+Detecting CPU: RTL8372
+Software version: v0.1.0-1a7053c
+Build date: 2026-11-12 06:01:05
+Compiler: SDCC 4.6.0 #16555
+Toolchain: sdcc/ at 8954637 (4 patches)
+Hardware: SWGT024 V2.0 Unmanaged
+NIC reset
+Setting MAC to: 06:0f:00:c8:54:07
+
+init_switch called
+CPU revision: 6868
+leds_setup called
+leds_setup done
+
+rtl8372_init called
+
+sds_init done
+
+phy_config: 8
+  phy config done
+
+phy_config: 3
+  phy config done
+EEE can't be enabled for SFP port 6
+EEE on for 1 speed 2g5
+EEE on for 2 speed 2g5
+EEE on for 3 speed 2g5
+EEE on for 4 speed 2g5
+EEE can't be enabled for SFP port 5
+
+rtl8372_init done
+Flash information:
+  Manufacturer ID: 0xef
+  Memory Type:     0x40
+  Capacity:        0x13 = 512 KB
+512 KB flash size detected.
+Checking for update image in flash... no update image found.
+igmp_setup called
+bandwidth_setup called
+RTL837X_IGBW_CTRL: 0x0000003f
+RTL837X_EGBW_CTRL: 0x00000001
+bandwidth_setup done
+uip_arp_init called
+Configuring I2C for SFP idx=00 SCL=03, SDA=04
+Configuring I2C for SFP idx=01 SCL=03, SDA=03
+
+A minimal prompt to explore the RTL8372:
+
+Clock register: 0x00001101
+Register 0x7b20/RTL837X_REG_SDS_MODES: 0x000003e2
+Verifying PHY settings:
+
+Port	State	Link	TxGood		TxBad		RxGood		RxBad		MACs
+6	NO SFP	Down	0x00000000	0x00000000	0x00000000	0x00000000	0
+1	On	2.5G	0x00000000	0x00000000	0x00000001	0x00000000	0
+2	On	Down	0x00000000	0x00000000	0x00000000	0x00000000	0
+3	On	Down	0x00000000	0x00000000	0x00000000	0x00000000	0
+4	On	Down	0x00000000	0x00000000	0x00000000	0x00000000	0
+5	NO SFP	Down	0x00000000	0x00000000	0x00000000	0x00000000	0
+Setting ip: 192.168.10.247
+Setting gw: 192.168.10.1
+Setting netmask: 255.255.255.0
+
+
+> 
+<new link: 2000050000, was 0000000000>

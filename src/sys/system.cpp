@@ -5,10 +5,13 @@
 
 static constexpr u32 COMMON_LEN = 0x3ffe;	// imagebuilder: bank 0 is 0x0000-0x3ffd
 static constexpr u32 XRAM_LEN = 0xc000;		// --xram-size 49151
+static constexpr u8 SFR_MAP_FLASH = 0x97;	// MAP_FLASH_PAGE_TO_XDATA
 
-rtl837x_system::rtl837x_system(std::vector<u8> flash)
-	: m_cpu(125000000), m_flash(std::move(flash)), m_code_ram(0x4000, 0xff), m_xdata(0x10000, 0)
+rtl837x_system::rtl837x_system(const std::vector<u8> &image, u32 flash_size, const chip_identity &id)
+	: m_cpu(125000000), m_flash(std::make_unique<flash_controller>(image, flash_size)),
+	  m_code_ram(0x4000, 0xff), m_xdata(0x10000, 0), m_id(id)
 {
+	seed_chip();
 	m_cpu.start();
 	m_cpu.space(AS_PROGRAM).set_external([this](offs_t a) { return code_read(a); }, [](offs_t, u8) {});
 	m_cpu.space(AS_DATA).set_external([this](offs_t a) { return xdata_r(a); }, [this](offs_t a, u8 d) { xdata_w(a, d); });
@@ -17,9 +20,12 @@ rtl837x_system::rtl837x_system(std::vector<u8> flash)
 	m_cpu.sfr_write = [this](u8 a, u8 d) {
 		if (a == rtl837x_cpu::SFR_PSBANK)
 			map_code_pages();
-		sfr_w(a, d);
+		else
+			sfr_w(a, d);
 	};
-	m_cpu.uart_tx = [this](u8 c) { fputc(c, uart_out); fflush(uart_out); };
+	m_cpu.uart_tx = [this](u8 c) { fputc(c, uart_out); if (c == '\n') fflush(uart_out); };
+	m_core.soc_reset = [this]() { m_reset_pending = true; };
+	m_core.pc = [this]() { return m_cpu.pc(); };
 	m_dasm = m_cpu.disassembler();
 	reset();
 }
@@ -27,11 +33,30 @@ rtl837x_system::rtl837x_system(std::vector<u8> flash)
 void rtl837x_system::reset()
 {
 	std::fill(m_code_ram.begin(), m_code_ram.end(), 0xff);
-	for (u32 i = 0; i < COMMON_LEN && 2 + i < m_flash.size(); i++)
-		m_code_ram[i] = m_flash[2 + i];
+	for (u32 i = 0; i < COMMON_LEN && 2 + i < m_flash->size(); i++)
+		m_code_ram[i] = m_flash->byte(2 + i);
+	m_map_flash = 1;
 	m_cpu.reset();
 	m_halted = false;
 	map_code_pages();
+}
+
+// Identity registers (rtlplayground.c main(), boot.c rtl8373_revision()):
+// CHIP_ID bits 23:16 0x73 for an RTL8373, bits 15:8 0x70 for an N part;
+// CHIP_INFO bits 15:8 read the revision while bits 0x000a0000 are set.
+void rtl837x_system::seed_chip()
+{
+	m_core.set_reg(0x0004, 0x83000000 | ((m_id.rtl8373 ? 0x73u : 0x72u) << 16) | (m_id.n_variant ? 0x7000 : 0));
+	m_core.set_reg(0x0010, m_id.uuid);
+	m_core.set_reg(0x0014, m_id.lot_no);
+	u8 rev = m_id.revision;
+	m_core.on_read(0x000c, [rev](u32 v) { return (v & 0xa0000) == 0xa0000 ? (v & ~0xff00u) | (u32(rev) << 8) : v; });
+}
+
+u32 rtl837x_system::code_flash_addr(u16 addr, u8 psbank) const
+{
+	u32 b = (psbank & 0x40) ? 1 : (psbank & 0x3f);
+	return ((b - 1) * 0xc000u + addr) & (m_flash->size() - 1);
 }
 
 // Code fetches go straight to memory: the common code RAM, and the flash
@@ -43,51 +68,67 @@ void rtl837x_system::map_code_pages()
 		prog.set_fast_page(page, &m_code_ram[page << 8]);
 	for (u32 page = 0x40; page < 0x100; page++) {
 		u32 f = code_flash_addr(page << 8, m_cpu.psbank());
-		prog.set_fast_page(page, f + 0x100 <= m_flash.size() ? &m_flash[f] : nullptr);
+		prog.set_fast_page(page, f + 0x100 <= m_flash->size() ? &m_flash->dev().mem[f] : nullptr);
 	}
-}
-
-u32 rtl837x_system::code_flash_addr(u16 addr, u8 bank) const
-{
-	bank &= 0x1f;
-	if (bank == 0)
-		bank = 1;	// TODO: what PSBANK=0 maps above 0x4000 (open question)
-	return (bank - 1) * 0xc000u + addr;
 }
 
 u8 rtl837x_system::code_read(u16 addr)
 {
 	if (addr < 0x4000)
 		return m_code_ram[addr];
-	u32 f = code_flash_addr(addr, m_cpu.psbank());
-	return f < m_flash.size() ? m_flash[f] : 0xff;
+	return m_flash->byte(code_flash_addr(addr, m_cpu.psbank()));
 }
 
 u8 rtl837x_system::xdata_r(offs_t a)
 {
 	a &= 0xffff;
+	if (m_map_flash && a >= 0x4000 && a < 0xc000)
+		return m_flash->byte(a);	// TODO: which flash address (open question)
 	return a < XRAM_LEN ? m_xdata[a] : 0xff;
 }
 
 void rtl837x_system::xdata_w(offs_t a, u8 d)
 {
 	a &= 0xffff;
+	if (m_map_flash && a >= 0x4000 && a < 0xc000)
+		return;
 	if (a < XRAM_LEN)
 		m_xdata[a] = d;
 }
 
 u8 rtl837x_system::sfr_r(u8 a)
 {
+	u8 v;
+	if (flash_controller::owns(a))
+		v = m_flash->sfr_r(a);
+	else if (switch_core::owns(a))
+		v = m_core.sfr_r(a);
+	else if (a == SFR_MAP_FLASH)
+		v = m_map_flash;
+	else
+		v = m_sfr[a];
 	if (trace_sfr)
-		fprintf(stderr, "SFR R %02x -> %02x  pc=%04x\n", a, m_sfr[a], m_cpu.pc());
-	return m_sfr[a];
+		fprintf(stderr, "SFR R %02x -> %02x  pc=%04x\n", a, v, m_cpu.pc());
+	return v;
 }
 
 void rtl837x_system::sfr_w(u8 a, u8 d)
 {
 	if (trace_sfr)
 		fprintf(stderr, "SFR W %02x = %02x  pc=%04x\n", a, d, m_cpu.pc());
-	if (!m_sfr_seen[a] && a != rtl837x_cpu::SFR_PSBANK) {
+	if (flash_controller::owns(a)) {
+		m_flash->sfr_w(a, d);
+		return;
+	}
+	if (switch_core::owns(a)) {
+		m_core.sfr_w(a, d);
+		return;
+	}
+	if (a == SFR_MAP_FLASH) {
+		m_map_flash = d & 1;
+		return;
+	}
+	if (!m_sfr_seen[a]) {
 		m_sfr_seen[a] = true;
 		if (!trace_sfr)
 			fprintf(stderr, "unmodelled SFR %02x written (%02x) at pc=%04x\n", a, d, m_cpu.pc());
@@ -122,6 +163,13 @@ bool rtl837x_system::run(int cycles)
 		int n = m_cpu.run(std::min(left, 256));
 		left -= n;
 		this->cycles += n;
+		if (!m_rx.empty() && m_cpu.uart_rx(m_rx.front()))
+			m_rx.pop_front();
+		if (m_reset_pending) {
+			m_reset_pending = false;
+			resets++;
+			reset();
+		}
 		if (stop_on_halt && at_halt())
 			m_halted = true;
 	}

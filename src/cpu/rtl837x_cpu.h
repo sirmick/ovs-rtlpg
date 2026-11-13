@@ -37,6 +37,8 @@ public:
 	void set_int1(bool asserted) { set_input_line(MCS51_INT1_LINE, asserted ? ASSERT_LINE : CLEAR_LINE); }
 
 	u16 pc() const { return m_pc; }
+	u64 idle_skipped = 0;		// machine cycles fast-forwarded while idle
+	bool fast_idle = true;
 	u8 psbank() const { return m_psbank; }
 	u8 sp() const { return m_sp; }
 	u8 iram(u8 a) const { return m_internal_ram[a]; }
@@ -49,6 +51,7 @@ protected:
 
 private:
 	bool take_ext_irq();
+	bool idle_skip();
 
 	u8 m_mpage = 0, m_psbank = 0, m_eie = 0, m_eip = 0, m_exif = 0;
 };

@@ -91,7 +91,55 @@ bool rtl837x_cpu::take_ext_irq()
 	return true;
 }
 
-// mcs51_cpu_device::execute_run() with the extended interrupt poll added.
+// In IDLE (PCON.0) with nothing pending, nothing happens until a timer
+// overflows: jump to just before the nearest overflow of a timer whose
+// interrupt is enabled, and leave the overflow itself to the cycle-by-cycle
+// path. Timers count every machine cycle, or every third (CKCON T0M/T1M/T2M
+// clear: clk/12 on the four-clock core). Returns true if it skipped.
+bool rtl837x_cpu::idle_skip()
+{
+	if (!fast_idle || instruction_enabled() || pending_irq_flags(interrupt_mask()))
+		return false;
+	if (BIT(m_ie, IE_A) && ((m_exif >> 4) & m_eie & 0x0f))
+		return false;
+	u8 const ckcon = m_sfr.read_byte(0x8e);
+	auto per = [ckcon](int bit) -> u32 { return BIT(ckcon, bit) ? 1 : 3; };
+	u32 dist = m_icount;	// in machine cycles
+	auto limit = [&](u32 counts, u32 cpc) { if (counts > 1) dist = std::min(dist, (counts - 1) * cpc); else dist = 0; };
+	auto t01_left = [](u8 mode, u8 th, u8 tl) -> u32 {
+		switch (mode) {
+		case 0: return 0x2000 - (((th << 5) | (tl & 0x1f)) & 0x1fff);
+		case 1: return 0x10000 - ((th << 8) | tl);
+		case 2: return 0x100 - tl;
+		default: return 0x100 - tl;
+		}
+	};
+	bool const t0 = BIT(m_tcon, TCON_TR0) && !BIT(m_tmod, TMOD_CT0);
+	bool const t1 = BIT(m_tcon, TCON_TR1) && !BIT(m_tmod, TMOD_CT1);
+	bool const t2 = BIT(m_t2con, T2CON_TR2) && !BIT(m_t2con, T2CON_CT2);
+	if (t0 && BIT(m_ie, IE_T0))
+		limit(t01_left(m_tmod & 3, m_th0, m_tl0), per(3));
+	if (t1 && BIT(m_ie, IE_T1))
+		limit(t01_left((m_tmod >> 4) & 3, m_th1, m_tl1), per(4));
+	if (t2 && BIT(m_ie, 5))	// ET2 is IE.5 (the core's IE_T2 enum says 6)
+		limit(0x10000 - m_t2, per(5));
+	if (!t0 && !t1 && !t2)
+		dist = m_icount;	// asleep for good: nothing but an external line wakes it
+	if (dist < 16)
+		return false;
+	if (t0)
+		update_timer_t0(dist / per(3));
+	if (t1)
+		update_timer_t1(dist / per(4));
+	if (t2)
+		m_t2 += dist / per(5);
+	m_icount -= dist;
+	idle_skipped += dist;
+	return true;
+}
+
+// mcs51_cpu_device::execute_run() with the extended interrupt poll and the
+// idle fast-forward added.
 void rtl837x_cpu::execute_run()
 {
 	do {
@@ -100,6 +148,8 @@ void rtl837x_cpu::execute_run()
 		check_irqs();
 		if (!inhibit && m_irq_active == active)
 			take_ext_irq();
+		if (idle_skip())
+			continue;
 
 		if (instruction_enabled()) {
 			m_ppc = m_pc;
