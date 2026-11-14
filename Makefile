@@ -6,8 +6,10 @@ CPPFLAGS += -Isrc/shim -Ithird_party/mame/mcs51 -Isrc -I$(BUILD)
 CFLAGS ?= -O2 -g
 CFLAGS += -std=c11 -Wall -MMD -MP
 
-# RTLPlayground checkout: register names for traces come from its headers
+# RTLPlayground checkout: register names for traces come from its headers,
+# and its patched SDCC builds the ISA/bank tests.
 RTLPG ?= $(HOME)/src/RTLPlayground
+SDCC_DIR ?= $(firstword $(wildcard $(RTLPG)/toolchain/sdcc-*/bin))
 
 BUILD = build
 MAME_SRC = $(addprefix third_party/mame/mcs51/,i8051.cpp mcs51ops.cpp i8052.cpp dw8051.cpp mcs51dasm.cpp)
@@ -48,8 +50,8 @@ $(BUILD)/test_flash_dev: tests/flash/test_flash_dev.c src/sys/flash_dev.c src/sy
 
 test: $(BUILD)/rtlsim $(BUILD)/test_flash_dev
 	$(BUILD)/test_flash_dev
-	$(MAKE) -C tests/isa RTLSIM=$(abspath $(BUILD)/rtlsim)
-	$(MAKE) -C tests/bank RTLSIM=$(abspath $(BUILD)/rtlsim)
+	$(MAKE) -C tests/isa RTLSIM=$(abspath $(BUILD)/rtlsim) SDCC_DIR=$(SDCC_DIR)
+	$(MAKE) -C tests/bank RTLSIM=$(abspath $(BUILD)/rtlsim) SDCC_DIR=$(SDCC_DIR)
 ifneq ($(FW_IMAGE),)
 	python3 tests/fw/test_boot.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/net/test_nic.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim

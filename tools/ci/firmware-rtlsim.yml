@@ -1,0 +1,70 @@
+# rtlsim.yml - runs the built firmware through rtlsim (github.com/sirmick/ovs-rtlpg).
+#
+# This file belongs in the RTLPlayground fork at .github/workflows/rtlsim.yml,
+# beside build.yml. It is kept in ovs-rtlpg/tools/ci/ so the two stay in step;
+# the ovs-rtlpg session develops it, the RTLPlayground session commits it.
+#
+# build.yml proves the firmware compiles and the host unit tests pass. This
+# proves the real image runs: it boots to the CLI matching silicon, answers
+# ARP/ICMP/TCP and the web UI, switches VLANs, survives a power cut during an
+# update, migrates standard->compact, and loads the PoE controller. Those are
+# the banking, ISR-timing and switch-core behaviours the host tests (PC-
+# compiled C against mocks) cannot see.
+#
+# These tests are FUNCTIONAL, not silicon-timing-faithful: rtlsim's flash and
+# CPU clock are not the real chip's, so a green run is not a green light to
+# flash hardware - the bench is the final gate.
+name: rtlsim
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rtlsim:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the firmware (this repo)
+        uses: actions/checkout@v6
+        with:
+          path: fw
+      - name: Check out rtlsim
+        uses: actions/checkout@v6
+        with:
+          repository: sirmick/ovs-rtlpg
+          path: ovs-rtlpg
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          # firmware build
+          sudo apt-get install -y build-essential bison flex libboost-dev patch bzip2 \
+            xxd python-is-python3 libjson-c-dev zlib1g-dev
+          # rtlsim and its test tiers: OVS + netns, QEMU, helpers
+          sudo apt-get install -y openvswitch-switch qemu-system-x86 qemu-utils \
+            jq iproute2 socat curl
+
+      - name: Cache the patched SDCC
+        uses: actions/cache@v4
+        with:
+          path: fw/toolchain
+          key: sdcc-${{ hashFiles('fw/sdcc/*') }}
+
+      - name: Build the firmware (SWTG024AS, compact)
+        run: cd fw && make CI=1 MACHINE=SWGT024_V2_0_UNMANAGED LAYOUT=compact
+
+      - name: Build the rtlsim image matrix (migrate / PoE / loader tiers)
+        run: |
+          cd fw
+          if make -n rtlsim-images >/dev/null 2>&1; then
+            make rtlsim-images OUT="$HOME/rtlsim/images/ci"
+          else
+            echo "no rtlsim-images target yet; the flash matrix tiers will skip"
+          fi
+
+      - name: Run rtlsim
+        run: ovs-rtlpg/tools/ci/rtlsim-ci.sh "$GITHUB_WORKSPACE/fw"
