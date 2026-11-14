@@ -155,7 +155,11 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
   (`make test-flash`) takes the 2 MiB boards from the old standard firmware
   to compact with a bridge image, and checks the config and machine data
   moves, once each, with `--sweep` under power cuts; `test_powercut.py`
-  (`make test-powercut`) is the power-cut sweep.
+  (`make test-powercut`) is the power-cut sweep. `test_boot0.py` (in `make
+  test`) installs an update in one power-on, then cuts the power mid-copy
+  and checks the next power-on's early resume finishes it; it reports each
+  chip reset as early or late (`--trace-reset`). Its resets booting here is
+  not proof they boot on silicon (see `src/sys/system.cpp`).
 - `tests/sdcc-bugs`: two SDCC 4.6.0 miscompilations the ISA tests found.
 
 ## Found
