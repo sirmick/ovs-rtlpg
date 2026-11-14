@@ -3,8 +3,8 @@
 
     tests/flash/test_loader.py [CHIP] [--rtlsim build/rtlsim]
 
-CHIP is a loader + application image for a programmer (*-compact-loader-
-boot*.bin; default: the newest in $RTLSIM_IMAGES, ~/rtlsim/images/*/;
+CHIP is a loader + application image for a programmer (*-compact-boot.bin;
+default: the newest in $RTLSIM_IMAGES, ~/rtlsim/images/*/;
 skipped without one). The loader (loader/loader_alias.c app_start()) copies
 the application's home bank into code RAM through HW_CONF (0x6040) and the
 register window at 0x80b0, checks it with movc and jumps to 0: rtlsim must
@@ -21,7 +21,7 @@ def main():
     ap.add_argument("--rtlsim", default=os.path.join(HERE, "../../build/rtlsim"))
     a = ap.parse_args()
     root = os.environ.get("RTLSIM_IMAGES", os.path.expanduser("~/rtlsim/images"))
-    found = sorted(glob.glob(os.path.join(root, "*", "SWGT024_V2_0_UNMANAGED-compact-loader-boot*.bin")),
+    found = sorted(glob.glob(os.path.join(root, "*", "SWGT024_V2_0_UNMANAGED-compact-boot.bin")),
                    key=os.path.getmtime)
     chip = a.chip or (found[-1] if found else None)
     if not chip:

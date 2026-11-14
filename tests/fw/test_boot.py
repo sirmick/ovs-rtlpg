@@ -5,8 +5,8 @@ silicon.
     tests/fw/test_boot.py IMAGE [--rtlsim build/rtlsim]
 
 - Every line of the silicon boot log (golden/swtg024as-boot.log, the bench
-  SWTG024AS; version and build date left out) appears, in order, before the
-  prompt.
+  SWTG024AS; version, build date and toolchain left out: they are the
+  build's, not the chip's) appears, in order, before the prompt.
 - Booted with the bench's cable (2.5G on physical port 4, front port 1), the
   port table's State and Link columns match silicon's.
 - The prompt comes up, and CLI commands work against the modelled chip:
@@ -37,7 +37,7 @@ def golden_lines(path):
     lines = [l.rstrip() for l in open(path, errors="replace")]
     start = lines.index("Initializing Flash controller")
     end = next(i for i, l in enumerate(lines) if l.startswith("A minimal prompt"))
-    return [l for l in lines[start:end] if l and not re.match(r"(Software version|Build date)", l)]
+    return [l for l in lines[start:end] if l and not re.match(r"(Software version|Build date|Toolchain)", l)]
 
 
 def in_order(want, have):
