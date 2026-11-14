@@ -20,7 +20,7 @@ the time to load the web UI, and TCP throughput. A 10G SFP module
 import argparse, json, os, re, shutil, statistics, subprocess, sys, tempfile, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "../fw"))
-from console import Console, PROMPT
+from console import Console, PROMPT, switch_ip, peer_ip
 sys.path.insert(0, os.path.join(HERE, "../../tools"))
 from rtlswitch import Lab
 
@@ -115,12 +115,8 @@ def main():
         c = lab.console
     try:
         check(c.expect(PROMPT, 30), "boots to the prompt")
-        start = len(c.log)
-        c.send("ip")
-        c.expect(PROMPT, 10)
-        m = re.search(rb"Current IP: ([\d.]+)", c.log[start:])
-        ip = m.group(1).decode() if m else "192.168.2.2"
-        host = re.sub(r"\.\d+$", ".1" if not ip.endswith(".1") else ".2", ip)
+        ip = switch_ip(c)
+        host = peer_ip(ip)
         if a.via == "tap":
             print(f"switch {ip}, Linux {host} in netns {ns}, via a tap")
             nsx = ["ip", "netns", "exec", ns]

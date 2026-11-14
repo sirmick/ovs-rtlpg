@@ -15,7 +15,9 @@ it can.
 import argparse, os, shutil, socket, struct, subprocess, sys, tempfile, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "../net"))
-from test_nic import Peer, eth, PEER_MAC, PEER_IP, SWITCH_IP, SWITCH_MAC
+from test_nic import Peer, eth, ip_bytes, PEER_MAC, PEER_IP, SWITCH_IP, SWITCH_MAC
+from console import DEFAULT_IP, peer_ip
+import re
 
 failures = 0
 
@@ -106,6 +108,12 @@ def main():
         vm.expect(b"Module: RTLSIM", 30)
         out = vm.cli("sfp")
         check("Slot 1 - Rate: 67" in out and "Slot 2 - empty" in out, "-fw_cfg SFP1=10g: a 10G module in cage 1")
+
+        global SWITCH_IP, PEER_IP
+        m = re.search(r"Current IP: ([\d.]+)", vm.cli("ip"))
+        sip = m.group(1) if m else DEFAULT_IP
+        SWITCH_IP, PEER_IP = ip_bytes(sip), ip_bytes(peer_ip(sip))
+        print(f"switch IP {sip}, peer {peer_ip(sip)}")
 
         p1, p2 = Peer(vm.nic[0]), Peer(vm.nic[1])
         arp = struct.pack("!HHBBH6s4s6s4s", 1, 0x0800, 6, 4, 1, PEER_MAC, PEER_IP, b"\0" * 6, SWITCH_IP)

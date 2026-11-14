@@ -12,11 +12,19 @@ without the CPU never reaches it.
 import argparse, os, socket, struct, subprocess, sys, tempfile, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "../fw"))
-from console import Console, PROMPT
+from console import Console, PROMPT, DEFAULT_IP, switch_ip, peer_ip
+
+
+def ip_bytes(dotted):
+    return bytes(int(x) for x in dotted.split("."))
+
 
 PEER_MAC = bytes.fromhex("020000000001")
 SWITCH_MAC = bytes.fromhex("060f00c85407")
-PEER_IP, SWITCH_IP = bytes([192, 168, 2, 1]), bytes([192, 168, 2, 2])
+# Defaults for importers; main() overwrites them with the address the firmware
+# actually reports (switch_ip), so the test follows any image's config.
+SWITCH_IP = ip_bytes(DEFAULT_IP)
+PEER_IP = ip_bytes(peer_ip(DEFAULT_IP))
 failures = 0
 
 
@@ -91,6 +99,10 @@ def main():
             if not c.expect(PROMPT, 30):
                 check(False, "boots to the prompt")
                 return 1
+            global SWITCH_IP, PEER_IP
+            sip = switch_ip(c)
+            SWITCH_IP, PEER_IP = ip_bytes(sip), ip_bytes(peer_ip(sip))
+            print(f"switch IP {sip}, peer {peer_ip(sip)}")
             p = Peer(sock)
 
             arp = struct.pack("!HHBBH6s4s6s4s", 1, 0x0800, 6, 4, 1, PEER_MAC, PEER_IP, b"\0" * 6, SWITCH_IP)

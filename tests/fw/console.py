@@ -6,9 +6,32 @@
 Boots IMAGE, waits for the prompt, sends each --cmd and waits for the prompt
 again. Prints the whole console log and the time each step took.
 """
-import argparse, os, select, subprocess, sys, time
+import argparse, os, re, select, subprocess, sys, time
 
 PROMPT = b"\n> "
+
+# The management IP to assume when the firmware's `ip` command can't be read.
+# It is the IP that upstream RTLPlayground bakes into the image (config.txt),
+# so an upstream-format image is reachable even if the CLI probe below is
+# defeated; our compact build keeps config outside the image and the probe
+# finds its address (192.168.2.2) instead.
+DEFAULT_IP = "192.168.10.247"
+
+
+def switch_ip(console, timeout=10):
+    """The firmware's management IP, read from its `ip` command, so a test
+    works on any image whatever address it carries. Falls back to DEFAULT_IP
+    when the CLI can't be parsed."""
+    start = len(console.log)
+    console.send("ip")
+    console.expect(PROMPT, timeout)
+    m = re.search(rb"Current IP: ([\d.]+)", console.log[start:])
+    return m.group(1).decode() if m else DEFAULT_IP
+
+
+def peer_ip(switch_ip):
+    """An address on the switch's /24 for the test peer to use."""
+    return re.sub(r"\.\d+$", ".2" if switch_ip.endswith(".1") else ".1", switch_ip)
 
 
 class Console:
