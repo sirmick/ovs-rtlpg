@@ -189,7 +189,8 @@ void flash_controller::execute()
 			data[i] = 0x50 + i;
 		break;
 	case 0x48:						// security registers
-		memset(data, 0xff, len);
+		for (unsigned i = 0; i < len; i++)
+			data[i] = addr + i < secreg.size() ? secreg[addr + i] : 0xff;
 		break;
 	default:
 		fprintf(stderr, "flash: unmodelled read command %02x (tconf %02x)\n", cmd, tconf);

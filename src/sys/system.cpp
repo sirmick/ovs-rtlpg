@@ -6,6 +6,14 @@
 static constexpr u32 COMMON_LEN = 0x3ffe;	// imagebuilder: bank 0 is 0x0000-0x3ffd
 static constexpr u32 XRAM_LEN = 0xc000;		// --xram-size 49151
 static constexpr u8 SFR_MAP_FLASH = 0x97;	// MAP_FLASH_PAGE_TO_XDATA
+// SFR_BANK_RET: a stack of banks, not a byte (inferred, not measured). The
+// vendor firmware's bank trampolines keep the caller's bank only here (mov
+// 0xbb,0x96 ... mov 0x96,0xbb), never on the CPU stack, and the managed
+// POE-2G040210GSM image nests banked calls 6 deep; as a byte, its fourth
+// nested return restores the wrong bank and the runtime falls back to 0.
+// Code that doesn't nest (RTLPlayground never reads it) sees a plain byte.
+static constexpr u8 SFR_BANK_RET = 0xbb;
+static constexpr unsigned BANK_RET_DEPTH = 32;	// a guess; the managed image needs 6
 
 rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const board &b)
 	: m_cpu(125000000), m_flash(std::move(flash)), m_board(b),
@@ -73,6 +81,7 @@ void rtl837x_system::reset(bool chip_reset)
 	for (u32 i = 0; i < COMMON_LEN && 2 + i < m_flash->size(); i++)
 		m_code_ram[i] = m_flash->byte(2 + i);
 	m_map_flash = 1;
+	m_bank_ret.clear();
 	m_nic.reset();
 	m_cpu.reset();
 	m_halted = false;
@@ -273,7 +282,10 @@ u8 rtl837x_system::sfr_r(u8 a)
 		v = m_nic.sfr_r(a);
 	else if (a == SFR_MAP_FLASH)
 		v = m_map_flash;
-	else
+	else if (a == SFR_BANK_RET && !m_bank_ret.empty()) {
+		v = m_bank_ret.back();
+		m_bank_ret.pop_back();
+	} else
 		v = m_sfr[a];
 	if (trace_sfr)
 		fprintf(stderr, "SFR R %02x -> %02x  pc=%04x\n", a, v, m_cpu.pc());
@@ -298,6 +310,18 @@ void rtl837x_system::sfr_w(u8 a, u8 d)
 	}
 	if (a == SFR_MAP_FLASH) {
 		m_map_flash = d & 1;
+		return;
+	}
+	if (a == SFR_BANK_RET) {
+		if (m_bank_ret.size() >= BANK_RET_DEPTH) {	// a write without its read: keep the newest
+			if (!m_bank_ret_overflow)
+				fprintf(stderr, "rtlsim: SFR 0xbb bank stack deeper than %u at pc=%04x; dropping the oldest\n",
+					BANK_RET_DEPTH, m_cpu.pc());
+			m_bank_ret_overflow = true;
+			m_bank_ret.erase(m_bank_ret.begin());
+		}
+		m_bank_ret.push_back(d);
+		m_sfr[a] = d;
 		return;
 	}
 	if (!m_sfr_seen[a]) {

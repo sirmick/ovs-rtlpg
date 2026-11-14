@@ -48,6 +48,10 @@ public:
 	bool code_readable() const;
 	bool trace = false;
 	FILE *op_log = nullptr;		// each erase (E addr) and program (P addr len) done
+	// The security registers (read command 0x48 at addr reads secreg[addr]),
+	// erased (0xff) past its end. A genuine vendor-programmed chip holds data
+	// its stock firmware checks; --flash-secreg loads it from a file.
+	std::vector<u8> secreg;
 
 	// Timing (timing = true; else everything is done at once), in machine
 	// cycles (31.25 M a second), as measured on the bench SWTG024AS's W25Q40:

@@ -111,6 +111,8 @@ private:
 	u8 m_sfr[256] = {};			// SFRs nobody models yet
 	bool m_sfr_seen[256] = {};
 	u8 m_map_flash = 1;			// SFR 0x97: xdata 0x4000-0xbfff reads the flash
+	std::vector<u8> m_bank_ret;		// SFR 0xbb: a write pushes, a read pops
+	bool m_bank_ret_overflow = false;
 	bool m_halted = false;
 	bool m_flash_reset_hang = false;
 	bool m_reset_pending = false;

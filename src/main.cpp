@@ -7,7 +7,7 @@
 //          [--sfp SLOT=EEPROM.bin] [--trace-i2c] [--ofp PATH] [--trace-of] [--board FILE]
 //          [--print-flows] [--ageing S] [--powercut-after N] [--flash-ops FILE]
 //          [--rtl8238b-e8 N] [--rtl8238b-alt-arm] [--rtl8238b-dump FILE] [--trace-pse]
-//          [--flash-timing] [--trace-reset] [--early-reset-hangs]
+//          [--flash-timing] [--trace-reset] [--early-reset-hangs] [--flash-secreg FILE]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -61,6 +61,8 @@
 // rtlsim exits at once with 5. With --flash the file keeps what was written,
 // so the next run is the next power-on. --flash-ops FILE logs each erase
 // ("E addr") and page program ("P addr len") done; --stats counts them.
+// --flash-secreg FILE is what the flash chip's security registers hold (read
+// command 0x48; erased without it). Vendor firmware may check them.
 //
 // On a board with an RTL8238B PoE controller (sys/rtl8238b.h), --rtl8238b-e8
 // N is what its chip-type register reads (2: the firmware loads image 1),
@@ -166,6 +168,7 @@ int main(int argc, char **argv)
 	bool pse_alt = false, trace_pse = false, trace_reset = false, early_reset_hangs = false;
 	const char *pse_dump = nullptr;
 	const char *flash_ops = nullptr;
+	const char *flash_secreg = nullptr;
 	std::vector<std::pair<unsigned, std::string>> sfps;
 	std::vector<std::pair<unsigned, int>> links;
 	long long cycles = 100000000;
@@ -205,6 +208,8 @@ int main(int argc, char **argv)
 			powercut_after = atol(argv[++i]);
 		else if (!strcmp(argv[i], "--flash-ops") && i + 1 < argc)
 			flash_ops = argv[++i];
+		else if (!strcmp(argv[i], "--flash-secreg") && i + 1 < argc)
+			flash_secreg = argv[++i];
 		else if (!strcmp(argv[i], "--rtl8238b-e8") && i + 1 < argc)
 			pse_e8 = strtol(argv[++i], nullptr, 0);
 		else if (!strcmp(argv[i], "--rtl8238b-alt-arm"))
@@ -256,7 +261,7 @@ int main(int argc, char **argv)
 				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime] [--sfp SLOT=EEPROM.bin] [--trace-i2c] "
 				"[--ofp PATH] [--trace-of] [--board FILE] [--print-flows] [--ageing S] "
 				"[--powercut-after N] [--flash-ops FILE] [--rtl8238b-e8 N] [--rtl8238b-alt-arm] "
-				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing] [--trace-reset] [--early-reset-hangs]\n");
+				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing] [--trace-reset] [--early-reset-hangs] [--flash-secreg FILE]\n");
 			return 1;
 		}
 	}
@@ -304,6 +309,8 @@ int main(int argc, char **argv)
 	sys.flash().timing = flash_timing;
 	if (powercut_after >= 0)
 		sys.flash().power_cut_after(powercut_after);
+	if (flash_secreg)
+		sys.flash().secreg = load(flash_secreg);
 	if (flash_ops && !(sys.flash().op_log = fopen(flash_ops, "w"))) {
 		fprintf(stderr, "rtlsim: cannot write %s\n", flash_ops);
 		return 1;
