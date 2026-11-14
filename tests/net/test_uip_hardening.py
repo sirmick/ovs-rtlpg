@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
-"""test_uip_hardening.py - crafted TCP frames must not hang or underflow uIP.
+"""test_uip_hardening.py - a crafted TCP SYN must not hang the main loop.
 
     tests/net/test_uip_hardening.py IMAGE [--rtlsim build/rtlsim]
 
-A "broken on upstream, fixed on the branch" proof for the TCP option /
-urgent-pointer hardening ported into RTLPlayground's uip.c from Contiki-NG
-(process_tcp_options bounds + the URG length cap). Two regressions:
+uip_process() walks the TCP options of an incoming SYN with an 8-bit cursor
+and advances it by an attacker-controlled option length with no bound. A
+crafted option list wraps the cursor instead of ending the walk, so the loop
+never terminates and the firmware's single main loop never returns - ping,
+ARP and the console all stop. One SYN to the web server (port 80) is a remote
+denial of service.
 
-  1. A SYN whose TCP options make the old 8-bit option cursor cycle (data
-     offset 6, option bytes 01 03 FF 00: NOOP, then an unknown option of
-     length 255 that wraps the cursor back to 0). On the unpatched firmware
-     the option walk never terminates and the whole main loop stops; on the
-     fix the walk is bounded and the switch stays alive.
+The proof is liveness: send the cursor-cycling SYN, then check the switch
+still answers ARP. The option bytes are 01 03 FF 00 (NOOP; then an unknown
+option of length 255 that wraps the cursor back to 0) with the data offset
+set to cover them. On the unpatched firmware the switch stops answering; with
+process_tcp_options() bounded, the walk terminates and it stays alive.
 
-  2. A segment with URG set and a huge urgent pointer. On the unpatched build
-     uip_len underflows and uip_appdata is pushed out of uip_buf; the fix caps
-     the urgent length at the segment length.
+(The urgent-pointer out-of-bounds, CVE-2020-17437, is a separate bug with its
+own proof in test_cve_2020_17437.py.)
 
-Both are judged by liveness: after the crafted frame, a normal ARP must still
-be answered. No privileges needed - frames go straight onto the --nic socket.
 The switch IP is read from the firmware (switch_ip), so this runs unchanged on
-an upstream-format image (config.txt address) or our compact build.
+an upstream-format image or our compact build. No privileges needed - frames
+go straight onto the --nic socket.
 """
 import argparse, os, struct, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -38,11 +39,11 @@ def check(cond, msg):
     failures += not cond
 
 
-def tcp(flags, options=b"", urgp=0):
-    """A TCP header to port 80. The data offset counts the 20-byte base plus
-    options, so a crafted option list is reachable by the firmware's parser."""
+def syn(options):
+    """A TCP SYN to port 80 carrying `options`, with its checksum filled in.
+    The data offset counts the 20-byte base plus the options."""
     off = (20 + len(options)) // 4
-    h = struct.pack("!HHIIBBHHH", 40000, 80, 1000, 0, off << 4, flags, 4096, 0, urgp) + options
+    h = struct.pack("!HHIIBBHHH", 40000, 80, 1000, 0, off << 4, 0x02, 4096, 0, 0) + options
     pseudo = test_nic.PEER_IP + test_nic.SWITCH_IP + struct.pack("!BBH", 0, 6, len(h))
     return h[:16] + struct.pack("!H", 0xffff ^ csum(pseudo + h)) + h[18:]
 
@@ -76,15 +77,11 @@ def main():
             test_nic.SWITCH_IP, test_nic.PEER_IP = ip_bytes(sip), ip_bytes(peer_ip(sip))
             print(f"switch IP {sip}, peer {peer_ip(sip)}")
             p = Peer(sock)
-            check(alive(p), "baseline: the switch answers ARP before any crafted frame")
+            check(alive(p), "switch answers ARP before the crafted SYN")
 
-            # 1. SYN with a cursor-cycling option list (01 03 FF 00).
-            p.send(eth(SWITCH_MAC, 0x0800, ipv4(6, tcp(0x02, options=bytes([0x01, 0x03, 0xFF, 0x00])))))
+            # SYN with a cursor-cycling option list (01 03 FF 00).
+            p.send(eth(SWITCH_MAC, 0x0800, ipv4(6, syn(bytes([0x01, 0x03, 0xFF, 0x00])))))
             check(alive(p), "crafted SYN options do not hang the main loop")
-
-            # 2. A segment with URG set and a huge urgent pointer.
-            p.send(eth(SWITCH_MAC, 0x0800, ipv4(6, tcp(0x10 | 0x20, urgp=0xFFFF) + b"x" * 8)))
-            check(alive(p), "oversized urgent pointer does not wedge the stack")
         finally:
             c.close()
 
