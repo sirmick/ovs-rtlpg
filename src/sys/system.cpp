@@ -53,29 +53,11 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 	reset();
 }
 
-// A HYPOTHESIS, and silicon has falsified it as the whole story: a reg-0x24
-// chip reset (chip_reset) doesn't reset the flash controller, so the boot ROM
-// refetches the common code through it as the firmware left it. If that isn't
-// a read setup (boot0 leaves CMD_R on a status read), the fetch is garbage and
-// the chip hangs until a power cycle. It reproduced a POE-2G040210GSM hang
-// after a boot0 install, but on 2026-11-14 a boot0 that restores the read
-// setup first (RTLPlayground 1fda21e) hung on silicon too. What fits so far:
-// resets after setup_clock() boot, resets before it (boot0, an early ^R^R)
-// hang; rtlsim models no reset clock. So a reset that boots here may still
-// hang a real switch. A cold power-on (chip_reset false) resets the
-// controller, so it always boots.
+// A chip reset (chip_reset) reloads the common code and restarts the CPU;
+// flash and PHY state persist. Whether a reset hangs is modelled in run()
+// (--early-reset-hangs), not here.
 void rtl837x_system::reset(bool chip_reset)
 {
-	if (chip_reset && !m_flash->code_readable()) {
-		if (!m_flash_reset_hang)
-			fprintf(stderr, "rtlsim: chip reset with the flash controller in a non-read command "
-				"(CMD_R=0x%02x); the boot prefetch reads garbage and the switch hangs until a "
-				"power cycle (a hypothesis of silicon's boot0 hang, not the whole cause)\n",
-				m_flash->cmd_r());
-		m_flash_reset_hang = true;
-		m_halted = true;
-		return;
-	}
 	m_clock_set = false;
 	std::fill(m_code_ram.begin(), m_code_ram.end(), 0xff);
 	for (u32 i = 0; i < COMMON_LEN && 2 + i < m_flash->size(); i++)

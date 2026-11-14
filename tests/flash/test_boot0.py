@@ -20,15 +20,15 @@ upload leaves it (at 0x40000, then a 0). Two runs:
   power-ons. A hang at the early reset is allowed and reported: the copy
   is complete by then, so a power cycle comes up on NEW.
 Each chip reset is reported as early (before the boot's banner) or late
-(after it), from rtlsim --trace-reset, and any reset rtlsim's flash-
-controller model hangs on, with which kind it was.
+(after it), from rtlsim --trace-reset, and any reset that hangs (with
+--early-reset-hangs), with which kind it was.
 
-A PASS is NOT proof that the resets work on silicon. The flash-controller
-model (sys/system.cpp) is a hypothesis that silicon has falsified as the
-whole cause: on 2026-11-14 an install through the fixed boot0 (1fda21e ->
-1fda21e-next) hung switch-denlounge too. What fits so far is that resets
-before setup_clock() (the early ones) hang, and rtlsim doesn't model the
-reset clock. Needs an image that installs web updates (dev e3347e6 and later).
+A PASS is NOT proof that the resets work on silicon: rtlsim doesn't model
+why a reset hangs. Silicon so far says resets before setup_clock() hang
+(every boot0 install did, on switch-denlounge) and later ones boot; run
+rtlsim with --early-reset-hangs (pass a wrapper as --rtlsim) to apply that
+rule, which makes the resume's early reset hang once, as allowed above.
+Needs an image that installs web updates (dev e3347e6 and later).
 """
 import argparse, os, re, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))

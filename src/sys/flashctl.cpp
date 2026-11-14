@@ -83,16 +83,6 @@ flash_controller::~flash_controller()
 		fd_free(&m_dev);
 }
 
-bool flash_controller::code_readable() const
-{
-	switch (m_sfr[CMD_R]) {
-	case 0x03: case 0x0b: case 0x3b: case 0xbb: case 0x6b: case 0xeb:	// READ, FREAD, dual/quad
-		return true;
-	default:	// e.g. 0x05 READ_STATUS, which boot0 leaves set
-		return false;
-	}
-}
-
 bool flash_controller::owns(u8 s)
 {
 	return s == EXEC || (s >= MODEB && s <= TCONF) || (s >= ADDR0 && s <= DATA24) || s == CMD_R || s == CMD || s == CONFIG;
