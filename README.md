@@ -1,198 +1,177 @@
 # rtlsim
 
-An RTL837x switch simulated with the real RTLPlayground firmware. See
-[DESIGN.md](DESIGN.md).
+An RTL837x Ethernet switch, simulated by running the real, unmodified
+RTLPlayground firmware on an emulated 8051 and reproducing the switch chip
+around it. The firmware boots to its CLI, serves its web UI, installs firmware
+updates, and switches traffic; the front ports are Open vSwitch ports, so the
+whole thing behaves as a real managed switch with an IP. See
+[DESIGN.md](DESIGN.md) for how it is built.
 
-Status: the real firmware boots to its CLI prompt (in 0.1 s), its boot log
-matching the bench SWTG024AS line for line, and CLI commands work against the
-modelled chip. The switch runs as an OVS bridge whose flows rtlsim compiles
-from the chip's state, so its front ports switch as the firmware configures
-them: VLANs, PVIDs, frame types, ingress filter, isolation, learning and
-ageing. Linux pings the switch and loads its web UI, and firmware updates
-through the web UI install on the simulated flash.
+## What is modelled
 
-- `src/cpu`: MAME's mcs51/DW8051 core (vendored unchanged in
-  `third_party/mame`, behind `src/shim/emu.h`), the RTL837x variant, and an
-  idle fast-forward (the firmware sleeps in `delay()` between ticks).
-- `src/sys`: code banking and the flash image; the flash controller over
-  a SPI-NOR model (`flash_dev.h`, with its own test in `tests/flash`); the switch
-  core (register handshake, SerDes, SMI/PHY) and its table engine (VLAN, L2,
-  flush, counters, ported from RTLPlayground's `test/hw_mock.c`); the CPU
-  port's NIC (`nic.h`: DMA, RX ring, TX area, INT1, checksum offload); the
-  I2C master (`i2c.h`) and SFP modules on it (`board.h`: the bench board's
-  cages).
-- `src/net`: a front port on a UNIX stream socket, framed as QEMU's
-  `-netdev stream`; the OpenFlow 1.3 controller of an OVS bridge (`--ofp`).
-- `src/fabric`: the flow compiler (register state and tables to an OVS flow
-  set, `compiler.h`), and the glue that keeps the bridge's flows current and
-  learns and ages L2 entries in the chip model (`fabric.h`).
+- The 8051 (MAME's mcs51/DW8051 core) with the RTL837x's code banking.
+- The flash chip (SPI-NOR), so the saved config and firmware updates persist.
+- The switch core: the register handshake, SerDes, SMI/PHY, and the VLAN / L2 /
+  counter tables.
+- The CPU-port NIC, the I2C master and SFP modules, and (on PoE boards) an
+  RTL8238B PoE-controller stub.
+- The fabric: a compiler from the chip's register state to an OpenFlow flow
+  set, so OVS forwards exactly as the firmware configured the chip — VLANs,
+  PVIDs, accepted frame types, the ingress filter, isolation, L2 learning and
+  ageing.
 
-    make -j            # build/rtlsim
-    make test -j       # ISA, banking and firmware boot tests
-    build/rtlsim --image fw.bin [--flash-size 512K] [--cycles N|0] [--trace]
-                 [--trace-sfr] [--trace-reg] [--trace-flash] [--quiet] [--stats]
-    tests/fw/console.py fw.bin --cmd "vlan 10 1t 2" --cmd l2   # drive the CLI
-    make check-banks   # boot FW_IMAGE with the bank check (src/sys/bankcheck.h)
-    make test-net      # Linux in netns against the firmware, via a tap and via OVS, and switching (sudo; ~20 s)
-    tools/rtlswitch.py fw.bin --host 1=192.168.2.1/24 --host 2=192.168.2.3/24   # a switch to play with (sudo)
-    tools/rtlswitch.py fw.bin --topo topo.yaml   # several switches, cabled (sudo)
-    make vm            # build/vm/rtlsw.qcow2: the switch as a small Alpine VM (tools/vm/README.md)
-    make test-vm       # boot it under QEMU, no root: console, ports, switching, persistence (~15 s)
-    make test-flash    # the PoE board's RTL8238B; standard -> compact migrations on 2 MiB (~40 s)
-    make test-update   # a web firmware update and a power cut mid-install (sudo; ~1.5 min)
-    build/rtlsim --image fw.bin --cycles 0 --nic /tmp/sw.sock --nic-port 4 [--trace-nic]
+Not modelled: analog PHY/SerDes behaviour, line-rate throughput or latency,
+the exact L2 hash/capacity, and the boot ROM. A chip reset reloads the code
+and restarts the CPU; why some resets hang real hardware is not reproduced.
+Registers nobody has modelled are plain storage, and the first access to each
+is logged (`unmodelled reg ...`).
 
-`--check-banks MAP` reports constants read through the wrong code bank
-(code read as data, or a module's constant read with another bank mapped),
-using the SDCC `.rst` listings next to the map for every byte's bank, kind and
-label. On the pre-fix firmware (bf93461) it names the three strings of
-`rtl837x_init` read from bank 3 instead of bank 2; the current one is clean.
-`--flash state.bin` keeps the chip in a file across runs. `--link 4=2g5`
-plugs a cable into a physical port (the firmware sees it in REG_LINKS* and
-gets its link interrupt); GPIO inputs nobody drives read 1, so SFP cages are
-empty.
+## Build and run
 
-`--nic PATH --nic-port N` listens on a UNIX socket and wires physical port N
-(4 is front port 1 on the SWTG024AS) to the CPU. Until OVS is in, the CPU is
-the only thing on the switch's other side. A peer is QEMU (`-netdev
-stream,id=n,server=off,addr.type=unix,addr.path=PATH`) or
-`tests/net/tapbridge.py` onto a tap. While a peer is connected the
-firmware's clock is held to the wall clock (`--no-realtime` turns that off).
-`--trace-nic` logs each frame and the CPU's busy cycles per reply. The
-firmware's address is 192.168.2.2 unless its saved config says otherwise
-(CLI: `ip`), and the web password is 1234.
+    make -j                 # build/rtlsim
+    make test -j            # ISA, banking and firmware-boot tests (needs SDCC)
 
-`--board FILE` describes the hardware around the chip (`src/sys/board.h`):
-the chip's type, revision, UUID and lot number (the default MAC comes from
-these), the flash chip, the front ports and the SFP cages (slot, detect and
-LOS pins, I2C pins), and the modules in them. The hardware doesn't change
-with the firmware, so any firmware version runs on the same board file.
-`tools/mkboard.py` drafts them from RTLPlayground's machine sources
-(`machine/NAME.{h,c}`, `NAME_init.c`). `boards/` has a draft for each of its
-66 machines (`--all`), with a table for the flash sizes the source doesn't
-give; edit a draft where the source is wrong. Without `--board`, the bench
-SWTG024AS (`boards/swgt024_v2_0_unmanaged.json`) is built in.
+Boot a firmware image and drive its CLI over stdin/stdout:
 
-`--sfp SLOT=EEPROM.bin` puts a module in SFP cage 1 or 2 (the firmware's
-slot numbers): its detect pin goes low and its EEPROM (SFF-8472 A0h, and A2h
-if the file has 512 bytes) answers on the cage's I2C bus. Empty cages NACK.
-`tools/mksfp.py` writes an EEPROM (`--speed 10g|1g`, `--vendor`, `--model`).
-Give the cage's port a link too (`--link 8=10g` for slot 1).
-`--trace-i2c` logs each transfer.
+    build/rtlsim --image fw.bin
+    tests/fw/console.py fw.bin --cmd "vlan 10 1t 2" --cmd l2
+
+`fw.bin` is a full flash image (512 KiB / 1 / 2 MiB), the kind RTLPlayground's
+build produces. `--flash state.bin` keeps the chip in a file across runs, so
+the saved config, firmware updates and loader state persist. `--board FILE`
+selects the hardware (below); without it, the built-in SWTG024AS is used. The
+web password is 1234 and the default address is 192.168.2.2 (CLI: `ip`).
+
+Tests need SDCC to build their 8051 programs; by default the one in
+`$RTLPG/toolchain` (`RTLPG` defaults to `~/src/RTLPlayground`).
+
+## On a network
+
+The simplest wiring puts one front port on a UNIX socket:
+
+    build/rtlsim --image fw.bin --cycles 0 --nic /tmp/sw.sock --nic-port 4
+
+`--nic PATH --nic-port N` wires physical port N (4 is front port 1 on the
+SWTG024AS) straight to the CPU, over a UNIX stream socket framed as QEMU's
+`-netdev stream`. The peer is QEMU, or `tests/net/tapbridge.py` onto a tap.
+While a peer is connected the firmware's clock is held to the wall clock, so
+protocol timers agree with the peer (`--no-realtime` turns that off).
+
+For the full switch, rtlsim is the OpenFlow controller of an OVS bridge:
+
+    tools/rtlswitch.py fw.bin --host 1=192.168.2.1/24 --host 2=192.168.2.3/24
+    sudo ip netns exec rtl-sw0-1 ping 192.168.2.2
+
+`tools/rtlswitch.py` (needs sudo) builds a private OVS, makes every front port
+an OVS port, and gives each `--host FRONT=ADDR/LEN` its own network namespace
+(`rtl-sw0-FRONT`) with Linux on that port. `--port FRONT=IFACE` puts a real
+interface there instead; `eth0` is refused. `--flash FILE` keeps the switch's
+flash, and `tools/flashcfg.py FILE --set "ip 10.0.0.2" ...` edits that saved
+config while the switch is off. The serial console is the terminal; `^C`
+removes everything. Nothing outside these namespaces is touched.
+
+Several switches, cabled to each other:
+
+    tools/rtlswitch.py fw.bin --topo topo.yaml
+
+`--topo FILE` runs the switches in a YAML topology (see "Topology file" in
+DESIGN.md; the format is documented in `tools/rtlswitch.py`), each on its own
+namespace and OVS, with a veth pair for every cable between front ports and
+Linux hosts on the ports they name. The consoles share the terminal, each line
+behind its switch's name; `NAME CMD` goes to one switch's CLI, and
+`link a.4 down|up` pulls or replugs a cable, which both firmwares see.
+
+## As a VM
+
+    make vm                 # build/vm/rtlsw.qcow2 (Alpine, ~54 MB)
+    make test-vm            # boot it under QEMU, no root (~15 s)
+
+`make vm` builds a small VM that boots into the switch: rtlsim running the
+firmware as the controller of a kernel-datapath OVS bridge over the VM's NICs.
+NIC *n* is front port *n*+1; the second serial port is the firmware's CLI;
+`-fw_cfg opt/rtlsw/conf` sets the firmware, board and SFP modules; and a data
+disk labelled `RTLSW` keeps the flash across boots. See
+[tools/vm/README.md](tools/vm/README.md) for the full QEMU command line. This
+is the self-contained artifact: no host OVS, namespaces or privileges.
+
+## Board files
+
+The firmware carries its own port map and pin assignments; the board file
+describes what is actually on the board, so a wrong one misbehaves as it would
+on silicon. `--board FILE` (`src/sys/board.h`) gives the chip type, revision,
+UUID and lot number (which set the default MAC), the flash chip, the front
+ports, and the SFP cages (slot, detect/LOS pins, I2C pins) and their modules.
+`tools/mkboard.py` drafts a file from RTLPlayground's machine sources;
+`boards/` has a draft for each of its machines, with the flash size filled in
+where the source omits it. The built-in default is the SWTG024AS
+(`boards/swgt024_v2_0_unmanaged.json`).
+
+`--sfp SLOT=EEPROM.bin` inserts a module in cage 1 or 2: its detect pin goes
+low and its EEPROM (SFF-8472 A0h, plus A2h diagnostics if the file is 512
+bytes) answers on the cage's I2C bus. `tools/mksfp.py` writes one
+(`--speed 10g|1g`, `--vendor`, `--model`); give the cage's port a link too
+(`--link 8=10g` for slot 1).
+
+## Options
+
+    build/rtlsim --image fw.bin [options]
+
+| Option | |
+|---|---|
+| `--flash FILE` | keep the chip in a file across runs |
+| `--flash-size 512K` | flash size (else from the board, else 512K) |
+| `--board FILE` | the board (above) |
+| `--image FW` | initial flash contents (or the whole of it, in memory) |
+| `--cycles N` | run N machine cycles, or `0` for no limit |
+| `--link P=SPEED` | plug a cable into physical port P (`10m` `100m` `1g` `2g5` `5g` `10g` `down`) |
+| `--nic PATH --nic-port N` | wire physical port N to the CPU over a socket |
+| `--ofp PATH` | act as the OpenFlow controller of an OVS bridge on PATH |
+| `--sfp SLOT=FILE` | a module in an SFP cage |
+| `--map FILE` / `--check-banks MAP` | symbols; report constants read through the wrong code bank |
+| `--flash-timing` | make flash erases/programs take their real time |
+| `--trace`, `--trace-sfr`, `--trace-reg`, `--trace-flash`, `--trace-nic`, `--trace-i2c`, `--trace-of`, `--trace-reset` | trace output on stderr |
+| `--print-flows` | print the compiled flow set at exit |
+| `--stats`, `--quiet` | summary counters; suppress the "unmodelled" log |
 
 `--ofp PATH` makes rtlsim the controller of an OVS bridge
-(`ovs-vsctl set-controller BR unix:PATH`, `fail_mode=secure`). The
-bridge's ports are front ports: OpenFlow port N is physical port N - 1.
-Each port's link follows its OVS port. rtlsim installs the flows the
-chip's state compiles to (DESIGN.md "Compiler"), and recompiles when the
-firmware changes a VLAN, a PVID, an isolation mask or the L2 table. Frames
-from unknown sources come to rtlsim once, to be learned into the chip's L2
-table, so the firmware's `l2` command shows what OVS forwards by. Frames for
-the CPU are packet-ins, and its own frames go out as packet-outs.
-`--print-flows` prints the flow set at exit; `--ageing S` sets the L2 ageing
-time (300 s).
-`tools/privovs.py` runs a private OVS; `tools/rtlswitch.py` builds a switch
-on it from a board file. Every front port becomes an OVS port (a veth), and
-each `--host FRONT=ADDR/LEN` gets a namespace of its own, `rtl-sw0-FRONT`,
-with Linux on that port: `sudo ip netns exec rtl-sw0-1 curl
-http://192.168.2.2/`. `--port FRONT=IFACE` puts a real interface there
-instead (`--port 1=eth1`): it moves into the switch's namespace while the
-switch runs, with no address and IPv6 off, and goes back to the host down;
-eth0 is refused. `--flash FILE` keeps the switch's flash, and with it its
-saved config; `tools/flashcfg.py FILE --set "ip 172.16.16.245" ...` edits
-that config with the switch off. The switch's console is the terminal, and
-`^C` removes everything.
-`--topo FILE` runs several switches from a YAML topology (DESIGN.md,
-"Topology file"; the format is in `tools/rtlswitch.py`): each on its own
-namespace and OVS, a veth pair for each cable between front ports, Linux
-hosts (optionally on a VLAN), and each switch's `ip`. Switches on the same
-board file get different chip UUIDs, so different MACs. The consoles share
-the terminal, each line behind its switch's name; `NAME CMD` goes to one
-switch's CLI and `link a.4 down|up` pulls or replugs a cable, which both
-firmwares see.
+(`ovs-vsctl set-controller BR unix:PATH`, `fail_mode=secure`): OpenFlow port N
+is physical port N − 1, each port's link follows its OVS port, and rtlsim
+installs the flows the chip's state compiles to and recompiles on any change.
+Frames from unknown sources reach rtlsim once, to be learned into the chip's
+L2 table, so the firmware's `l2` command shows what OVS forwards by. Frames for
+the CPU are packet-ins; the CPU's own frames go out as packet-outs. The bridge
+is normally set up by `tools/rtlswitch.py`, not by hand.
 
-UART is stdin/stdout. Registers nobody has modelled are plain storage, and
-the first access to each is logged ("unmodelled reg ...").
+`--check-banks MAP` reports constants read through the wrong code bank (code
+read as data, or a module's constant read with another bank mapped), using the
+SDCC `.rst` listings next to the map. `--trace-reset` logs each chip reset with
+its PC and whether `setup_clock()` had run since the last one.
 
-Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
+## Tests
 
-- `tests/isa`: each program built with SDCC (small, medium, large,
-  stack-auto) and run on rtlsim, and built for the host; outputs must match.
-- `tests/bank`: code and constants in BANK1-3 called across banks through
-  RTLPlayground's `crtbank.asm`, packed like the firmware (`tools/mkimage.py`).
-- `tests/fw`: boots the RTLPlayground image (`FW_IMAGE`, default from
-  `RTLPG=~/src/RTLPlayground`), checks the boot log against silicon
-  (`golden/`) and a few CLI commands.
-- `tests/net`: `test_nic.py` (in `make test`) puts hand-made ARP, ICMP,
-  TCP and VLAN frames on the socket. `test_net.py` (`make test-net`, needs
-  sudo, skipped without) bridges the socket to a tap in a private network
-  namespace (`--via tap`), or builds the switch on OVS with
-  `tools/rtlswitch.py` (`--via ovs`): Linux on front port 1, a second Linux
-  on port 2, and a pull of port 1's cable. Its Linux
-  pings the switch, logs in, loads the web UI and every JSON page it uses
-  (with a module in slot 1), and measures throughput. It also prints what
-  each kind of reply cost the CPU (DESIGN.md, "How fast"). `test_update.py`
-  (`make test-update`) works on a persistent `--flash`. It uploads a good
-  image across `loader_confirm()`'s moment and follows the install through
-  its resets. Then it uploads a corrupted image, which must be refused.
-  Last, it cuts the power in the middle of a second install and checks the
-  next power-on finishes it (if the image can resume; dev e3347e6 and later).
-- `tests/fabric`: `test_flows.py` (in `make test`) compares the flows that
-  firmware configurations (VLANs, PVIDs, isolation, frame types) compile
-  to with `golden/` (`--update` rewrites them).
-  `tests/net/test_switching.py` (`make test-net`) puts three Linux hosts on
-  front ports 1-3 and configures the switch through its CLI. It checks
-  switching, learning (in the firmware's `l2` table), no flooding of known
-  unicast, isolation, PVID and tagged VLANs, and ageing.
-  `tests/net/test_topo.py` (`make test-net`, ~8 s) cables two switches'
-  front ports 4 together, with hosts on both: their own MACs and
-  addresses, switching and learning across the cable, a tagged trunk, an
-  untagged VLAN carried tagged over it, and a cable pull both firmwares see.
-- `tests/flash`: the flash model's own test (in `make test`); `test_pse.py`
-  (`make test-flash`) gives a POE_2G040210GSM image machine data with two
-  random "PSE images" and checks the firmware streams the right one to the
-  RTL8238B stub (`src/sys/rtl8238b.h`) byte for byte; `test_migrate.py`
-  (`make test-flash`) takes the 2 MiB boards from the old standard firmware
-  to compact with a bridge image, and checks the config and machine data
-  moves, once each, with `--sweep` under power cuts; `test_powercut.py`
-  (`make test-powercut`) is the power-cut sweep. `test_boot0.py` (in `make
-  test`) installs an update in one power-on, then cuts the power mid-copy
-  and checks the next power-on's early resume finishes it; it reports each
-  chip reset as early or late (`--trace-reset`). Its resets booting here is
-  not proof they boot on silicon: rtlsim boots every reset, and doesn't
-  model why some hang a real switch.
-- `tests/sdcc-bugs`: two SDCC 4.6.0 miscompilations the ISA tests found.
+| Target | Covers | Needs |
+|---|---|---|
+| `make test` | ISA vs host, bank mapping, firmware boot log vs golden, the NIC, the flow compiler goldens, the flash model, a firmware install | SDCC |
+| `make test-net` | Linux in a netns against the firmware over a tap and over OVS; three-host switching; two cabled switches | sudo |
+| `make test-vm` | the VM boots, switches, and keeps its flash | — |
+| `make test-flash` | the PoE board's RTL8238B; standard→compact migrations on 2 MiB | an image set |
+| `make test-update` | a web firmware update, and a power cut mid-install | sudo |
+| `make test-powercut` | a power cut at every step of an install | — |
+| `make check-banks` | boot `FW_IMAGE` with the bank check | SDCC |
 
-## Found
-
-- RTLPlayground (dev, 3428100): the main loop's event bits share bit-space
-  with other modules' bits. `evflags` is byte 0x20, and its flags are
-  `__bit __at(0x00..0x03)`. The linker doesn't reserve absolute bits, so it
-  puts BSEG bits on top of them. In the compact image, `cmd_parser`'s spilled
-  bool locals are bits 0-5 (`clr 0x00`, `setb 0x01`, `mov 0x02,c`: link_irq,
-  rx_irq, tick_pending), and `tx_buf_empty` is bit 6. So `if (!evflags)`
-  never sleeps while the UART is idle (the firmware runs flat out after its
-  boot). CLI parsing also writes the events: `cmd_is_space_or_nul()` can
-  clear a pending `link_irq`, which leaves EX0 masked, and the firmware then
-  ignores link changes until it reboots. `rx_irq` is only ever set by
-  mistake, which is harmless. Fixed in RTLPlayground 169af36 (branch
-  `evflags-bits`, on dev e3347e6, not yet merged): with it the firmware
-  sleeps ~98% of the time it's idle, and 20 s of its time simulates in 0.24 s
-  instead of 7 s.
-- RTLPlayground (dev, e3347e6): 15 s after each boot (`LDR_CONFIRM_S`),
-  `handle_tick()` calls `loader_confirm()`, which reads the loader's boot
-  counter (64 bytes) into `flash_buf`. That is the buffer a firmware upload
-  in flight is filling with its next page, so the page is written with
-  0xff in it. The read-back check then refuses the image ("NO: checksum
-  failed"), so nothing breaks, but an update started soon after a boot
-  fails. Two `fwupdate.py` runs in a row do this, because the second
-  catches the first's reboot. Fixed in RTLPlayground 56db072 (on
-  `evflags-bits`, handed to the dev checkout to merge): `loader_confirm()`
-  reads the 2-byte mark into a buffer of its own. `test_update.py` uploads
-  across the 15 s mark, so it fails on firmware without the fix.
-
-## Parked
-
-- The two SDCC bugs in `tests/sdcc-bugs` are upstream: stock 4.6.0 has them
-  too. To do: scan RTLPlayground for the cast pattern (`cast_u8_to_u32.c`,
-  small model, the firmware's model); report both to SDCC.
+- **`tests/isa`** builds each program with SDCC (small/medium/large/stack-auto)
+  and compares rtlsim's output with the host build's.
+- **`tests/bank`** exercises code and constants in BANK1-3 called across banks.
+- **`tests/fw`** boots the image and checks its boot log against a golden
+  serial log and a few CLI commands.
+- **`tests/net`** puts hand-made frames on the socket (`test_nic.py`), bridges
+  the socket to Linux in a netns over a tap or OVS and loads the web UI
+  (`test_net.py`), runs three hosts through VLAN/PVID/isolation/learning/ageing
+  (`test_switching.py`), and cables two switches together (`test_topo.py`).
+- **`tests/fabric`** compares compiled flow sets with goldens (`--update`
+  rewrites them).
+- **`tests/flash`** tests the flash model, the PoE image stream, the
+  standard→compact migration, a firmware install and resume, and power-cut
+  sweeps. The image-set tests read `$RTLSIM_IMAGES` and skip without it.
+- **`tests/sdcc-bugs`** holds two SDCC 4.6.0 miscompilations the ISA tests
+  surfaced.

@@ -287,7 +287,7 @@ the fabric keeps forwarding without its CPU, as silicon does when the 8051 hangs
 Proxmox uses OVS with the kernel datapath. An rtlsim bridge (`--datapath
 system`) is a virtual switch you can swap with a real one. VM NICs and
 physical NICs are its front ports. It has the same firmware, `config.txt`,
-web UI/API and management IP as a silicon switch, so the homelab configs and
+web UI/API and management IP as a silicon switch, so existing configs and
 tooling don't change.
 - VLANs come from the switch's config, not Proxmox's per-NIC `tag=` (OVSDB
   port tags only affect `NORMAL`, which is never used).
@@ -295,7 +295,7 @@ tooling don't change.
   define. Either declare the bridge in `/etc/network/interfaces` and let rtlsim
   take it over at start, or have rtlsim create it before VMs start (systemd ordering).
 - Not built for performance: multicast floods or learning storms make many
-  upcalls. Fine for a homelab, unmeasured beyond that.
+  upcalls. Fine for a small fabric, unmeasured beyond that.
 
 ## Inputs
 
@@ -367,8 +367,8 @@ floods forever.
 
 - **Unit:** core ISA (SDCC regressions vs ucsim), bank mapping, each SFR
   peripheral, compiler goldens (register state in → flow text out).
-- **Boot:** the boot log matches silicon logs line for line (the bench logs in
-  `~/rtlpg-bench`); the bank checker stays silent; the "unmodelled" list is reviewed.
+- **Boot:** the boot log matches a silicon serial log line for line
+  (`tests/fw/golden/`); the bank checker stays silent; the "unmodelled" list is reviewed.
 - **Register traces:** run a CLI script on the sim and on silicon (`REGDBG`) and
   diff the traces.
 - **Behaviour (pytest over topologies):** VLAN tagged/untagged/PVID/leaks; L2
@@ -399,8 +399,8 @@ floods forever.
   also go through `ovs-ofctl`.
 - **Licence:** MIT (as RTLPlayground, and the flash model, `flash_dev.c`) or Apache-2.0
   (OVS). MAME's mcs51 is BSD-3, compatible with both.
-- **Repo:** github.com/sirmick/ovs-rtlpg. Developed on devel (the Incus CT on
-  buzz: taps, network namespaces, KVM, userspace OVS; nothing on the host).
+- **Repo:** github.com/sirmick/ovs-rtlpg. Developed on Linux with taps,
+  network namespaces, KVM and userspace OVS.
 
 ## Open questions (resolve on the bench)
 - PSBANK=0 mapping, image header offset, exact interrupt vectors and sources.

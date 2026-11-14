@@ -22,8 +22,8 @@ Each chip reset is reported as early (before the boot's banner) or late
 (after it), from rtlsim --trace-reset.
 
 A PASS is NOT proof that the resets work on silicon: rtlsim boots every
-reset and doesn't model why some hang a real switch (so far, those before
-setup_clock(): every boot0 install hung switch-denlounge).
+reset and doesn't model why some hang a real switch (observed so far: resets
+issued before setup_clock()).
 Needs an image that installs web updates (dev e3347e6 and later).
 """
 import argparse, os, re, shutil, subprocess, sys, tempfile
