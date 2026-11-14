@@ -56,6 +56,7 @@ ifneq ($(FW_IMAGE),)
 	python3 tests/fw/test_boot.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/net/test_nic.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/fabric/test_flows.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
+	python3 tests/flash/test_boot0.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 else
 	@echo "fw: no firmware image (set FW_IMAGE or build RTLPlayground), skipped"
 endif
