@@ -6,7 +6,7 @@
 enum : u16 {
 	NIC_BUFFSIZE_TX = 0x7844, NIC_RXBUFF_RX = 0x7848, NIC_RXCMD = 0x784c, NIC_TXCMD = 0x7850,
 	NIC_INT_STS = 0x7854, NIC_INT_MSK = 0x7858, RX_CTRL = 0x785c, TX_CTRL = 0x7860,
-	NIC_RX_BUFF_DATA = 0x7874, CPU_RX_CURR_PKT = 0x787c, NIC_TX_CURR_PKT = 0x7884, CPU_TX_CURR_PKT = 0x7890,
+	NIC_RX_BUFF_DATA = 0x7874, CPU_RX_CURR_PKT = 0x787c, NIC_RX_CURR_PKT = 0x7880, NIC_TX_CURR_PKT = 0x7884, CPU_TX_CURR_PKT = 0x7890,
 	PVID_BASE = 0x4e1c,
 };
 enum : u8 { SFR_DATA_L = 0xb3, SFR_DATA_H, SFR_RING_L, SFR_RING_H, SFR_CTRL };
@@ -27,6 +27,7 @@ cpu_nic::cpu_nic(switch_core &core, switch_tables &tables)
 {
 	m_core.on_read(NIC_RX_BUFF_DATA, [this](u32) { return u32(m_rx_used); });
 	m_core.on_read(CPU_RX_CURR_PKT, [this](u32) { return u32(m_frames.empty() ? m_rx_tail : m_frames.front().slot); });
+	m_core.on_read(NIC_RX_CURR_PKT, [this](u32) { return u32(m_rx_tail); });
 	m_core.on_write(NIC_RXCMD, [this](u32 v) {
 		if (v & 1)
 			rx_release();

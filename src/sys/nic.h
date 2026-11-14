@@ -11,7 +11,10 @@
 //   is a descriptor (seq, -, -, port in bits 3:0, length LE, -, -) and the
 //   frame, padded to 8 bytes. NIC_RX_BUFF_DATA (0x7874) is the slots in use
 //   (nonzero while frames wait), CPU_RX_CURR_PKT (0x787c) the slot of the
-//   oldest one, NIC_RXCMD (0x784c) = 1 releases it. A frame arrives with the
+//   oldest one, NIC_RXCMD (0x784c) = 1 releases it. 0x7880 (unnamed in
+//   RTLPlayground, which doesn't use it) is the slot the next frame will be
+//   written to: inferred, not measured - vendor firmware waits on it for a
+//   frame and then reads 0x7874/0x787c and releases with 0x784c, consistently. A frame arrives with the
 //   CPU tag after the MACs (0x8899, version 4, reason, flags, the ingress
 //   port) and an 802.1Q tag after that (the port's PVID if it came in
 //   untagged), so the EtherType is at offset 24.
