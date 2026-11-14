@@ -355,6 +355,13 @@ hosts:
   h2: { port: b.2, vlan: 10, ip: 10.0.10.2/24 }
   wrt: { port: a.3, qemu: openwrt-x86.img }     # optional VM peer
 ```
+Built (`tools/rtlswitch.py --topo`, `Net`): switches (image, board, flash,
+ip, extra args), links and hosts (ip, vlan); not yet the VM peer. Each
+switch keeps its own namespace and OVS, so a cable is a veth pair rather
+than a patch port: one end is a port of each bridge, and pulling it (`ip
+link set END down`) takes the carrier from both sides, as a real cable
+does. With no STP in the fabric yet (phase 5), a loop in the topology
+floods forever.
 
 ## Testing
 

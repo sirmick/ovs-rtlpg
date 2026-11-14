@@ -35,6 +35,7 @@ through the web UI install on the simulated flash.
     make check-banks   # boot FW_IMAGE with the bank check (src/sys/bankcheck.h)
     make test-net      # Linux in netns against the firmware, via a tap and via OVS, and switching (sudo; ~20 s)
     tools/rtlswitch.py fw.bin --host 1=192.168.2.1/24 --host 2=192.168.2.3/24   # a switch to play with (sudo)
+    tools/rtlswitch.py fw.bin --topo topo.yaml   # several switches, cabled (sudo)
     make vm            # build/vm/rtlsw.qcow2: the switch as a small Alpine VM (tools/vm/README.md)
     make test-vm       # boot it under QEMU, no root: console, ports, switching, persistence (~15 s)
     make test-flash    # the PoE board's RTL8238B; standard -> compact migrations on 2 MiB (~40 s)
@@ -101,6 +102,14 @@ eth0 is refused. `--flash FILE` keeps the switch's flash, and with it its
 saved config; `tools/flashcfg.py FILE --set "ip 172.16.16.245" ...` edits
 that config with the switch off. The switch's console is the terminal, and
 `^C` removes everything.
+`--topo FILE` runs several switches from a YAML topology (DESIGN.md,
+"Topology file"; the format is in `tools/rtlswitch.py`): each on its own
+namespace and OVS, a veth pair for each cable between front ports, Linux
+hosts (optionally on a VLAN), and each switch's `ip`. Switches on the same
+board file get different chip UUIDs, so different MACs. The consoles share
+the terminal, each line behind its switch's name; `NAME CMD` goes to one
+switch's CLI and `link a.4 down|up` pulls or replugs a cable, which both
+firmwares see.
 
 UART is stdin/stdout. Registers nobody has modelled are plain storage, and
 the first access to each is logged ("unmodelled reg ...").
@@ -135,6 +144,10 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
   front ports 1-3 and configures the switch through its CLI. It checks
   switching, learning (in the firmware's `l2` table), no flooding of known
   unicast, isolation, PVID and tagged VLANs, and ageing.
+  `tests/net/test_topo.py` (`make test-net`, ~8 s) cables two switches'
+  front ports 4 together, with hosts on both: their own MACs and
+  addresses, switching and learning across the cable, a tagged trunk, an
+  untagged VLAN carried tagged over it, and a cable pull both firmwares see.
 - `tests/flash`: the flash model's own test (in `make test`); `test_pse.py`
   (`make test-flash`) gives a POE_2G040210GSM image machine data with two
   random "PSE images" and checks the firmware streams the right one to the
