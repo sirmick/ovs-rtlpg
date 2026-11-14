@@ -13,7 +13,9 @@
 #
 # These tests are FUNCTIONAL, not silicon-timing-faithful: rtlsim's flash and
 # CPU clock are not the real chip's, so a green run is not a green light to
-# flash hardware - the bench is the final gate.
+# flash hardware - the bench is the final gate. In particular a chip reset
+# issued before setup_clock() can't be trusted here: boot0's passed in rtlsim
+# and hung a real switch every time.
 name: rtlsim
 
 on:
