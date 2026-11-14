@@ -1,32 +1,47 @@
 #!/usr/bin/env python3
-"""test_boot0.py - a boot0 firmware install boots through, not hangs.
+"""test_boot0.py - an install's resets boot through, and a cut mid-copy
+resumes: the late install reset and boot0's early resume reset.
 
-    tests/flash/test_boot0.py IMAGE [--rtlsim build/rtlsim]
+    tests/flash/test_boot0.py IMAGE [--new NEW] [--board FILE] [--rtlsim build/rtlsim]
 
-boot0 installs an update by copying the staged image into place and doing a
-chip reset. That reset must leave the SPI flash controller in a read setup,
-or the boot ROM's refetch of sector 0 reads garbage and the switch hangs
-until a power cycle (modelled in sys/flashctl.cpp; the firmware fix is
-RTLPlayground 1fda21e, "restore the MMIO read setup before CHIP_RESET_NOW").
+A switch runs IMAGE, with NEW (default IMAGE) staged as a finished web
+upload leaves it (at 0x40000, then a 0). Two runs:
+- the install: one power-on. Since RTLPlayground 169df92 a loaderless app
+  installs late in its boot (after the chip init): it arms the progress
+  record (UPD1 at 0x7E000), copies, and resets with reset_chip(). Before,
+  the app armed and reset at once and boot0 copied early in the next boot
+  and reset with CHIP_RESET_NOW(). Either way the switch must come up on
+  NEW in that power-on.
+- the resume: the power is cut mid-copy, just after a sector above the home
+  bank is erased (so the image area has a hole and the record is armed).
+  The next power-on's boot_resume(), early (from __sdcc_external_startup),
+  must finish the copy and reset; the switch must come up on NEW, with
+  staging and the record clear and the config kept, in at most two
+  power-ons. A hang at the early reset is allowed and reported: the copy
+  is complete by then, so a power cycle comes up on NEW.
+Each chip reset is reported as early (before the boot's banner) or late
+(after it), from rtlsim --trace-reset, and any reset rtlsim's flash-
+controller model hangs on, with which kind it was.
 
-The test stages IMAGE as an update over a switch already running it (a boot0
-self-install: the same boot0 copy + reset path a real update takes), powers
-the switch on once, and requires it to reach the prompt on IMAGE's version
-in that one power-on - no hang, no power cycle needed. If the fix regresses,
-boot0's reset hangs and this fails. Needs an image that installs via boot0
-(dev e3347e6 and later).
-
-A PASS is NOT proof that boot0's reset works on silicon. The flash-controller
-model is a hypothesis that silicon has falsified as the whole cause: on
-2026-11-14 an install through the fixed boot0 (1fda21e -> 1fda21e-next) hung
-switch-denlounge too. What fits so far is that resets before setup_clock()
-hang, and rtlsim doesn't model the reset clock. This test only guards the
-CMD_R part; RTLPlayground is retiring boot0 for a late main()-path install.
+A PASS is NOT proof that the resets work on silicon. The flash-controller
+model (sys/system.cpp) is a hypothesis that silicon has falsified as the
+whole cause: on 2026-11-14 an install through the fixed boot0 (1fda21e ->
+1fda21e-next) hung switch-denlounge too. What fits so far is that resets
+before setup_clock() (the early ones) hang, and rtlsim doesn't model the
+reset clock. Needs an image that installs web updates (dev e3347e6 and later).
 """
 import argparse, os, re, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
-UPLOAD = 0x40000
-CYCLES = 3_000_000_000  # OLD boot + arm + app reset + boot0 copy + NEW boot, one power-on
+UPLOAD, PROGRESS, CONFIG, SECTOR, HOME_BANK = 0x40000, 0x7e000, 0x7f000, 0x1000, 0x4000
+CYCLES = 3_000_000_000  # OLD boot + copy + reset + NEW boot, in one power-on
+failures = 0
+
+
+def check(cond, msg):
+    global failures
+    print(("PASS  " if cond else "FAIL  ") + msg)
+    failures += not cond
+    return cond
 
 
 def version(out):
@@ -34,41 +49,96 @@ def version(out):
     return m[-1] if m else None
 
 
+def power_on(a, flash, *args, cycles=CYCLES):
+    cmd = [a.rtlsim, "--flash", flash, "--image", a.image, "--cycles", str(cycles), "--quiet", "--trace-reset", *args]
+    if a.board:
+        cmd += ["--board", a.board]
+    r = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True)
+    out, err = r.stdout.decode(errors="replace"), r.stderr.decode(errors="replace")
+    resets, start, lines = [], 0, out.split("\n")
+    for m in re.finditer(r"chip reset \d+ at pc (0x[0-9a-f]+), after (\d+) UART lines", err):
+        n = int(m.group(2))	# a banner since the last reset: the boot was under way, a late reset
+        kind = "late" if any("Software version:" in l for l in lines[start:n]) else "early"
+        resets.append(f"{kind} (pc {m.group(1)})")
+        start = n
+    hung = "hangs until a power cycle" in err
+    if hung:
+        resets[-1] += " HUNG"
+    text = out.replace("\r", "")
+    up = not hung and "Software version:" in text and "\n> " in text[text.rfind("Software version:"):]
+    return r.returncode, text, resets, hung, up
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("image")
+    ap.add_argument("--new", help="the image to install (default: IMAGE itself)")
+    ap.add_argument("--board")
     ap.add_argument("--rtlsim", default=os.path.join(HERE, "../../build/rtlsim"))
     a = ap.parse_args()
     img = open(a.image, "rb").read()
+    new = open(a.new or a.image, "rb").read()
     if b"found update image" not in img:
         print("boot0: this image doesn't install web updates, skipped")
         return 0
     d = tempfile.mkdtemp(prefix="rtlsim-boot0-")
     try:
-        flash = os.path.join(d, "flash.bin")
-        # a switch running IMAGE, then IMAGE staged over it as a finished upload
-        setup = subprocess.run([a.rtlsim, "--flash", flash, "--image", a.image, "--cycles", "400000000", "--quiet"],
-                               stdin=subprocess.DEVNULL, capture_output=True)
-        want = version(setup.stdout.decode(errors="replace")) or ""  # the real banner, not the image's format string
-        chip = bytearray(open(flash, "rb").read())
-        chip[UPLOAD:UPLOAD + len(img)] = img
-        chip[UPLOAD + len(img)] = 0
-        open(flash, "wb").write(chip)
+        base = os.path.join(d, "base.bin")
+        setup = subprocess.run([a.rtlsim, "--flash", base, "--image", a.image, "--cycles", "400000000", "--quiet",
+                                *(["--board", a.board] if a.board else [])], stdin=subprocess.DEVNULL, capture_output=True)
+        old_ver = version(setup.stdout.decode(errors="replace"))
+        chip = bytearray(open(base, "rb").read())
+        chip[UPLOAD:UPLOAD + len(new)] = new
+        chip[UPLOAD + len(new)] = 0
+        open(base, "wb").write(chip)
+        cfg = bytes(chip[CONFIG:CONFIG + SECTOR])
+        name = f"{os.path.basename(a.image)} ({old_ver})" + (f" -> {os.path.basename(a.new)}" if a.new else "")
 
-        # one power-on: OLD boots, arms the record, boot0 copies and resets
-        r = subprocess.run([a.rtlsim, "--flash", flash, "--image", a.image, "--cycles", str(CYCLES), "--quiet"],
-                           stdin=subprocess.DEVNULL, capture_output=True)
-        out = r.stdout.decode(errors="replace").replace("\r", "")
-        hung = "hangs until a power cycle" in r.stderr.decode(errors="replace")
-        installed = out.count("found update image") >= 1 or out.count("Installing") >= 1
-        reached = "\n> " in out[out.rfind("Software version:"):] if "Software version:" in out else False
-        ok = installed and reached and not hung and version(out) == want
-        print(("PASS  " if ok else "FAIL  ")
-              + f"a boot0 install of {os.path.basename(a.image)} ({want}) boots through to the prompt in one power-on"
-              + " in rtlsim (CMD_R model only: not proof for silicon)"
-              + ("" if ok else f"; hung={hung}, reached={version(out)}, installed={installed}"))
-        print(f"test_boot0: {'ALL PASS' if ok else 'FAILED'}")
-        return 0 if ok else 1
+        def settled(flash):
+            d_ = open(flash, "rb").read()
+            return [w for w, bad in (("image", d_[:len(new)] != new),
+                                     ("staging", any(b != 0xff for b in d_[UPLOAD:UPLOAD + 16])),
+                                     ("record", any(b != 0xff for b in d_[PROGRESS:PROGRESS + 16])),
+                                     ("config", d_[CONFIG:CONFIG + SECTOR] != cfg)) if bad]
+
+        # the install, with its flash operations for the cut
+        flash, ops_log = os.path.join(d, "install.bin"), os.path.join(d, "ops.txt")
+        shutil.copy(base, flash)
+        rc, out, resets, hung, up = power_on(a, flash, "--flash-ops", ops_log)
+        why = settled(flash) if up else []
+        check(up and not why, f"the install of {name}: " + (f"up on {version(out)}" if up else "NOT up") + " in one power-on; "
+              f"resets: {', '.join(resets) or 'none'}" + (f"; wrong: {why}" if why else ""))
+        ops = [l.split() for l in open(ops_log)]
+
+        # a cut right after the first erase of a sector above the home bank, once the record is armed
+        armed = next((i for i, o in enumerate(ops) if o[0] == "P" and int(o[1], 16) == PROGRESS), None)
+        cut = next((i + 1 for i, o in enumerate(ops) if armed is not None and i > armed and o[0] == "E"
+                    and HOME_BANK <= int(o[1], 16) < UPLOAD), None)
+        if not check(cut is not None, f"the install arms the record (op {armed}) and then erases the image area "
+                     f"(cut before op {cut} of {len(ops)})"):
+            return 1
+        flash = os.path.join(d, "cut.bin")
+        shutil.copy(base, flash)
+        rc, _, _, _, _ = power_on(a, flash, "--powercut-after", str(cut))
+        torn = open(flash, "rb").read()
+        check(rc == 5 and torn[PROGRESS:PROGRESS + 4] == b"UPD1",
+              f"the power cut at op {cut} ({' '.join(ops[cut - 1])}) leaves the record armed")
+        story = []
+        for n in range(2):
+            rc, out, resets, hung, up = power_on(a, flash)
+            story.append(f"power-on {n + 1}: {version(out) if up else 'no prompt'}"
+                         + (f", resets {', '.join(resets)}" if resets else ""))
+            if up:
+                break
+        why = settled(flash) if up else []
+        check(up and not why, "after the cut, boot_resume finishes the copy: "
+              + "; ".join(story) + (f"; wrong: {why}" if why else ""))
+        early_hang = any("early" in s and "HUNG" in s for s in story)
+        late_hang = any("late" in s and "HUNG" in s for s in story)
+        check(not late_hang, "no late reset hangs" + (" (an early one did: allowed, see the docstring)"
+                                                      if early_hang else ""))
+        print(f"test_boot0: {'ALL PASS' if not failures else f'{failures} FAILED'}")
+        return 1 if failures else 0
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

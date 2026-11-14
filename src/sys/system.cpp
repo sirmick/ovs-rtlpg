@@ -27,7 +27,7 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 		else
 			sfr_w(a, d);
 	};
-	m_cpu.uart_tx = [this](u8 c) { fputc(c, uart_out); if (c == '\n') fflush(uart_out); };
+	m_cpu.uart_tx = [this](u8 c) { fputc(c, uart_out); if (c == '\n') { uart_lines++; fflush(uart_out); } };
 	m_core.soc_reset = [this]() { m_reset_pending = true; };
 	m_flash->now = [this]() { return m_cpu.cycles_total; };
 	m_core.pc = [this]() { return m_cpu.pc(); };
@@ -352,6 +352,9 @@ bool rtl837x_system::run(int cycles)
 		if (m_reset_pending) {
 			m_reset_pending = false;
 			resets++;
+			if (trace_reset)
+				fprintf(stderr, "rtlsim: chip reset %llu at pc 0x%04x, after %llu UART lines\n",
+					(unsigned long long)resets, m_cpu.pc(), (unsigned long long)uart_lines);
 			reset(true);
 		}
 		if (stop_on_halt && at_halt())

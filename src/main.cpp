@@ -7,7 +7,7 @@
 //          [--sfp SLOT=EEPROM.bin] [--trace-i2c] [--ofp PATH] [--trace-of] [--board FILE]
 //          [--print-flows] [--ageing S] [--powercut-after N] [--flash-ops FILE]
 //          [--rtl8238b-e8 N] [--rtl8238b-alt-arm] [--rtl8238b-dump FILE] [--trace-pse]
-//          [--flash-timing]
+//          [--flash-timing] [--trace-reset]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -67,6 +67,10 @@
 // --rtl8238b-alt-arm makes it arm only by the firmware's alternate sequence,
 // --rtl8238b-dump FILE writes each image it takes, and --trace-pse
 // logs its resets, arming and images.
+//
+// --trace-reset logs each chip reset (reg 0x24) to stderr with its PC and the
+// UART lines sent before it, so a test can tell an early reset (before the
+// boot's banner) from a late one.
 //
 // --check-banks MAP reports constants read with movc from bytes that ran as
 // code in the same bank (the const-bank bug class; see sys/bankcheck.h).
@@ -154,7 +158,7 @@ int main(int argc, char **argv)
 	long powercut_after = -1;
 	bool flash_timing = false;
 	long pse_e8 = 0;
-	bool pse_alt = false, trace_pse = false;
+	bool pse_alt = false, trace_pse = false, trace_reset = false;
 	const char *pse_dump = nullptr;
 	const char *flash_ops = nullptr;
 	std::vector<std::pair<unsigned, std::string>> sfps;
@@ -237,13 +241,15 @@ int main(int argc, char **argv)
 			quiet = true;
 		else if (!strcmp(argv[i], "--stats"))
 			stats = true;
+		else if (!strcmp(argv[i], "--trace-reset"))
+			trace_reset = true;
 		else {
 			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
 				"[--trace-sfr] [--trace-reg] [--trace-flash] [--link P=SPEED] [--check-banks MAP] [--quiet] [--stats] "
 				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime] [--sfp SLOT=EEPROM.bin] [--trace-i2c] "
 				"[--ofp PATH] [--trace-of] [--board FILE] [--print-flows] [--ageing S] "
 				"[--powercut-after N] [--flash-ops FILE] [--rtl8238b-e8 N] [--rtl8238b-alt-arm] "
-				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing]\n");
+				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing] [--trace-reset]\n");
 			return 1;
 		}
 	}
@@ -282,6 +288,7 @@ int main(int argc, char **argv)
 	}
 	rtl837x_system sys(std::move(flash), brd);
 	sys.trace_insn = trace;
+	sys.trace_reset = trace_reset;
 	sys.trace_sfr = trace_sfr;
 	sys.core().trace = trace_reg;
 	sys.core().log_unmodelled = !quiet;

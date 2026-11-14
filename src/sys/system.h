@@ -78,6 +78,8 @@ public:
 	u64 instructions = 0;			// counted only while tracing
 	u64 cycles = 0;
 	u64 resets = 0;
+	bool trace_reset = false;		// log each chip reset to stderr
+	u64 uart_lines = 0;			// sent so far, to place a reset in the console
 
 private:
 	u8 sfr_r(u8 a);
