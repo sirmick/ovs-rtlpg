@@ -31,7 +31,7 @@ jobs:
       - name: Check out the firmware (this repo)
         uses: actions/checkout@v6
         with:
-          path: fw
+          path: branch        # same path as build.yml, so the SDCC cache is shared
       - name: Check out rtlsim
         uses: actions/checkout@v6
         with:
@@ -51,15 +51,15 @@ jobs:
       - name: Cache the patched SDCC
         uses: actions/cache@v4
         with:
-          path: fw/toolchain
-          key: sdcc-${{ hashFiles('fw/sdcc/*') }}
+          path: branch/toolchain
+          key: sdcc-${{ hashFiles('branch/sdcc/*') }}
 
       - name: Build the firmware (SWTG024AS, compact)
-        run: cd fw && make CI=1 MACHINE=SWGT024_V2_0_UNMANAGED LAYOUT=compact
+        run: cd branch && make CI=1 MACHINE=SWGT024_V2_0_UNMANAGED LAYOUT=compact
 
       - name: Build the rtlsim image matrix (migrate / PoE / loader tiers)
         run: |
-          cd fw
+          cd branch
           if make -n rtlsim-images >/dev/null 2>&1; then
             make rtlsim-images OUT="$HOME/rtlsim/images/ci"
           else
@@ -67,4 +67,4 @@ jobs:
           fi
 
       - name: Run rtlsim
-        run: ovs-rtlpg/tools/ci/rtlsim-ci.sh "$GITHUB_WORKSPACE/fw"
+        run: ovs-rtlpg/tools/ci/rtlsim-ci.sh "$GITHUB_WORKSPACE/branch"
