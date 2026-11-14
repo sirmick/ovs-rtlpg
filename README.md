@@ -159,11 +159,8 @@ Tests need SDCC; by default the one in `~/src/RTLPlayground/toolchain`.
   test`) installs an update in one power-on, then cuts the power mid-copy
   and checks the next power-on's early resume finishes it; it reports each
   chip reset as early or late (`--trace-reset`). Its resets booting here is
-  not proof they boot on silicon (see `src/sys/system.cpp`).
-  `rtlsim --early-reset-hangs` models the working hypothesis instead: a chip
-  reset before `setup_clock()` (no HW_CONF write since the last reset) hangs
-  until a power cycle. With it, 1fda21e's boot0 hangs as it did on
-  switch-denlounge, and late installs boot.
+  not proof they boot on silicon: rtlsim boots every reset, and doesn't
+  model why some hang a real switch.
 - `tests/sdcc-bugs`: two SDCC 4.6.0 miscompilations the ISA tests found.
 
 ## Found

@@ -17,17 +17,13 @@ upload leaves it (at 0x40000, then a 0). Two runs:
   The next power-on's boot_resume(), early (from __sdcc_external_startup),
   must finish the copy and reset; the switch must come up on NEW, with
   staging and the record clear and the config kept, in at most two
-  power-ons. A hang at the early reset is allowed and reported: the copy
-  is complete by then, so a power cycle comes up on NEW.
+  power-ons.
 Each chip reset is reported as early (before the boot's banner) or late
-(after it), from rtlsim --trace-reset, and any reset that hangs (with
---early-reset-hangs), with which kind it was.
+(after it), from rtlsim --trace-reset.
 
-A PASS is NOT proof that the resets work on silicon: rtlsim doesn't model
-why a reset hangs. Silicon so far says resets before setup_clock() hang
-(every boot0 install did, on switch-denlounge) and later ones boot; run
-rtlsim with --early-reset-hangs (pass a wrapper as --rtlsim) to apply that
-rule, which makes the resume's early reset hang once, as allowed above.
+A PASS is NOT proof that the resets work on silicon: rtlsim boots every
+reset and doesn't model why some hang a real switch (so far, those before
+setup_clock(): every boot0 install hung switch-denlounge).
 Needs an image that installs web updates (dev e3347e6 and later).
 """
 import argparse, os, re, shutil, subprocess, sys, tempfile
@@ -61,12 +57,9 @@ def power_on(a, flash, *args, cycles=CYCLES):
         kind = "late" if any("Software version:" in l for l in lines[start:n]) else "early"
         resets.append(f"{kind} (pc {m.group(1)})")
         start = n
-    hung = "hangs until a power cycle" in err
-    if hung:
-        resets[-1] += " HUNG"
     text = out.replace("\r", "")
-    up = not hung and "Software version:" in text and "\n> " in text[text.rfind("Software version:"):]
-    return r.returncode, text, resets, hung, up
+    up = "Software version:" in text and "\n> " in text[text.rfind("Software version:"):]
+    return r.returncode, text, resets, up
 
 
 def main():
@@ -105,7 +98,7 @@ def main():
         # the install, with its flash operations for the cut
         flash, ops_log = os.path.join(d, "install.bin"), os.path.join(d, "ops.txt")
         shutil.copy(base, flash)
-        rc, out, resets, hung, up = power_on(a, flash, "--flash-ops", ops_log)
+        rc, out, resets, up = power_on(a, flash, "--flash-ops", ops_log)
         why = settled(flash) if up else []
         check(up and not why, f"the install of {name}: " + (f"up on {version(out)}" if up else "NOT up") + " in one power-on; "
               f"resets: {', '.join(resets) or 'none'}" + (f"; wrong: {why}" if why else ""))
@@ -120,13 +113,13 @@ def main():
             return 1
         flash = os.path.join(d, "cut.bin")
         shutil.copy(base, flash)
-        rc, _, _, _, _ = power_on(a, flash, "--powercut-after", str(cut))
+        rc, _, _, _ = power_on(a, flash, "--powercut-after", str(cut))
         torn = open(flash, "rb").read()
         check(rc == 5 and torn[PROGRESS:PROGRESS + 4] == b"UPD1",
               f"the power cut at op {cut} ({' '.join(ops[cut - 1])}) leaves the record armed")
         story = []
         for n in range(2):
-            rc, out, resets, hung, up = power_on(a, flash)
+            rc, out, resets, up = power_on(a, flash)
             story.append(f"power-on {n + 1}: {version(out) if up else 'no prompt'}"
                          + (f", resets {', '.join(resets)}" if resets else ""))
             if up:
@@ -134,10 +127,6 @@ def main():
         why = settled(flash) if up else []
         check(up and not why, "after the cut, boot_resume finishes the copy: "
               + "; ".join(story) + (f"; wrong: {why}" if why else ""))
-        early_hang = any("early" in s and "HUNG" in s for s in story)
-        late_hang = any("late" in s and "HUNG" in s for s in story)
-        check(not late_hang, "no late reset hangs" + (" (an early one did: allowed, see the docstring)"
-                                                      if early_hang else ""))
         print(f"test_boot0: {'ALL PASS' if not failures else f'{failures} FAILED'}")
         return 1 if failures else 0
     finally:

@@ -7,7 +7,7 @@
 //          [--sfp SLOT=EEPROM.bin] [--trace-i2c] [--ofp PATH] [--trace-of] [--board FILE]
 //          [--print-flows] [--ageing S] [--powercut-after N] [--flash-ops FILE]
 //          [--rtl8238b-e8 N] [--rtl8238b-alt-arm] [--rtl8238b-dump FILE] [--trace-pse]
-//          [--flash-timing] [--trace-reset] [--early-reset-hangs] [--flash-secreg FILE]
+//          [--flash-timing] [--trace-reset] [--flash-secreg FILE]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -74,10 +74,6 @@
 // UART lines sent before it, so a test can tell an early reset (before the
 // boot's banner) from a late one, and whether setup_clock() had run (a write
 // to HW_CONF, 0x6040, since the last reset).
-//
-// --early-reset-hangs makes a chip reset issued before setup_clock() hang
-// until a power cycle, as silicon's boot0 resets do (the working hypothesis:
-// resets after setup_clock() boot, resets before it hang). Off by default.
 //
 // --check-banks MAP reports constants read with movc from bytes that ran as
 // code in the same bank (the const-bank bug class; see sys/bankcheck.h).
@@ -165,7 +161,7 @@ int main(int argc, char **argv)
 	long powercut_after = -1;
 	bool flash_timing = false;
 	long pse_e8 = 0;
-	bool pse_alt = false, trace_pse = false, trace_reset = false, early_reset_hangs = false;
+	bool pse_alt = false, trace_pse = false, trace_reset = false;
 	const char *pse_dump = nullptr;
 	const char *flash_ops = nullptr;
 	const char *flash_secreg = nullptr;
@@ -253,15 +249,13 @@ int main(int argc, char **argv)
 			stats = true;
 		else if (!strcmp(argv[i], "--trace-reset"))
 			trace_reset = true;
-		else if (!strcmp(argv[i], "--early-reset-hangs"))
-			early_reset_hangs = true;
 		else {
 			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
 				"[--trace-sfr] [--trace-reg] [--trace-flash] [--link P=SPEED] [--check-banks MAP] [--quiet] [--stats] "
 				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime] [--sfp SLOT=EEPROM.bin] [--trace-i2c] "
 				"[--ofp PATH] [--trace-of] [--board FILE] [--print-flows] [--ageing S] "
 				"[--powercut-after N] [--flash-ops FILE] [--rtl8238b-e8 N] [--rtl8238b-alt-arm] "
-				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing] [--trace-reset] [--early-reset-hangs] [--flash-secreg FILE]\n");
+				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing] [--trace-reset] [--flash-secreg FILE]\n");
 			return 1;
 		}
 	}
@@ -301,7 +295,6 @@ int main(int argc, char **argv)
 	rtl837x_system sys(std::move(flash), brd);
 	sys.trace_insn = trace;
 	sys.trace_reset = trace_reset;
-	sys.early_reset_hangs = early_reset_hangs;
 	sys.trace_sfr = trace_sfr;
 	sys.core().trace = trace_reg;
 	sys.core().log_unmodelled = !quiet;

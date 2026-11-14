@@ -54,8 +54,8 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 }
 
 // A chip reset (chip_reset) reloads the common code and restarts the CPU;
-// flash and PHY state persist. Whether a reset hangs is modelled in run()
-// (--early-reset-hangs), not here.
+// flash and PHY state persist. Every reset boots: why some resets hang a
+// real switch (those before setup_clock(), so far) is not modelled here.
 void rtl837x_system::reset(bool chip_reset)
 {
 	m_clock_set = false;
@@ -364,16 +364,6 @@ bool rtl837x_system::run(int cycles)
 				fprintf(stderr, "rtlsim: chip reset %llu at pc 0x%04x, after %llu UART lines, %s setup_clock()\n",
 					(unsigned long long)resets, m_cpu.pc(), (unsigned long long)uart_lines,
 					m_clock_set ? "after" : "before");
-			// The working hypothesis for silicon's boot0 hang (see reset()): a reset
-			// issued before setup_clock() hangs until a power cycle. Off by default.
-			if (early_reset_hangs && !m_clock_set) {
-				fprintf(stderr, "rtlsim: chip reset at pc 0x%04x before setup_clock() (no HW_CONF write since "
-					"the last reset): the switch hangs until a power cycle (--early-reset-hangs)\n",
-					m_cpu.pc());
-				m_flash_reset_hang = true;
-				m_halted = true;
-				break;
-			}
 			reset(true);
 		}
 		if (stop_on_halt && at_halt())

@@ -35,7 +35,6 @@ public:
 		: rtl837x_system(std::make_unique<flash_controller>(image, flash_size), b) {}
 
 	void reset(bool chip_reset = false);
-	bool flash_reset_hang() const { return m_flash_reset_hang; }
 	// Run about `cycles` machine cycles. Returns false once halted.
 	bool run(int cycles);
 	bool halted() const { return m_halted; }
@@ -79,7 +78,6 @@ public:
 	u64 cycles = 0;
 	u64 resets = 0;
 	bool trace_reset = false;		// log each chip reset to stderr
-	bool early_reset_hangs = false;		// a chip reset before setup_clock() hangs (system.cpp)
 	u64 uart_lines = 0;			// sent so far, to place a reset in the console
 
 private:
@@ -114,7 +112,6 @@ private:
 	std::vector<u8> m_bank_ret;		// SFR 0xbb: a write pushes, a read pops
 	bool m_bank_ret_overflow = false;
 	bool m_halted = false;
-	bool m_flash_reset_hang = false;
 	bool m_reset_pending = false;
 	bool m_clock_set = false;		// HW_CONF written since the last reset: setup_clock() ran
 	std::deque<u8> m_rx;
