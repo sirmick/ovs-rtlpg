@@ -15,6 +15,13 @@ the switch on once, and requires it to reach the prompt on IMAGE's version
 in that one power-on - no hang, no power cycle needed. If the fix regresses,
 boot0's reset hangs and this fails. Needs an image that installs via boot0
 (dev e3347e6 and later).
+
+A PASS is NOT proof that boot0's reset works on silicon. The flash-controller
+model is a hypothesis that silicon has falsified as the whole cause: on
+2026-11-14 an install through the fixed boot0 (1fda21e -> 1fda21e-next) hung
+switch-denlounge too. What fits so far is that resets before setup_clock()
+hang, and rtlsim doesn't model the reset clock. This test only guards the
+CMD_R part; RTLPlayground is retiring boot0 for a late main()-path install.
 """
 import argparse, os, re, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -58,6 +65,7 @@ def main():
         ok = installed and reached and not hung and version(out) == want
         print(("PASS  " if ok else "FAIL  ")
               + f"a boot0 install of {os.path.basename(a.image)} ({want}) boots through to the prompt in one power-on"
+              + " in rtlsim (CMD_R model only: not proof for silicon)"
               + ("" if ok else f"; hung={hung}, reached={version(out)}, installed={installed}"))
         print(f"test_boot0: {'ALL PASS' if ok else 'FAILED'}")
         return 0 if ok else 1

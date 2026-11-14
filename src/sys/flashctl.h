@@ -44,6 +44,7 @@ public:
 	// Can the boot ROM refetch code through the controller as it is left? Only
 	// if CMD_R is a read opcode. A reg-0x24 chip reset does not reset the
 	// controller, so code left in a status-read setup (boot0's) reads garbage.
+	// A hypothesis, not the whole cause of silicon's boot0 hang (system.cpp).
 	bool code_readable() const;
 	bool trace = false;
 	FILE *op_log = nullptr;		// each erase (E addr) and program (P addr len) done

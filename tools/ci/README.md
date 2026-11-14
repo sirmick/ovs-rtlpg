@@ -45,3 +45,9 @@ is set, and it runs one fixed CPU clock, so it does not reproduce the real
 chip's flash timing or the reset-clock phase of the boot0 installer. A green
 run means the firmware's logic is sound, not that an update is safe to flash
 to a switch. The bench remains the final gate.
+
+In particular, the boot0 test (`tests/flash/test_boot0.py`) checks one
+hypothesis of the boot0 hang (the flash controller left on a status read
+across the chip reset), and silicon has shown it isn't the whole cause: the
+fixed boot0 (1fda21e) passes here and still hung a real switch. Resets
+issued before `setup_clock()` are not trustworthy in rtlsim.
