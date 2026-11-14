@@ -44,8 +44,23 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 	reset();
 }
 
-void rtl837x_system::reset()
+// A reg-0x24 chip reset (chip_reset) doesn't reset the flash controller, so
+// the boot ROM refetches the common code through it as the firmware left it.
+// If that isn't a read setup (boot0 leaves CMD_R on a status read), the fetch
+// is garbage and the chip hangs until a power cycle - as seen on a
+// POE-2G040210GSM after a boot0 install. A cold power-on (chip_reset false)
+// resets the controller, so it always boots.
+void rtl837x_system::reset(bool chip_reset)
 {
+	if (chip_reset && !m_flash->code_readable()) {
+		if (!m_flash_reset_hang)
+			fprintf(stderr, "rtlsim: chip reset with the flash controller in a non-read command "
+				"(CMD_R=0x%02x); the boot prefetch reads garbage and the switch hangs until a "
+				"power cycle, as on silicon\n", m_flash->cmd_r());
+		m_flash_reset_hang = true;
+		m_halted = true;
+		return;
+	}
 	std::fill(m_code_ram.begin(), m_code_ram.end(), 0xff);
 	for (u32 i = 0; i < COMMON_LEN && 2 + i < m_flash->size(); i++)
 		m_code_ram[i] = m_flash->byte(2 + i);
@@ -331,7 +346,7 @@ bool rtl837x_system::run(int cycles)
 		if (m_reset_pending) {
 			m_reset_pending = false;
 			resets++;
-			reset();
+			reset(true);
 		}
 		if (stop_on_halt && at_halt())
 			m_halted = true;

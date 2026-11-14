@@ -21,6 +21,7 @@ flash_controller::flash_controller(const std::vector<u8> &image, u32 chip_size, 
 {
 	fd_init(&m_dev, chip_size);
 	fd_load(&m_dev, 0, image.data(), std::min<u32>(image.size(), chip_size));
+	m_sfr[CMD_R] = 0x0b;	// FREAD: cold power-on resets the controller to a read setup
 	set_capacity();
 }
 
@@ -50,6 +51,7 @@ flash_controller::flash_controller(const std::string &path, const std::vector<u8
 	m_dev.addr_mask = size - 1;
 	m_dev.fail_after = -1;
 	m_mapped = true;
+	m_sfr[CMD_R] = 0x0b;	// FREAD: cold power-on resets the controller to a read setup
 	if (fresh) {
 		memset(m_dev.mem, 0xff, size);
 		fd_load(&m_dev, 0, image.data(), std::min<u32>(image.size(), size));
@@ -79,6 +81,16 @@ flash_controller::~flash_controller()
 		munmap(m_dev.mem, m_dev.size);
 	else
 		fd_free(&m_dev);
+}
+
+bool flash_controller::code_readable() const
+{
+	switch (m_sfr[CMD_R]) {
+	case 0x03: case 0x0b: case 0x3b: case 0xbb: case 0x6b: case 0xeb:	// READ, FREAD, dual/quad
+		return true;
+	default:	// e.g. 0x05 READ_STATUS, which boot0 leaves set
+		return false;
+	}
 }
 
 bool flash_controller::owns(u8 s)

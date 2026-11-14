@@ -34,7 +34,8 @@ public:
 	rtl837x_system(const std::vector<u8> &image, u32 flash_size, const board &b = board_swtg024as())
 		: rtl837x_system(std::make_unique<flash_controller>(image, flash_size), b) {}
 
-	void reset();
+	void reset(bool chip_reset = false);
+	bool flash_reset_hang() const { return m_flash_reset_hang; }
 	// Run about `cycles` machine cycles. Returns false once halted.
 	bool run(int cycles);
 	bool halted() const { return m_halted; }
@@ -108,6 +109,7 @@ private:
 	bool m_sfr_seen[256] = {};
 	u8 m_map_flash = 1;			// SFR 0x97: xdata 0x4000-0xbfff reads the flash
 	bool m_halted = false;
+	bool m_flash_reset_hang = false;
 	bool m_reset_pending = false;
 	std::deque<u8> m_rx;
 	std::unique_ptr<util::disasm_interface> m_dasm;
