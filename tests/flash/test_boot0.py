@@ -84,7 +84,8 @@ def main():
     d = tempfile.mkdtemp(prefix="rtlsim-boot0-")
     try:
         base = os.path.join(d, "base.bin")
-        setup = subprocess.run([a.rtlsim, "--flash", base, "--image", a.image, "--cycles", "400000000", "--quiet",
+        # to the prompt and past the first config save: an RTL8373 board writes its default config after ~400 M
+        setup = subprocess.run([a.rtlsim, "--flash", base, "--image", a.image, "--cycles", "1500000000", "--quiet",
                                 *(["--board", a.board] if a.board else [])], stdin=subprocess.DEVNULL, capture_output=True)
         old_ver = version(setup.stdout.decode(errors="replace"))
         chip = bytearray(open(base, "rb").read())
