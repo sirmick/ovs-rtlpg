@@ -79,6 +79,7 @@ public:
 	u64 cycles = 0;
 	u64 resets = 0;
 	bool trace_reset = false;		// log each chip reset to stderr
+	bool early_reset_hangs = false;		// a chip reset before setup_clock() hangs (system.cpp)
 	u64 uart_lines = 0;			// sent so far, to place a reset in the console
 
 private:
@@ -113,6 +114,7 @@ private:
 	bool m_halted = false;
 	bool m_flash_reset_hang = false;
 	bool m_reset_pending = false;
+	bool m_clock_set = false;		// HW_CONF written since the last reset: setup_clock() ran
 	std::deque<u8> m_rx;
 	std::unique_ptr<util::disasm_interface> m_dasm;
 	chip_identity const &m_id = m_board.id;

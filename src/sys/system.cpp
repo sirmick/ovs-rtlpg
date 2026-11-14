@@ -29,6 +29,7 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 	};
 	m_cpu.uart_tx = [this](u8 c) { fputc(c, uart_out); if (c == '\n') { uart_lines++; fflush(uart_out); } };
 	m_core.soc_reset = [this]() { m_reset_pending = true; };
+	m_core.on_write(0x6040, [this](u32 v) { m_clock_set = true; return v; });	// HW_CONF: setup_clock()
 	m_flash->now = [this]() { return m_cpu.cycles_total; };
 	m_core.pc = [this]() { return m_cpu.pc(); };
 	m_nic.xdata_r = [this](u16 a) { return xdata_r(a); };
@@ -67,6 +68,7 @@ void rtl837x_system::reset(bool chip_reset)
 		m_halted = true;
 		return;
 	}
+	m_clock_set = false;
 	std::fill(m_code_ram.begin(), m_code_ram.end(), 0xff);
 	for (u32 i = 0; i < COMMON_LEN && 2 + i < m_flash->size(); i++)
 		m_code_ram[i] = m_flash->byte(2 + i);
@@ -353,8 +355,19 @@ bool rtl837x_system::run(int cycles)
 			m_reset_pending = false;
 			resets++;
 			if (trace_reset)
-				fprintf(stderr, "rtlsim: chip reset %llu at pc 0x%04x, after %llu UART lines\n",
-					(unsigned long long)resets, m_cpu.pc(), (unsigned long long)uart_lines);
+				fprintf(stderr, "rtlsim: chip reset %llu at pc 0x%04x, after %llu UART lines, %s setup_clock()\n",
+					(unsigned long long)resets, m_cpu.pc(), (unsigned long long)uart_lines,
+					m_clock_set ? "after" : "before");
+			// The working hypothesis for silicon's boot0 hang (see reset()): a reset
+			// issued before setup_clock() hangs until a power cycle. Off by default.
+			if (early_reset_hangs && !m_clock_set) {
+				fprintf(stderr, "rtlsim: chip reset at pc 0x%04x before setup_clock() (no HW_CONF write since "
+					"the last reset): the switch hangs until a power cycle (--early-reset-hangs)\n",
+					m_cpu.pc());
+				m_flash_reset_hang = true;
+				m_halted = true;
+				break;
+			}
 			reset(true);
 		}
 		if (stop_on_halt && at_halt())
