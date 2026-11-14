@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
-"""test_migrate.py - standard -> compact on 2 MiB boards: the bridge install,
-then the config and machine data moves, once each.
+"""test_migrate.py - standard -> compact on 2 and 4 MiB boards: the bridge
+install, then the config and machine data moves, once each.
 
     tests/flash/test_migrate.py [--images DIR] [--rtlsim build/rtlsim]
                                 [--sweep] [--jobs N] [--results DIR]
 
 DIR is an image matrix (RTLPlayground's build for rtlsim, manifest.json;
 default the newest in $RTLSIM_IMAGES, ~/rtlsim/images). A switch on the old
-standard firmware (*-chip-old-standard.bin: its config at 0x70000, a factory
-MAC at 0x1FC000) gets a bridge image (*-bridge.bin) staged in its upload area
-(0x80000), as a web upload leaves it; then it's powered on until it's up:
-- AMPCOM_WAM902_SWTG018AS (RTL8373): the compact app is in place (the bridge's
-  first 0x70000 bytes), the config moved 0x70000 -> 0x7F000 and 0x70000 is
-  erased, the upload area is erased, the factory MAC is the one it uses, and
-  another power-on moves nothing;
-- POE_2G040210GSM: the same, and the bridge's machine data moved 0x60000 ->
-  0x80000 (its transfer header erased), and the PoE controller (the
-  RTL8238B stub) gets image 0 from it;
+standard firmware (*-chip-old-standard.bin, the size of the board's flash: its
+config at 0x70000, a factory MAC at 0x1FC000 on boards that have one) gets a
+bridge image (*-bridge.bin) staged in its upload area (0x80000), as a web
+upload leaves it; then it's powered on until it's up:
+- AMPCOM_WAM902_SWTG018AS (RTL8373) and KEEPLINK_KP_9000_9XHPML_V1_2 (RTL8373,
+  2 MiB): the compact app is in place (the bridge's first 0x70000 bytes), the
+  config moved 0x70000 -> 0x7F000 and 0x70000 is erased, the upload area is
+  erased, the factory MAC is the one it uses, and another power-on moves
+  nothing;
+- MOKERLINK_POE_2G080110GS (RTL8373, 4 MiB, no factory MAC): the same, and
+  the loader, which no bank window wraps onto on a chip this big, has
+  written its copy where bank 0x3f shows it (0x2EF800) and started the app;
+- POE_2G040210GSM: the same as the first, and the bridge's machine data moved
+  0x60000 -> 0x80000 (its transfer header erased), and the PoE controller
+  (the RTL8238B stub) gets image 0 from it;
 - a non-config sector at 0x70000 (staging leftovers) isn't taken for a
   config: nothing moves, and the switch comes up on its default config.
 --sweep also cuts the power before every erase and every 512-byte block of
@@ -29,9 +34,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import flashlab
 
-BOARDS = {"AMPCOM_WAM902_SWTG018AS": "ampcom_wam902_swtg018as.json", "POE_2G040210GSM": "poe_2g040210gsm.json"}
+BOARDS = {"AMPCOM_WAM902_SWTG018AS": "ampcom_wam902_swtg018as.json", "POE_2G040210GSM": "poe_2g040210gsm.json",
+          "KEEPLINK_KP_9000_9XHPML_V1_2": "keeplink_kp_9000_9xhpml_v1_2.json",
+          "MOKERLINK_POE_2G080110GS": "mokerlink_poe_2g080110gs.json"}
 LEGACY, CONFIG, UPLOAD, COPY = 0x70000, 0x7f000, 0x80000, 0x70000
 MDATA, MDATA_XFER, MDATA_LEN, MAC = 0x80000, 0x60000, 0xc000, 0x1fc000
+# RTLPlayground loader/layout.h: the banks reach no further, and where bank 0x3f shows the loader's copy
+ALIAS, ALIAS_LEN, ALIAS_REACH, ALIAS_HIGH = 0x3800, 0x800, 0x2f8000, 0x2ef800
+SIZES = {"512K": 0x80000, "1M": 0x100000, "2M": 0x200000, "4M": 0x400000}
 failures = 0
 
 
@@ -39,6 +49,7 @@ def check(cond, msg):
     global failures
     print(("PASS  " if cond else "FAIL  ") + msg)
     failures += not cond
+    return cond
 
 
 def erased(d, a, n):
@@ -68,8 +79,11 @@ def scenario(a, d, machine, base, bridge, staged_path):
     s.expect("config at 0x7F000", lambda f: f[CONFIG:CONFIG + 0x1000] == old[LEGACY:LEGACY + 0x1000])
     s.expect("0x70000 erased", lambda f: erased(f, LEGACY, 0x1000))
     s.expect("upload area erased", lambda f: erased(f, UPLOAD + (MDATA_LEN if md else 0), 0x80000 - (MDATA_LEN if md else 0)))
-    s.expect("factory MAC kept", lambda f: f[MAC:MAC + 6] == old[MAC:MAC + 6])
-    s.expect_console("uses the factory MAC", lambda c: c.count(f"Setting MAC to: {mac}") >= 1)
+    if old[MAC:MAC + 6] != b"\xff" * 6:
+        s.expect("factory MAC kept", lambda f: f[MAC:MAC + 6] == old[MAC:MAC + 6])
+        s.expect_console("uses the factory MAC", lambda c: c.count(f"Setting MAC to: {mac}") >= 1)
+    if len(old) > ALIAS_REACH:
+        s.expect("the loader's window copy at 0x2EF800", lambda f: f[ALIAS_HIGH:ALIAS_HIGH + ALIAS_LEN] == f[ALIAS:ALIAS + ALIAS_LEN])
     if md:
         s.expect("mdata at 0x80000", lambda f: f[MDATA:MDATA + md] == br[MDATA_XFER:MDATA_XFER + md])
         s.expect("mdata transfer header erased", lambda f: erased(f, MDATA_XFER, 0x1000))
@@ -98,6 +112,10 @@ def main():
             bridge = os.path.join(images, f"{machine}-bridge.bin")
             if not (os.path.exists(base) and os.path.exists(bridge)):
                 print(f"{machine}: no old chip or bridge, skipped")
+                continue
+            fl = json.load(open(os.path.join(HERE, "../../boards", BOARDS[machine])))["flash"]["size"]
+            if not check(SIZES.get(fl) == os.path.getsize(base),
+                         f"{machine}: the board's flash ({fl}) is the size of the old chip ({os.path.getsize(base):#x})"):
                 continue
             staged = os.path.join(d, f"{machine}-staged.bin")
             s, old, br, md = scenario(a, d, machine, base, bridge, staged)

@@ -15,8 +15,9 @@
 #   vm        build the Alpine switch VM and boot it under QEMU.  (needs qemu;
 #             KVM if present, else TCG)
 #   powercut  a power cut at every step of a web firmware install.
-#   flash     standard->compact migrations, the RTL8238B PoE load, the loader
-#             start.  Needs an image matrix in $RTLSIM_IMAGES (make
+#   flash     standard->compact migrations (2 and 4 MiB boards), the RTL8238B
+#             PoE load, the loader start, a web update through the loader on
+#             every board.  Needs an image matrix in $RTLSIM_IMAGES (make
 #             rtlsim-images); skipped, not failed, when it is absent.
 #
 # These are functional tests, not silicon-timing-faithful: rtlsim's flash and
@@ -52,7 +53,7 @@ for t in "${TIERS[@]}"; do
 	flash)
 		images=${RTLSIM_IMAGES:-$HOME/rtlsim/images}
 		if ls "$images"/*/manifest.json >/dev/null 2>&1; then
-			run "flash matrix (migrate, PoE, loader)" env RTLSIM_IMAGES="$images" $M test-flash
+			run "flash matrix (migrate, PoE, loader, loader update)" env RTLSIM_IMAGES="$images" $M test-flash
 		else
 			echo "flash matrix: no image set in $images (make rtlsim-images), skipped"
 		fi ;;

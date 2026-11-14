@@ -8,7 +8,7 @@
   "flash": {
     "size": "2M",
     "jedec": "ef40",
-    "comment": "assumed: the source doesn't say"
+    "comment": "W25Q16JV (ef 40 15), read from a unit's stock flash"
   },
   "factory_mac_at": "0x1FC000",
   "reset_gpio": 48,
