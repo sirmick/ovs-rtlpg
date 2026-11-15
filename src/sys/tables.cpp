@@ -58,7 +58,7 @@ switch_tables::l2_entry *switch_tables::l2_find(const u8 mac[6], u16 vid)
 	for (auto &e : m_l2) {
 		u8 m[6];
 		u16 v;
-		if (!e.present)
+		if (!e.present || is_l3mc(e))	// L3MC entries are not keyed by MAC
 			continue;
 		key(e, m, &v);
 		if (v == vid && !memcmp(m, mac, 6))
@@ -201,7 +201,8 @@ void switch_tables::table_exec(u32 ctrl)
 			e = l2_free();
 		if (!e)
 			return;
-		e->present = (m_core.reg(DATA_IN_B) >> 29) & 1;
+		// Valid on bit 29 (L2 unicast) or bit 28 (L3 multicast).
+		e->present = ((m_core.reg(DATA_IN_B) >> 28) & 3) != 0;
 		e->idx = idx;
 		e->a = m_core.reg(DATA_IN_A);
 		e->b = m_core.reg(DATA_IN_B);
@@ -216,7 +217,7 @@ void switch_tables::flush_exec(u32 ctrl)
 	u16 const mask = ctrl & 0x3ff;
 	bool const dynamic_only = m_core.reg(L2_FLUSH_CNF) == 0;
 	for (auto &e : m_l2) {
-		if (!e.present)
+		if (!e.present || is_l3mc(e))	// L3MC entries age/flush on their own path
 			continue;
 		u8 mac[6];
 		u16 vid;

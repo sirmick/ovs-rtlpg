@@ -97,8 +97,8 @@ std::vector<flow> compile_flows(const switch_core &core, const switch_tables &ta
 		u8 mac[6];
 		u16 vid;
 		switch_tables::key(e, mac, &vid);
-		if (mac[0] & 1)
-			continue;	// multicast entries: IGMP, later
+		if (mac[0] & 1 || switch_tables::is_l3mc(e))
+			continue;	// multicast entries (L3MC): IGMP forwarding is phase 4
 		unsigned const q = switch_tables::port(e);
 		flow l = make(TABLE_LEARN, 100);
 		l.vlan_vid = flow::VID_PRESENT | vid;

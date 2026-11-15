@@ -39,6 +39,20 @@ public:
 	static void key(const l2_entry &e, u8 mac[6], u16 *vid);
 	static unsigned port(const l2_entry &e) { return ((e.b >> 30) & 0x3) | ((e.c & 0x3) << 2); }
 	static bool is_static(const l2_entry &e) { return (e.c >> 16) & 1; }
+
+	// An L3 multicast entry (IPMC_USES_L3MC): same TBL type 4, but valid on
+	// word-B bit 28 (not 29), keyed on (SIP, DIP) with a member mask. See
+	// doc/igmp-multicast.md for the layout.
+	static bool is_l3mc(const l2_entry &e) { return ((e.b >> 28) & 1) && !((e.b >> 29) & 1); }
+	static unsigned l3mc_mask(const l2_entry &e) { return ((e.b >> 30) & 0x3) | ((e.c & 0xff) << 2); }
+	static void l3mc_sip(const l2_entry &e, u8 ip[4])
+	{
+		ip[0] = e.a >> 24; ip[1] = e.a >> 16; ip[2] = e.a >> 8; ip[3] = e.a;
+	}
+	static void l3mc_dip(const l2_entry &e, u8 ip[4])
+	{
+		ip[0] = 0xe0 | ((e.b >> 24) & 0xf); ip[1] = e.b >> 16; ip[2] = e.b >> 8; ip[3] = e.b;
+	}
 	// The port a unicast MAC is at in a VLAN, or -1.
 	int lookup(const u8 mac[6], u16 vid) const;
 	// Hardware learning: a dynamic entry for the source of a frame from
