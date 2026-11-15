@@ -32,7 +32,8 @@ static u32 get32(const u8 *p) { return (u32(get16(p)) << 16) | get16(p + 2); }
 // OXM headers (OpenFlow basic class): field << 9 | hasmask << 8 | length
 enum : u32 {
 	OXM_IN_PORT = 0x80000004, OXM_METADATA_W = 0x80000510, OXM_ETH_DST = 0x80000606, OXM_ETH_SRC = 0x80000806,
-	OXM_VLAN_VID = 0x80000c02, OXM_VLAN_VID_W = 0x80000d04,
+	OXM_ETH_TYPE = 0x80000a02, OXM_VLAN_VID = 0x80000c02, OXM_VLAN_VID_W = 0x80000d04,
+	OXM_IP_PROTO = 0x80001401, OXM_IPV4_SRC = 0x80001604, OXM_IPV4_DST = 0x80001804,
 };
 enum : u8 { OFPFC_ADD = 0, OFPFC_DELETE = 3, OFPFC_DELETE_STRICT = 4 };
 
@@ -57,11 +58,27 @@ static void put_match(std::vector<u8> &m, const flow &f)
 		put32(o, OXM_ETH_SRC);
 		o.insert(o.end(), f.src.begin(), f.src.end());
 	}
+	if (f.eth_type >= 0) {
+		put32(o, OXM_ETH_TYPE);
+		put16(o, f.eth_type);
+	}
 	if (f.vlan_vid >= 0) {
 		put32(o, f.vlan_mask == 0x1fff ? OXM_VLAN_VID : OXM_VLAN_VID_W);
 		put16(o, f.vlan_vid);
 		if (f.vlan_mask != 0x1fff)
 			put16(o, f.vlan_mask);
+	}
+	if (f.ip_proto >= 0) {
+		put32(o, OXM_IP_PROTO);
+		o.push_back(f.ip_proto);
+	}
+	if (f.has_ipv4_src) {
+		put32(o, OXM_IPV4_SRC);
+		put32(o, f.ipv4_src);
+	}
+	if (f.has_ipv4_dst) {
+		put32(o, OXM_IPV4_DST);
+		put32(o, f.ipv4_dst);
 	}
 	put16(m, 1);			// OXM
 	put16(m, 4 + o.size());

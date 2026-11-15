@@ -28,6 +28,10 @@ struct flow {
 	bool has_src = false, has_dst = false;
 	std::array<u8, 6> src{}, dst{};
 	u64 meta = 0, meta_mask = 0;
+	int eth_type = -1;			// OXM eth_type; -1 absent (needed to match the L3 fields)
+	int ip_proto = -1;			// OXM ip_proto; -1 absent
+	bool has_ipv4_src = false, has_ipv4_dst = false;
+	u32 ipv4_src = 0, ipv4_dst = 0;
 	// instructions
 	std::vector<of_action> actions;		// apply-actions
 	u64 write_meta = 0, write_meta_mask = 0;

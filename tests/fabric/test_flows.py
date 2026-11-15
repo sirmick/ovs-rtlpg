@@ -17,6 +17,7 @@ CASES = {
     "vlans": ["vlan 10 2 3", "pvid 2 10", "pvid 3 10", "vlan 20 1t 3t"],
     "isolate": ["isolate 1 3"],
     "ingress": ["ingress 1t 2u"],
+    "igmp": ["igmp on"],
 }
 
 

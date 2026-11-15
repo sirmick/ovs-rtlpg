@@ -7,9 +7,11 @@
 
 enum : u16 {
 	REG_INGRESS = 0x4e10, VLAN_CTRL = 0x4e14, VLAN_IGR_FLTR = 0x4e18, PVID_BASE = 0x4e1c,
-	PORT_ISOLATION = 0x50c0,
+	PORT_ISOLATION = 0x50c0, IGMP_PORT_CFG = 0x52a0,
 };
 enum : u32 { VLAN_VALID = 1u << 25, VLAN_CVLAN_FILTER = 0x4 };
+// RTL837X_IGMP_PORT_CFG: igmp on sets these trap bits per port (igmp off: flood 0x15).
+enum : u32 { IGMP_TRAP = 0x2a, ETH_P_IP = 0x0800, IPPROTO_IGMP = 2 };
 static constexpr unsigned CPU_PORT = 9;
 
 static u16 pvid(const switch_core &core, unsigned port)
@@ -133,6 +135,25 @@ std::vector<flow> compile_flows(const switch_core &core, const switch_tables &ta
 	flow miss = make(TABLE_L2, 0);
 	miss.goto_table = TABLE_FLOOD;
 	fl.push_back(miss);
+
+	// IGMP snoop: with `igmp on` the chip traps IGMP to the CPU, which forwards
+	// it (RTLPlayground #904). Trap IGMP (IP proto 2) to the controller above
+	// the unicast entries, so a multicast IGMP frame reaches the firmware
+	// tagged and with its ingress port, instead of being flooded. The CPU tag
+	// cpu_nic::receive() adds carries both.
+	bool igmp_on = false;
+	for (unsigned p : ports)
+		if ((core.reg(IGMP_PORT_CFG + 4 * p) & IGMP_TRAP) == IGMP_TRAP) {
+			igmp_on = true;
+			break;
+		}
+	if (igmp_on) {
+		flow t = make(TABLE_L2, 150);
+		t.eth_type = ETH_P_IP;
+		t.ip_proto = IPPROTO_IGMP;
+		t.actions.push_back({of_action::CONTROLLER});
+		fl.push_back(t);
+	}
 
 	// 3: flood, once per VLAN and isolation mask that some port has
 	std::vector<u64> masks;

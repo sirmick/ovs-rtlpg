@@ -31,6 +31,24 @@ std::string flow::match_text() const
 		s += ",dl_src=" + mac_text(src);
 	if (has_dst)
 		s += ",dl_dst=" + mac_text(dst);
+	if (eth_type >= 0) {
+		snprintf(b, sizeof b, ",dl_type=0x%04x", eth_type);
+		s += b;
+	}
+	if (ip_proto >= 0) {
+		snprintf(b, sizeof b, ",nw_proto=%d", ip_proto);
+		s += b;
+	}
+	if (has_ipv4_src) {
+		snprintf(b, sizeof b, ",nw_src=%u.%u.%u.%u", ipv4_src >> 24, (ipv4_src >> 16) & 0xff,
+			 (ipv4_src >> 8) & 0xff, ipv4_src & 0xff);
+		s += b;
+	}
+	if (has_ipv4_dst) {
+		snprintf(b, sizeof b, ",nw_dst=%u.%u.%u.%u", ipv4_dst >> 24, (ipv4_dst >> 16) & 0xff,
+			 (ipv4_dst >> 8) & 0xff, ipv4_dst & 0xff);
+		s += b;
+	}
 	if (meta_mask) {
 		snprintf(b, sizeof b, ",metadata=0x%llx/0x%llx", (unsigned long long)meta, (unsigned long long)meta_mask);
 		s += b;
