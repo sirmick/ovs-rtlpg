@@ -32,6 +32,7 @@ struct flow {
 	int ip_proto = -1;			// OXM ip_proto; -1 absent
 	bool has_ipv4_src = false, has_ipv4_dst = false;
 	u32 ipv4_src = 0, ipv4_dst = 0;
+	u32 ipv4_dst_mask = 0xffffffff;		// a prefix, e.g. 0xf0000000 for 224.0.0.0/4
 	// instructions
 	std::vector<of_action> actions;		// apply-actions
 	u64 write_meta = 0, write_meta_mask = 0;

@@ -10,6 +10,7 @@ static const u16 s_inputs[] = {
 	0x4e10, 0x4e14, 0x4e18, 0x4e1c, 0x4e20, 0x4e24, 0x4e28, 0x4e2c,
 	0x50c0, 0x50c4, 0x50c8, 0x50cc, 0x50d0, 0x50d4, 0x50d8, 0x50dc, 0x50e0, 0x50e4,
 	0x52a0, 0x52a4, 0x52a8, 0x52ac, 0x52b0, 0x52b4, 0x52b8, 0x52bc, 0x52c0, 0x52c4,
+	0x4f78,
 };
 
 fabric::fabric(rtl837x_system &sys, of_controller &of, const fabric_config &cfg)
@@ -17,7 +18,10 @@ fabric::fabric(rtl837x_system &sys, of_controller &of, const fabric_config &cfg)
 {
 	m_of.packet_in = [this](unsigned port, u8 table, const u8 *f, size_t n) {
 		if (table != TABLE_LEARN) {
-			m_sys.nic().receive(port, f, n);
+			// Table 0 tags every frame, so an untagged one is a trap that
+			// popped the tag to keep the ingress format (compiler.cpp).
+			bool const as_is = n < 14 || f[12] != 0x81 || f[13] != 0x00;
+			m_sys.nic().receive(port, f, n, as_is);
 			return;
 		}
 		if (n < 18 || f[12] != 0x81 || f[13] != 0x00)

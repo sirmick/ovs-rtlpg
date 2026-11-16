@@ -122,7 +122,7 @@ void cpu_nic::rx_write(unsigned off, const u8 *p, size_t n)
 		m_rx[(off + i) % size] = p[i];
 }
 
-bool cpu_nic::receive(unsigned port, const u8 *frame, size_t len)
+bool cpu_nic::receive(unsigned port, const u8 *frame, size_t len, bool as_is)
 {
 	unsigned const slots = rx_slots();
 	if (len < 14 || !slots || !(m_core.reg(RX_CTRL) & 1)) {
@@ -139,15 +139,19 @@ bool cpu_nic::receive(unsigned port, const u8 *frame, size_t len)
 	bool const tagged = be16(&f[12]) == TPID_8021Q;
 	u16 const tci = tagged ? be16(&f[14]) : pvid(port);
 	u32 const vlan = m_tables.vlan(tci & 0xfff);
-	if (!(vlan & VLAN_VALID) || !(vlan & (1u << CPU_PORT))) {
+	if (!as_is && (!(vlan & VLAN_VALID) || !(vlan & (1u << CPU_PORT)))) {
 		stats.rx_dropped++;
 		if (trace)
 			fprintf(stderr, "NIC RX p%u %zuB dropped: VLAN %u (%08x) doesn't have the CPU\n", port, len, tci & 0xfff, vlan);
 		return false;
 	}
 	u8 hdr[12] = { 0x88, 0x99, 0x04, 0x00, 0x00, 0x00, 0x00, u8(port), 0x81, 0x00, u8(tci >> 8), u8(tci) };
-	f.erase(f.begin() + 12, f.begin() + (tagged ? 16 : 12));
-	f.insert(f.begin() + 12, hdr, hdr + sizeof hdr);
+	if (as_is)
+		f.insert(f.begin() + 12, hdr, hdr + 8);
+	else {
+		f.erase(f.begin() + 12, f.begin() + (tagged ? 16 : 12));
+		f.insert(f.begin() + 12, hdr, hdr + sizeof hdr);
+	}
 
 	unsigned const need = 1 + (f.size() + 7) / 8;
 	if (m_rx_used + need > slots) {

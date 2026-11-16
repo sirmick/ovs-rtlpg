@@ -58,8 +58,10 @@ public:
 
 	// A frame (without FCS) that came in on physical port `port`. False if
 	// the CPU doesn't get it: NIC RX off, not in a VLAN with the CPU, or no
-	// room in the ring.
-	bool receive(unsigned port, const u8 *frame, size_t len);
+	// room in the ring. `as_is`: a trapped frame (IGMP), which on silicon
+	// keeps its ingress tagging - no 802.1Q tag added, no VLAN check (the
+	// trap is before the VLAN filter), only the CPU tag.
+	bool receive(unsigned port, const u8 *frame, size_t len, bool as_is = false);
 
 	std::function<u8(u16)> xdata_r;
 	std::function<void(u16, u8)> xdata_w;

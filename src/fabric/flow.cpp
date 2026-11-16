@@ -48,6 +48,10 @@ std::string flow::match_text() const
 		snprintf(b, sizeof b, ",nw_dst=%u.%u.%u.%u", ipv4_dst >> 24, (ipv4_dst >> 16) & 0xff,
 			 (ipv4_dst >> 8) & 0xff, ipv4_dst & 0xff);
 		s += b;
+		if (ipv4_dst_mask != 0xffffffff) {
+			snprintf(b, sizeof b, "/%d", __builtin_popcount(ipv4_dst_mask));
+			s += b;
+		}
 	}
 	if (meta_mask) {
 		snprintf(b, sizeof b, ",metadata=0x%llx/0x%llx", (unsigned long long)meta, (unsigned long long)meta_mask);

@@ -7,11 +7,14 @@
 
 enum : u16 {
 	REG_INGRESS = 0x4e10, VLAN_CTRL = 0x4e14, VLAN_IGR_FLTR = 0x4e18, PVID_BASE = 0x4e1c,
-	PORT_ISOLATION = 0x50c0, IGMP_PORT_CFG = 0x52a0,
+	PORT_ISOLATION = 0x50c0, IGMP_PORT_CFG = 0x52a0, IPV4_PORT_MC_LM_ACT = 0x4f78,
 };
 enum : u32 { VLAN_VALID = 1u << 25, VLAN_CVLAN_FILTER = 0x4 };
 // RTL837X_IGMP_PORT_CFG: igmp on sets these trap bits per port (igmp off: flood 0x15).
 enum : u32 { IGMP_TRAP = 0x2a, ETH_P_IP = 0x0800, IPPROTO_IGMP = 2 };
+// Metadata: bits 9:0 the ingress port's isolation mask; bit 10 set by table 0
+// when the frame came in untagged (table 0 pushes a tag on every frame).
+enum : u64 { META_ISOLATION = 0x3ff, META_UNTAGGED = 0x400 };
 static constexpr unsigned CPU_PORT = 9;
 
 static u16 pvid(const switch_core &core, unsigned port)
@@ -60,8 +63,8 @@ std::vector<flow> compile_flows(const switch_core &core, const switch_tables &ta
 				if (!tagged)
 					f.actions.push_back({of_action::PUSH_VLAN, 0x8100});
 				f.actions.push_back({of_action::SET_VID, pv});
-				f.write_meta = isolation(p);
-				f.write_meta_mask = 0x3ff;
+				f.write_meta = isolation(p) | (tagged ? 0 : META_UNTAGGED);
+				f.write_meta_mask = META_ISOLATION | META_UNTAGGED;
 				f.goto_table = TABLE_LEARN;
 				fl.push_back(f);
 			}
@@ -138,9 +141,14 @@ std::vector<flow> compile_flows(const switch_core &core, const switch_tables &ta
 
 	// IGMP snoop: with `igmp on` the chip traps IGMP to the CPU, which forwards
 	// it (RTLPlayground #904). Trap IGMP (IP proto 2) to the controller above
-	// the unicast entries, so a multicast IGMP frame reaches the firmware
-	// tagged and with its ingress port, instead of being flooded. The CPU tag
-	// cpu_nic::receive() adds carries both.
+	// the unicast entries, so a multicast IGMP frame reaches the firmware with
+	// its ingress port (the CPU tag cpu_nic::receive() adds) instead of being
+	// flooded. On silicon a trapped frame keeps its ingress tagging: one that
+	// came in untagged reaches the CPU with no 802.1Q tag (switch-bench: the
+	// pre-#904 handler, which takes only untagged frames, learns from an
+	// untagged report and not from a VID 1 or VID 0 tagged one), unlike every
+	// other frame to the CPU. So pop the tag table 0 pushed; fabric.cpp hands
+	// an untagged frame to the NIC as it is.
 	// Any port carrying the trap bits means snooping is on. Scan all ports, not
 	// just this board's, since the firmware programs its own MIN..MAX range and
 	// IGMP_TRAP_CFG is not cleared on `igmp off`. (A flood/off port reads 0x15,
@@ -156,6 +164,11 @@ std::vector<flow> compile_flows(const switch_core &core, const switch_tables &ta
 		t.eth_type = ETH_P_IP;
 		t.ip_proto = IPPROTO_IGMP;
 		t.actions.push_back({of_action::CONTROLLER});
+		fl.push_back(t);
+		t.priority = 151;
+		t.meta = t.meta_mask = META_UNTAGGED;
+		t.vlan_vid = t.vlan_mask = flow::VID_PRESENT;	// pop_vlan needs it in the match
+		t.actions.insert(t.actions.begin(), {of_action::POP_VLAN});
 		fl.push_back(t);
 	}
 
@@ -188,6 +201,88 @@ std::vector<flow> compile_flows(const switch_core &core, const switch_tables &ta
 			if (!f.actions.empty())
 				fl.push_back(f);
 		}
+	}
+
+	// 2: IP multicast to a snooped group - an L3MC entry (IPMC_USES_L3MC) - goes
+	// only to the entry's member ports, never flooded. The entry has no VLAN, so
+	// per VLAN the members that are also VLAN members get it, tagged and
+	// untagged as table 3 does, within the isolation mask; an empty set drops.
+	// Below the IGMP trap (150), so IGMP itself still goes to the CPU. (*,G)
+	// when the entry's source is 0.0.0.0, else (S,G), one above (assumed, not
+	// measured). On silicon a (*,G) entry takes a stream from any source.
+	for (auto &e : tables.l2()) {
+		if (!e.present || !switch_tables::is_l3mc(e))
+			continue;
+		u8 dip[4], sip[4];
+		switch_tables::l3mc_dip(e, dip);
+		switch_tables::l3mc_sip(e, sip);
+		unsigned const mm = switch_tables::l3mc_mask(e);
+		u32 const d = (u32(dip[0]) << 24) | (u32(dip[1]) << 16) | (u32(dip[2]) << 8) | dip[3];
+		u32 const s = (u32(sip[0]) << 24) | (u32(sip[1]) << 16) | (u32(sip[2]) << 8) | sip[3];
+		for (unsigned v = 1; v < 4095; v++) {
+			u32 const vl = tables.vlan(v);
+			if (!(vl & VLAN_VALID))
+				continue;
+			for (u64 m : masks) {
+				flow f = make(TABLE_L2, s ? 121 : 120);
+				f.vlan_vid = flow::VID_PRESENT | v;
+				f.meta = m;
+				f.meta_mask = 0x3ff;
+				f.eth_type = ETH_P_IP;
+				f.has_ipv4_dst = true;
+				f.ipv4_dst = d;
+				if (s) {
+					f.has_ipv4_src = true;
+					f.ipv4_src = s;
+				}
+				std::vector<unsigned> tag, untag;
+				for (unsigned p : ports)
+					if ((mm >> p & 1) && member(vl, p) && (m >> p & 1))
+						(untagged(vl, p) ? untag : tag).push_back(p);
+				if ((mm >> CPU_PORT & 1) && member(vl, CPU_PORT) && (m >> CPU_PORT & 1))
+					tag.push_back(CPU_PORT);
+				for (unsigned p : tag)
+					f.actions.push_back(out(p));
+				if (!untag.empty())
+					f.actions.push_back({of_action::POP_VLAN});
+				for (unsigned p : untag)
+					f.actions.push_back(out(p));
+				fl.push_back(f);	// no actions: a known group with no member here drops
+			}
+		}
+	}
+
+	// 2: IPv4 multicast no L3MC entry matched (the lookup missed), per ingress
+	// port by RTL837X_IPV4_PORT_MC_LM_ACT, 2 bits a port: 00 flood (table 3;
+	// IPV4_UNKN_MC_FLD_PMSK, the firmware's default all ports, isn't
+	// modelled), 01 drop, 10 trap, 11 to the router ports (not modelled:
+	// flooded). `igmp on` sets drop. Silicon still floods 224.0.0.0/24
+	// (switch-bench: 224.0.0.251 reaches every port while 239.x drops).
+	u32 const lm = core.reg(IPV4_PORT_MC_LM_ACT);
+	bool miss_any = false;
+	for (unsigned p : ports) {
+		unsigned const act = lm >> (2 * p) & 3;
+		if (act != 1 && act != 2)
+			continue;
+		flow f = make(TABLE_L2, 110);
+		f.in_port = p + 1;
+		f.eth_type = ETH_P_IP;
+		f.has_ipv4_dst = true;
+		f.ipv4_dst = 0xe0000000;
+		f.ipv4_dst_mask = 0xf0000000;
+		if (act == 2)
+			f.actions.push_back({of_action::CONTROLLER});
+		fl.push_back(f);
+		miss_any = true;
+	}
+	if (miss_any) {
+		flow f = make(TABLE_L2, 115);
+		f.eth_type = ETH_P_IP;
+		f.has_ipv4_dst = true;
+		f.ipv4_dst = 0xe0000000;
+		f.ipv4_dst_mask = 0xffffff00;
+		f.goto_table = TABLE_FLOOD;
+		fl.push_back(f);
 	}
 	return fl;
 }
