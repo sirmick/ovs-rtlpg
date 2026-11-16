@@ -141,8 +141,12 @@ std::vector<flow> compile_flows(const switch_core &core, const switch_tables &ta
 	// the unicast entries, so a multicast IGMP frame reaches the firmware
 	// tagged and with its ingress port, instead of being flooded. The CPU tag
 	// cpu_nic::receive() adds carries both.
+	// Any port carrying the trap bits means snooping is on. Scan all ports, not
+	// just this board's, since the firmware programs its own MIN..MAX range and
+	// IGMP_TRAP_CFG is not cleared on `igmp off`. (A flood/off port reads 0x15,
+	// an unprogrammed one 0, neither of which match.)
 	bool igmp_on = false;
-	for (unsigned p : ports)
+	for (unsigned p = 0; p <= CPU_PORT; p++)
 		if ((core.reg(IGMP_PORT_CFG + 4 * p) & IGMP_TRAP) == IGMP_TRAP) {
 			igmp_on = true;
 			break;
