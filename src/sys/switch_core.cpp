@@ -137,6 +137,11 @@ void switch_core::execute(u8 cmd)
 		u8 mmd = m_sfr[SMI_DEV] >> 3;
 		u16 r = (m_sfr[SMI_REG_H] << 8) | m_sfr[SMI_REG_L];
 		u16 v = (m_sfr[D8] << 8) | m_sfr[D0];
+		// An RTL8224's SerDes indirect access (MMD 30 0x3f8, SDS_INDACS_CMD):
+		// bit 15 starts a command and clears when it is done - at once here.
+		// RTLPlayground's rtl8224_sds_write and stock firmware poll for it.
+		if (mmd == 30 && r == 0x3f8)
+			v &= ~0x8000;
 		for (u8 p = 0; p < 9; p++)
 			if (mask & (1 << p))
 				set_phy(p, mmd, r, v);
