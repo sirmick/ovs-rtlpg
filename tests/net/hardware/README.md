@@ -41,3 +41,16 @@ interface with `RTLHW_IFACE` (default `eth0`) and pass a free `PEER_IP`.
   dropped harmlessly. Fire it a few times. Once it lands, the hang is hard
   (no watchdog recovery observed; power-cycle required).
 - These only ever read or crash the target switch — never flash or reconfigure it.
+
+## Multicast oracle
+
+- **`mc_oracle.py SWITCH_IP SENDER MEMBER OTHER`** — what the chip does with
+  IPv4 multicast under the firmware's IGMP snooping: igmp on/off, an
+  unregistered group, link-local, IGMPv2 reports and leaves from two hosts,
+  a stream after each, and the L3MC entry read back by key over `POST /cmd`
+  (`tools/hwprobe.py`). Needs three NICs on three ports of the *same* switch,
+  used as separate hosts (never bridged). The result is `SILICON` in the
+  script; `../test_igmp.py` runs the same scenario on rtlsim against it.
+  Leaves the switch with igmp off.
+
+      sudo python3 mc_oracle.py 192.168.10.247 enp4s0 enp3s0 enp5s0

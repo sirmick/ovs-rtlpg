@@ -40,6 +40,37 @@ the entries, so there is nothing to forward.
   is dropped on the floor. `key()`/`port()` also decode every entry as a
   unicast MAC.
 
+## Measured on silicon (2026-11-16)
+
+`tests/net/hardware/mc_oracle.py` on switch-bench (RTL8372) and moker81
+(RTL8373), both on the pre-#904 IGMP code; `tests/net/test_igmp.py` holds
+rtlsim to the same table. What it showed, and what the model does about it:
+
+- **Snooping prunes.** After a member's IGMPv2 report, a group stream reaches
+  the members only; after the last leave it reaches nobody. The report itself
+  is not forwarded (the pre-#904 handler sends nothing on).
+- **Unregistered groups drop** with `igmp on` (`IPV4_PORT_MC_LM_ACT` = 01 per
+  port), **except 224.0.0.0/24**, which still floods. Modelled as table 2
+  flows: per ingress port `nw_dst=224.0.0.0/4` drop (prio 110), and
+  224.0.0.0/24 to the flood table above it (115). `IPV4_UNKN_MC_FLD_PMSK`
+  (flood action 00) and the router-port action (11) are not modelled.
+- **A trapped IGMP frame keeps its ingress tagging.** An untagged report reaches
+  the CPU with no 802.1Q tag; a VID 1 or priority-tagged one keeps a tag, and
+  the pre-#904 handler (which reads the EtherType right after the CPU tag)
+  ignores it. Every other frame to the CPU gets the tag. Modelled: table 0
+  marks an untagged arrival (metadata bit 10), the trap flow for those pops
+  the tag first (prio 151), and the NIC takes an untagged packet-in as it is,
+  with only the CPU tag and no VLAN check.
+- **L3MC table access.** A key lookup (method 0) finds the entry, at a hash
+  index; index reads with methods 1 and 2 return it; the next-valid walk
+  (method 3, the `l2` command) skips L3MC entries. A lookup is exact-key:
+  (S,G) misses when only (*,G) exists, though a stream from S still forwards
+  by (*,G). On a miss DATA_OUT A/B hold the key. All modelled in
+  `switch_tables` (the method-0 path used to decode the key as a MAC and never
+  found an L3MC entry).
+- Not measured yet: two VLANs (the entry has no VLAN field), (S,G) entries,
+  IGMPv3, and #904's forwarding (build #904 and rerun the oracle).
+
 ## Registers to model (switch_core)
 
 The compiler must know snooping is on and where unknown multicast floods:
