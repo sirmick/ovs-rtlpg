@@ -20,8 +20,8 @@ number the switch returns. We open a real connection to the web server, then
 send a 1-byte segment with URG set and urgent pointer 2 (one past the
 payload). Unpatched, the switch's rcv_nxt jumps by ~65535 and its ACK leaps
 by that much (or httpd chokes on 64 KiB of out-of-bounds data and the switch
-stops answering); patched, the urgent length is capped at the payload and the
-ACK advances by at most the segment length.
+stops answering); patched, the urgent pointer is ignored and the byte is
+delivered inline (RFC 6093), so rcv_nxt advances by just the 1-byte payload.
 
 The switch IP is read from the firmware (switch_ip), so this runs unchanged
 on an upstream-format image or our compact build. No privileges needed.
@@ -102,15 +102,14 @@ def main():
             p.send(eth(SWITCH_MAC, 0x0800, ipv4(6, tcp(ISN + 1, sw_isn + 1, 0x10 | 0x20, urgp=2, payload=b"A"))))
 
             # Unpatched, uip_len underflows and the switch ACKs ~65535 bytes it
-            # never received. Patched, the urgent length is capped at the 1-byte
-            # payload: uip_len goes to 0, so the segment is absorbed with no ACK
-            # (no reply is the safe outcome here, not a hang - the ARP below
-            # confirms the switch is still running).
+            # never received. Patched, the urgent pointer is ignored and the
+            # byte is delivered inline (RFC 6093), so rcv_nxt advances by just
+            # the 1-byte payload.
             r = recv_tcp(p, timeout=3)
             advance = (r[1] - (ISN + 1)) & 0xffffffff if r else 0
             print(f"switch acknowledged rcv_nxt +{advance} for a 1-byte payload"
                   + ("" if r else " (no reply)"))
-            check(advance <= 1, f"urgent length is capped at the segment "
+            check(advance <= 1, f"urgent pointer does not underflow uip_len "
                   f"(rcv_nxt +{advance}, not the 65535 of the unbounded subtraction)")
 
             p.send(eth(b"\xff" * 6, 0x0806, arp))
