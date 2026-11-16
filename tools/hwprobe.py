@@ -98,6 +98,11 @@ class Switch:
 		d0, a, b, c = self.regget(TBL_DATA_0, DATA_OUT_A, DATA_OUT_B, DATA_OUT_C)
 		return bool(d0 & 0x1000), d0 & 0xfff, a, b, c
 
+	def group_members(self, dip):
+		"""Ports in the (*,G) L3MC entry for dip, or None without one."""
+		found, _, a, b, c = self.l3mc_lookup(dip)
+		return bin(((b >> 30) & 3) | ((c & 0xff) << 2)).count("1") if found else None
+
 	def l2_read(self, idx, method):
 		"""Read the L2 table at idx with a given read method (TBL_DATA_0
 		bits 15:14): (d0, a, b, c)."""

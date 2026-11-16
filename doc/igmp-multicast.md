@@ -71,6 +71,44 @@ rtlsim to the same table. What it showed, and what the model does about it:
 - Not measured yet: two VLANs (the entry has no VLAN field), (S,G) entries,
   IGMPv3, and #904's forwarding (build #904 and rerun the oracle).
 
+## The oracle for correct snooping: a Linux bridge (2026-11-16)
+
+Silicon says what the chip does with a register state; it can't say whether
+the firmware's snooping decisions are right. For that the reference is the
+Linux bridge's IGMP snooping (RFC 4541): `tests/net/test_igmp.py IMAGE
+--oracle linux` runs `mc_oracle.run_router` on a bridge in a netns
+(`tests/net/linux_bridge.py`), then on the firmware in rtlsim, on the same
+four veths, and fails every step where the firmware differs. The scenario has
+a sender S, members M and O that behave as IGMPv2 hosts (`mc_oracle.Host`:
+they answer queries), and a multicast router / querier R that sends a general
+query and, after a leave, the two group-specific queries RFC 2236 asks for;
+at the end M vanishes without a leave. The membership interval is shortened
+to 30 s so ageing is seen.
+
+What Linux does (default bridge settings, mcast_snooping 1, not a querier):
+- until it has seen a querier and the query's response time has passed, it
+  floods all multicast (so no host misses a group nobody can refresh);
+- then: unregistered groups and a group's stream also go to the router port;
+  reports go only to the router port; 224.0.0.x floods;
+- a leave prunes the port only after the querier's group-specific queries go
+  unanswered; a general query is answered and the membership kept;
+- a membership nobody refreshes ages out after the membership interval.
+
+RTLPlayground #904 (e963975) against it - its control plane matches (queries
+flooded, reports and re-reports only to the querier port, GSQs flooded). The
+differences:
+1. **The router port gets no multicast data**: neither a group's stream nor
+   unregistered groups (RFC 4541 2.1.2: they must also go to router ports).
+   Matters for routed multicast (a router behind the querier port).
+2. **No ageing**: a member that vanishes keeps its group forever.
+3. **Immediate leave**: the port is pruned on the leave itself, not after the
+   querier's last-member queries (fast leave) - wrong for two hosts behind one
+   port. (Linux floods the leave, to 224.0.0.2; #904 sends it to the router
+   port only, which RFC 4541 prefers - not counted against #904.)
+4. **No flooding before a querier is known** - a Linux policy, not required by
+   RFC 4541.
+Pre-#904 firmware fails the control plane too (forwards no IGMP at all).
+
 ## Registers to model (switch_core)
 
 The compiler must know snooping is on and where unknown multicast floods:
