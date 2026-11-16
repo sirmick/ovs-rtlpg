@@ -67,6 +67,22 @@ switch_tables::l2_entry *switch_tables::l2_find(const u8 mac[6], u16 vid)
 	return nullptr;
 }
 
+// An L3MC key is word A (SIP) and word B bits 27:0 (DIP); the port bits 31:30
+// and the valid bits are not part of it.
+switch_tables::l2_entry *switch_tables::l3mc_find(u32 a, u32 b)
+{
+	for (auto &e : m_l2)
+		if (e.present && is_l3mc(e) && e.a == a && !((e.b ^ b) & 0x0fffffff))
+			return &e;
+	return nullptr;
+}
+
+static u16 l3mc_hash(u32 a, u32 b)
+{
+	u32 h = a * 31 + (b & 0x0fffffff);
+	return u16((h ^ h >> 12 ^ h >> 24) & 0xfff);
+}
+
 int switch_tables::lookup(const u8 mac[6], u16 vid) const
 {
 	const l2_entry *e = l2_find(mac, vid);
@@ -154,6 +170,38 @@ void switch_tables::table_exec(u32 ctrl)
 		version++;
 	bool const clear = (d0 >> 18) & 1;
 
+	if (method == LUTREAD_MAC && is_l3mc({true, 0, 0, m_core.reg(DATA_IN_B), 0})) {
+		// An L3MC key (SIP, DIP), as igmp_packet_handler looks one up and
+		// writes it. On silicon a miss leaves the key in DATA_OUT A/B.
+		u32 const a = m_core.reg(DATA_IN_A), b = m_core.reg(DATA_IN_B);
+		l2_entry *e = l3mc_find(a, b);
+		if (write) {
+			if (clear) {
+				if (e)
+					e->present = false;
+				l2_out(nullptr, 0);
+				return;
+			}
+			if (!e) {
+				e = l2_free();
+				if (!e)
+					return;		// table full
+				e->idx = l3mc_hash(a, b);
+			}
+			e->present = true;
+			e->a = a; e->b = b; e->c = m_core.reg(DATA_IN_C);
+			l2_out(e, e->idx);
+			return;
+		}
+		if (e)
+			l2_out(e, e->idx);
+		else {
+			l2_out(nullptr, 0);
+			m_core.set_reg(DATA_OUT_A, a);
+			m_core.set_reg(DATA_OUT_B, b);
+		}
+		return;
+	}
 	if (method == LUTREAD_MAC) {
 		l2_entry in{true, 0, m_core.reg(DATA_IN_A), m_core.reg(DATA_IN_B), m_core.reg(DATA_IN_C)};
 		u8 mac[6];
@@ -182,16 +230,21 @@ void switch_tables::table_exec(u32 ctrl)
 		return;
 	}
 
-	// next-entry reads: the first present entry at or after idx, wrapping
+	// next-entry reads: the first present entry at or after idx, wrapping.
+	// Method 3 (the firmware's `l2` walk) skips L3MC entries on silicon;
+	// methods 1 and 2 return them.
 	l2_sort();
 	int n = 0;
 	while (n < L2_MAX && m_l2[n].present)
 		n++;
+	auto const skip = [&](const l2_entry &x) { return method == 3 && is_l3mc(x); };
 	l2_entry *e = nullptr;
-	for (int i = 0; i < n; i++)
-		if (m_l2[i].idx >= idx) { e = &m_l2[i]; break; }
-	if (!e && n)
-		e = &m_l2[0];
+	for (int i = 0; i < n && !e; i++)
+		if (m_l2[i].idx >= idx && !skip(m_l2[i]))
+			e = &m_l2[i];
+	for (int i = 0; i < n && !e; i++)
+		if (!skip(m_l2[i]))
+			e = &m_l2[i];
 	if (write) {
 		// a write by index replaces the entry that sits there
 		e = nullptr;

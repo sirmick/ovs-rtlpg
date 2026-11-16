@@ -71,6 +71,7 @@ private:
 	void l2_out(const l2_entry *e, u16 idx);
 	l2_entry *l2_find(const u8 mac[6], u16 vid);
 	const l2_entry *l2_find(const u8 mac[6], u16 vid) const { return const_cast<switch_tables *>(this)->l2_find(mac, vid); }
+	l2_entry *l3mc_find(u32 a, u32 b);
 	l2_entry *l2_free();
 	void l2_sort();
 
