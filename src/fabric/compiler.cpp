@@ -203,6 +203,47 @@ std::vector<flow> compile_flows(const switch_core &core, const switch_tables &ta
 		}
 	}
 
+	// 2: IP multicast to a group with an L2MC entry - (group MAC, VID) and a
+	// member mask (RTLPlayground's non-IPMC_USES_L3MC path, entry_to_l2mc;
+	// LUT_IPMC_HASH clear) - goes to the entry's members in that VLAN only, tagged and
+	// untagged as table 3 does, within the isolation mask; an empty set drops.
+	// Only 01:00:5e (IPv4 multicast): the static 01:80:c2 link-local entries
+	// RTLPlayground installs are not modelled yet.
+	for (auto &e : tables.l2()) {
+		if (!e.present || switch_tables::is_l3mc(e))
+			continue;
+		u8 mac[6];
+		u16 vid;
+		switch_tables::key(e, mac, &vid);
+		if (mac[0] != 0x01 || mac[1] != 0x00 || mac[2] != 0x5e)
+			continue;
+		u32 const vl = tables.vlan(vid);
+		if (!(vl & VLAN_VALID))
+			continue;
+		unsigned const mm = switch_tables::l3mc_mask(e);	// same mask layout
+		for (u64 m : masks) {
+			flow f = make(TABLE_L2, 120);
+			f.vlan_vid = flow::VID_PRESENT | vid;
+			f.meta = m;
+			f.meta_mask = 0x3ff;
+			f.has_dst = true;
+			std::copy(mac, mac + 6, f.dst.begin());
+			std::vector<unsigned> tag, untag;
+			for (unsigned p : ports)
+				if ((mm >> p & 1) && member(vl, p) && (m >> p & 1))
+					(untagged(vl, p) ? untag : tag).push_back(p);
+			if ((mm >> CPU_PORT & 1) && member(vl, CPU_PORT) && (m >> CPU_PORT & 1))
+				tag.push_back(CPU_PORT);
+			for (unsigned p : tag)
+				f.actions.push_back(out(p));
+			if (!untag.empty())
+				f.actions.push_back({of_action::POP_VLAN});
+			for (unsigned p : untag)
+				f.actions.push_back(out(p));
+			fl.push_back(f);
+		}
+	}
+
 	// 2: IP multicast to a snooped group - an L3MC entry (IPMC_USES_L3MC) - goes
 	// only to the entry's member ports, never flooded. The entry has no VLAN, so
 	// per VLAN the members that are also VLAN members get it, tagged and
