@@ -98,6 +98,24 @@ class Switch:
 		d0, a, b, c = self.regget(TBL_DATA_0, DATA_OUT_A, DATA_OUT_B, DATA_OUT_C)
 		return bool(d0 & 0x1000), d0 & 0xfff, a, b, c
 
+	def l3mc_write(self, dip, sip="0.0.0.0", mask=0, index=0, asic=0):
+		"""Write an L3MC entry by hash (method 0), as entry_to_l3mc does:
+		(found, idx, a, b, c) from the readback lookup."""
+		s = [int(x) for x in sip.split(".")]
+		d = [int(x) for x in dip.split(".")]
+		self.regset(0x5cb8, (s[0] << 24) | (s[1] << 16) | (s[2] << 8) | s[3])
+		self.regset(0x5cbc, ((((mask & 3) << 6) | (d[0] & 0xf) | 0x10) << 24) | (d[1] << 16) | (d[2] << 8) | d[3])
+		self.regset(0x5cc0, ((asic & 1) << 16) | ((index & 0xff) << 8) | ((mask >> 2) & 0xff))
+		self.regset(TBL_DATA_0, self.regget(TBL_DATA_0) & ~0x7c000)	# method 0, clear off
+		self.regset(TBL_CTRL, 0x0403)					# type L2, WRITE|EXECUTE, index 0 (hash)
+		return self.l3mc_lookup(dip, sip)
+
+	def l3mc_delete(self, idx):
+		"""Delete the entry at `idx` (method-0 write with the clear bit and the
+		index in TBL_CTRL), as the firmware's IGMP-leave does."""
+		self.regset(TBL_DATA_0, (self.regget(TBL_DATA_0) & ~0x7c000) | 0x40000)	# clear bit
+		self.regset(TBL_CTRL, ((idx & 0xfff) << 16) | 0x0403)
+
 	def group_members(self, dip):
 		"""Ports in the (*,G) L3MC entry for dip, or None without one."""
 		found, _, a, b, c = self.l3mc_lookup(dip)
