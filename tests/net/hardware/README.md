@@ -54,3 +54,11 @@ interface with `RTLHW_IFACE` (default `eth0`) and pass a free `PEER_IP`.
   Leaves the switch with igmp off.
 
       sudo python3 mc_oracle.py 192.168.10.247 enp4s0 enp3s0 enp5s0
+- **`mc_forward.py SWITCH_IP SENDER A B C`** — the forwarding behaviours the
+  firmware never programs itself, by poking the ASIC directly: an (S,G) entry
+  never forwards (IPMC is (\*,G)-only), the member mask is VLAN-scoped, and the
+  four lookup-miss actions (flood to `IPV4_UNKN_MC_FLD_PMSK`, drop, trap, router
+  port). Four NICs on one switch; `PHYS` gives their physical ports (default
+  `5,4,6,7` = elder enp4/3/5/6 on switch-bench). Result table `SILICON`.
+
+      sudo python3 mc_forward.py 192.168.10.247 enp4s0 enp3s0 enp5s0 enp6s0
