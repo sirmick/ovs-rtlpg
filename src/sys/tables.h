@@ -42,7 +42,10 @@ public:
 
 	// An L3 multicast entry (IPMC_USES_L3MC): same TBL type 4, but valid on
 	// word-B bit 28 (not 29), keyed on (SIP, DIP) with a member mask. See
-	// doc/igmp-multicast.md for the layout.
+	// doc/igmp-multicast.md for the layout. The stored hash index uses a
+	// placeholder hash (l3mc_hash in tables.cpp), not the real RTL8372 one, so
+	// an entry's index differs from silicon; lookups resolve by key and the
+	// firmware never depends on a specific index, so this is immaterial.
 	static bool is_l3mc(const l2_entry &e) { return ((e.b >> 28) & 1) && !((e.b >> 29) & 1); }
 	static unsigned l3mc_mask(const l2_entry &e) { return ((e.b >> 30) & 0x3) | ((e.c & 0xff) << 2); }
 	static void l3mc_sip(const l2_entry &e, u8 ip[4])

@@ -177,8 +177,15 @@ void switch_tables::table_exec(u32 ctrl)
 		l2_entry *e = l3mc_find(a, b);
 		if (write) {
 			if (clear) {
-				if (e)
-					e->present = false;
+				// Silicon deletes the entry at the TBL_CTRL index field, not
+				// by key: a hash write + clear with index 0 leaves the entry
+				// (measured on switch-bench). The firmware's IGMP-leave passes
+				// the looked-up index here.
+				for (auto &x : m_l2)
+					if (x.present && is_l3mc(x) && x.idx == idx) {
+						x.present = false;
+						break;
+					}
 				l2_out(nullptr, 0);
 				return;
 			}
