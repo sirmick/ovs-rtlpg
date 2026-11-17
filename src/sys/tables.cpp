@@ -143,7 +143,9 @@ void switch_tables::l2_out(const l2_entry *e, u16 idx)
 	m_core.set_reg(DATA_OUT_A, e ? e->a : 0);
 	m_core.set_reg(DATA_OUT_B, e ? e->b : 0);
 	m_core.set_reg(DATA_OUT_C, e ? e->c : 0);
-	m_core.set_reg(TBL_DATA_0, (m_core.reg(TBL_DATA_0) & ~0x1fffu) | (e ? 0x1000 : 0) | (idx & 0xfff));
+	// Bit 12 hit, bit 13 miss: silicon sets 13 on a lookup miss and clears
+	// it on a hit or a write (measured on the 8x, RTL8373).
+	m_core.set_reg(TBL_DATA_0, (m_core.reg(TBL_DATA_0) & ~0x3fffu) | (e ? 0x1000 : 0x2000) | (idx & 0xfff));
 }
 
 void switch_tables::table_exec(u32 ctrl)
@@ -217,9 +219,10 @@ void switch_tables::table_exec(u32 ctrl)
 		l2_entry *e = l2_find(mac, vid);
 		if (write) {
 			if (clear) {
+				// On silicon a clear leaves TBL_DATA_0 and DATA_OUT as
+				// they were (measured on the 8x).
 				if (e)
 					e->present = false;
-				l2_out(nullptr, 0);
 				return;
 			}
 			if (!e) {
@@ -234,6 +237,11 @@ void switch_tables::table_exec(u32 ctrl)
 			return;
 		}
 		l2_out(e, e ? e->idx : 0);
+		if (!e) {
+			// a miss leaves the key in DATA_OUT A/B, C zero (as for L3MC)
+			m_core.set_reg(DATA_OUT_A, in.a);
+			m_core.set_reg(DATA_OUT_B, in.b);
+		}
 		return;
 	}
 
