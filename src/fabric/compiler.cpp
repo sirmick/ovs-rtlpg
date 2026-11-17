@@ -248,34 +248,34 @@ std::vector<flow> compile_flows(const switch_core &core, const switch_tables &ta
 	// only to the entry's member ports, never flooded. The entry has no VLAN, so
 	// per VLAN the members that are also VLAN members get it, tagged and
 	// untagged as table 3 does, within the isolation mask; an empty set drops.
-	// Below the IGMP trap (150), so IGMP itself still goes to the CPU. (*,G)
-	// when the entry's source is 0.0.0.0, else (S,G), one above (assumed, not
-	// measured). On silicon a (*,G) entry takes a stream from any source.
+	// Below the IGMP trap (150), so IGMP itself still goes to the CPU.
+	// Forwarding is (*,G)-only: the chip keys the lookup on (SIP=0, DIP), so a
+	// source-specific entry (SIP!=0) sits in the table but never forwards -
+	// measured on switch-bench: with both a (*,G) and an (S,G) entry for a
+	// group, a stream matching the (S,G) source still goes to the (*,G)
+	// members. The firmware only ever programs SIP=0, so this matches it.
 	for (auto &e : tables.l2()) {
 		if (!e.present || !switch_tables::is_l3mc(e))
 			continue;
 		u8 dip[4], sip[4];
 		switch_tables::l3mc_dip(e, dip);
 		switch_tables::l3mc_sip(e, sip);
-		unsigned const mm = switch_tables::l3mc_mask(e);
 		u32 const d = (u32(dip[0]) << 24) | (u32(dip[1]) << 16) | (u32(dip[2]) << 8) | dip[3];
-		u32 const s = (u32(sip[0]) << 24) | (u32(sip[1]) << 16) | (u32(sip[2]) << 8) | sip[3];
+		if (sip[0] || sip[1] || sip[2] || sip[3])
+			continue;		// (S,G): in the table but never forwards on this chip
+		unsigned const mm = switch_tables::l3mc_mask(e);
 		for (unsigned v = 1; v < 4095; v++) {
 			u32 const vl = tables.vlan(v);
 			if (!(vl & VLAN_VALID))
 				continue;
 			for (u64 m : masks) {
-				flow f = make(TABLE_L2, s ? 121 : 120);
+				flow f = make(TABLE_L2, 120);
 				f.vlan_vid = flow::VID_PRESENT | v;
 				f.meta = m;
 				f.meta_mask = 0x3ff;
 				f.eth_type = ETH_P_IP;
 				f.has_ipv4_dst = true;
 				f.ipv4_dst = d;
-				if (s) {
-					f.has_ipv4_src = true;
-					f.ipv4_src = s;
-				}
 				std::vector<unsigned> tag, untag;
 				for (unsigned p : ports)
 					if ((mm >> p & 1) && member(vl, p) && (m >> p & 1))

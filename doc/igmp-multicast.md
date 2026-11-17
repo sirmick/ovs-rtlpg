@@ -68,8 +68,16 @@ rtlsim to the same table. What it showed, and what the model does about it:
   by (*,G). On a miss DATA_OUT A/B hold the key. All modelled in
   `switch_tables` (the method-0 path used to decode the key as a MAC and never
   found an L3MC entry).
-- Not measured yet: two VLANs (the entry has no VLAN field), (S,G) entries,
-  IGMPv3, and #904's forwarding (build #904 and rerun the oracle).
+- **Forwarding is (\*,G)-only.** With both a (\*,G) and an (S,G) entry for a
+  group in the table, a stream whose source matches the (S,G) entry still
+  forwards to the (\*,G) members, not the (S,G) ones (switch-bench, 2026-11-17,
+  tools/mcprobe-style poke of both entries + stream on three ports). So the
+  forwarding lookup keys on (SIP=0, DIP); an (S,G) entry sits in the table but
+  never forwards. The firmware only programs SIP=0, so this matches it. The
+  compiler skips SIP!=0 entries for the forwarding flow (was speculatively
+  giving them priority). Confirmed identical on rtlsim (veths) after the fix.
+- Not measured yet: two VLANs (the entry has no VLAN field), IGMPv3, and
+  #904's forwarding (build #904 and rerun the oracle).
 
 ## The oracle for correct snooping: a Linux bridge (2026-11-16)
 
