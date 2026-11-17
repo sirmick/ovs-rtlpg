@@ -76,8 +76,14 @@ rtlsim to the same table. What it showed, and what the model does about it:
   never forwards. The firmware only programs SIP=0, so this matches it. The
   compiler skips SIP!=0 entries for the forwarding flow (was speculatively
   giving them priority). Confirmed identical on rtlsim (veths) after the fix.
-- Not measured yet: two VLANs (the entry has no VLAN field), IGMPv3, and
-  #904's forwarding (build #904 and rerun the oracle).
+- **IPMC forwarding is VLAN-scoped** (open problem 3, resolved). The L3MC entry
+  has no VLAN field, but forwarding intersects the member mask with the ingress
+  VLAN's membership: with the sender and one member in VLAN 2 and another member
+  in VLAN 1, and both members in the mask, a stream reaches only the VLAN-2
+  member - the VLAN-1 member gets nothing, exactly like the flood baseline
+  (switch-bench, 2026-11-17). The compiler already emits the forwarding flow
+  per VLAN with `member(vl, p)`, so the sim matches; confirmed on rtlsim (veths).
+- Not measured yet: IGMPv3, and #904's forwarding (build #904 and rerun the oracle).
 
 ## The oracle for correct snooping: a Linux bridge (2026-11-16)
 
