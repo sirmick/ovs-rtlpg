@@ -52,8 +52,18 @@ rtlsim to the same table. What it showed, and what the model does about it:
 - **Unregistered groups drop** with `igmp on` (`IPV4_PORT_MC_LM_ACT` = 01 per
   port), **except 224.0.0.0/24**, which still floods. Modelled as table 2
   flows: per ingress port `nw_dst=224.0.0.0/4` drop (prio 110), and
-  224.0.0.0/24 to the flood table above it (115). `IPV4_UNKN_MC_FLD_PMSK`
-  (flood action 00) and the router-port action (11) are not modelled.
+  224.0.0.0/24 to the flood table above it (115).
+- **Lookup-miss actions, all four measured** (switch-bench, 2026-11-17, poking
+  `IPV4_PORT_MC_LM_ACT` per ingress port and streaming an unregistered group):
+  00 **flood** goes to **exactly `IPV4_UNKN_MC_FLD_PMSK`** (set it to one port
+  and only that port floods; to a pair and only those); 01 **drop** → nothing;
+  10 **trap** → the CPU, nothing on the front ports; 11 **router** → only the
+  `IGMP_ROUTER_PORT` mask. The firmware uses 01 (drop) under `igmp on` and
+  bypasses this machinery entirely under `igmp off` (LUT_IPMC_HASH clear → plain
+  L2 flood), so flood-to-mask (00) and router (11) are firmware-unreachable and
+  left unmodelled; the sim models the firmware-used drop (and trap via
+  CONTROLLER). An `UNKN_MC_FLD_PMSK` restricted below all-ports never happens in
+  firmware, so the sim's flood-to-all for action 00 is immaterial.
 - **A trapped IGMP frame keeps its ingress tagging.** An untagged report reaches
   the CPU with no 802.1Q tag; a VID 1 or priority-tagged one keeps a tag, and
   the pre-#904 handler (which reads the EtherType right after the CPU tag)
