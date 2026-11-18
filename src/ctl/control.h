@@ -10,7 +10,10 @@
 // <ms>.<µs> ("2213.408"): a power cut doesn't restart it. The CPU runs in
 // slices that end on multiples of 256 cycles (8.192 µs) of firmware time;
 // what the model does between instructions (a UART byte in, INT0 released,
-// a chip reset) happens at a slice's end, or where a run stops.
+// a chip reset, the halt check) happens only there, never where a run
+// stopped (a breakpoint, a UART match, the end of run <ms>), and idling
+// fast-forwards in whole prescaler periods: however a test cuts up a run,
+// an input goes in at the same firmware time, and the firmware does the same.
 //
 // One request per line; one reply line, "ok ..." or "err <why>", or for
 // bulk "ok <n>" and n more lines. Times in requests are ms, with up to three
@@ -40,7 +43,9 @@
 //                                     \\ \r \n \t \xHH; "hex:<hex>" for raw bytes
 //   uart read                         ok <n>, then a line per line of output since
 //       the last read: "<t> <text>", t when its first byte went out; the
-//       last, if unfinished, "<t>+ <text>" (the rest comes in the next read).
+//       last, if unfinished, "<t>+ <text>" (the rest comes in the next read);
+//       one that a reset or power cut ended is "<t>+" too, and what follows
+//       starts a new line.
 //       CRs removed; \ and bytes outside 0x20-0x7e but tab as \\ and \xHH
 //   nic inject <port> <hex>           ok taken | ok dropped (a frame on physical port)
 //   nic capture on|off                ok
@@ -48,8 +53,10 @@
 //       out of a port with a link (the --link ones, and link up)
 //   link <port> up [<speed>] | down   ok (physical port 0-9; speed as --link, 1g)
 //   checks                            ok <n>, then "<t> <kind> <text>": everything
-//       the model found since the start (kinds: unmodelled, bank-ret, bank;
-//       flash-busy and stack are to come)
+//       the model found since the start, t when it found it (kinds:
+//       unmodelled, bank-ret, bank; flash-busy and stack are to come). The
+//       bank checker (--check-banks) sums up its findings when asked: its
+//       lines carry the time of the checks request, not of the read.
 //   cov reset | cov dump <file>       ok (coverage: not yet; dump says err)
 //   reset                             ok <t>: a chip reset, as the firmware's
 //   powercut                          ok <t>: off and on: a new chip around the same

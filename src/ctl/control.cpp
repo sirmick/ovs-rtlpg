@@ -211,6 +211,9 @@ private:
 void controller::attach()
 {
 	rtl837x_system &s = *m_sys;
+	s.slice = SLICE;
+	s.slice_phase = m_base % SLICE;
+	s.cpu().exact_idle = true;
 	s.core().log_unmodelled = true;
 	s.flash().now = [this]() { return now(); };
 	s.cpu().uart_tx = [this](u8 c) {
@@ -560,10 +563,12 @@ bool controller::request(const std::string &line, std::string &reply)
 		} else if (c == "cov" && w.size() == 3 && w[1] == "dump") {
 			throw ctl_error("cov: no coverage in this build yet");
 		} else if (c == "reset" && w.size() == 1) {
+			m_uart_open = false;
 			m_sys->resets++;
 			m_sys->reset(true);
 			reply = "ok " + fmt_time(now());
 		} else if (c == "powercut" && w.size() == 1) {
+			m_uart_open = false;
 			powercut();
 			reply = "ok " + fmt_time(now());
 		} else if (c == "quit" && w.size() == 1) {

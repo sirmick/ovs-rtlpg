@@ -12,10 +12,16 @@
   and moves on as firmware time does; run until <sym> > value stops there.
 - A command typed on the UART reaches cmd_parser (run until pc, a banked
   symbol) and answers.
-- A power cut and a chip reset both boot it again, with time running on.
+- A power cut and a chip reset both boot it again, with time running on; a
+  line the cut interrupted stays unfinished, and the boot starts afresh.
 
 Then the same session again: both stamped transcripts are identical, byte for
 byte. --transcript writes the first.
+
+And inputs go in at fixed firmware times, however the test advances: a
+command queued after the boot, then 5 ms run in one go, in uneven pieces,
+up to the prompt and on, and up to cmd_parser and on, gives the same stamped
+UART output each way, and, run on to the same cycle, the same timers.
 
 The prompt comes before cmd_editor_init(), which drops whatever arrived
 before it: input waits 10 ms after the boot's prompt.
@@ -55,7 +61,7 @@ def session(a):
         lines = sim.uart_read()
         for u, text, done in lines:
             log(f"uart {fmt_us(u)}{'' if done else '+'} {text}")
-        facts.setdefault(what + "_lines", [text for _, text, _ in lines])
+        facts.setdefault(what + "_lines", [(text, done) for _, text, done in lines])
         sim.run(10)
 
     with Sim(a.image, board=a.board, map=a.map, rtlsim=a.rtlsim, args=["--quiet"]) as sim:
@@ -85,6 +91,8 @@ def session(a):
         uart(sim)
         log(f"sp {sim.peek('s:0x81', 1).hex()} psbank {sim.peek('s:0x96', 1).hex()} xdata0 {sim.peek('x:0', 16).hex()}")
 
+        sim.uart_write("ver")		# echoed, no Enter: the cut ends the line
+        sim.run(5)
         log(f"powercut {fmt_us(sim.powercut())}")
         boot(sim, "powercut")
         log(f"reset {fmt_us(sim.reset())}")
@@ -93,6 +101,42 @@ def session(a):
         for t, kind, text in sim.checks():
             log(f"check {fmt_us(t)} {kind} {text}")
     return out, facts
+
+
+STYLES = {
+    "run 5": [("run", "5")],
+    "run 0.517 + 1.111 + 3.372": [("run", "0.517"), ("run", "1.111"), ("run", "3.372")],
+    "until uart, run on": [("uart", r"\n> $"), ("to", "5")],
+    "until pc=cmd_parser, until uart, run on": [("pc", "cmd_parser"), ("uart", r"\n> $"), ("to", "5")],
+}
+
+
+def styles(a):
+    """The same input, advanced in each STYLE: the UART output, stamped."""
+    out = {}
+    for name, steps in STYLES.items():
+        with Sim(a.image, board=a.board, map=a.map, rtlsim=a.rtlsim, args=["--quiet"]) as sim:
+            sim.run_until_uart(PROMPT_RE, max_ms=30000)
+            sim.run(10)
+            sim.uart_read()
+            t0 = sim.time()[1]
+            sim.uart_write("version\r")
+            for kind, arg in steps:
+                if kind == "run":
+                    sim.run(arg)
+                elif kind == "uart":
+                    sim.run_until_uart(arg, max_ms=5)
+                elif kind == "pc":
+                    sim.run_until_pc(arg, max_ms=5)
+                else:
+                    sim.run(fmt_us(t0 + int(arg) * 1000 - sim.time()[1]))
+            # end on the same cycle: a value watch stops at a slice's end, a
+            # multiple of 256 cycles (a time in ms.µs doesn't pin a cycle)
+            n = int.from_bytes(sim.peek_sym("ticks"), "little") + 2
+            sim.run_until("ticks", ">", n, max_ms=100)
+            state = f"cycles {sim.time()[0]} timers {sim.peek('s:0x88', 6).hex()} t2 {sim.peek('s:0xcc', 2).hex()} ticks {sim.peek_sym('ticks').hex()}"
+            out[name] = (sim.time()[1] - t0, [f"{fmt_us(t)}{'' if d else '+'} {x}" for t, x, d in sim.uart_read()] + [state])
+    return out
 
 
 def plain_boot(a):
@@ -120,7 +164,7 @@ def main():
             o.write("\n".join(first) + "\n")
     check(f["boot"] is not None, f"boots to the prompt under --control, paused until told (at {fmt_us(f['boot'] or 0)} ms)")
     ok, plain = plain_boot(a)
-    check(ok and f["boot_lines"] == plain, f"the boot prints what it prints without --control ({len(plain)} lines)")
+    check(ok and [t for t, _ in f["boot_lines"]] == plain, f"the boot prints what it prints without --control ({len(plain)} lines)")
     t0, t1 = f["ticks"]
     check(t1 > t0, f"peek of a map symbol: ticks {t0} -> {t1} over 100 ms of firmware time")
     hit, want, t2 = f["until"]
@@ -129,10 +173,21 @@ def main():
           "a typed command reaches cmd_parser (run until pc, banked) and answers")
     check(f["powercut"] is not None and f["reset"] is not None and f["powercut"] > f["boot"],
           "a power cut and a chip reset boot it again, firmware time running on")
+    check(f["powercut_lines"][0] == ("ver", False) and f["powercut_lines"][1:3] == f["boot_lines"][:2],
+          "a line the power cut interrupted stays unfinished; the boot after it starts a line of its own")
     second, _ = session(a)
     diff = next((i for i, (x, y) in enumerate(zip(first, second)) if x != y), None)
     check(first == second, f"two runs give byte-identical stamped transcripts ({len(first)} lines)"
           + ("" if diff is None else f": line {diff}: {first[diff]!r} vs {second[diff]!r}"))
+    st = styles(a)
+    ref = next(iter(st.values()))
+    bad = [n for n, v in st.items() if v != ref]
+    check(not bad and any("Software version" in l for l in ref[1]),
+          f"a queued command, advanced {len(st)} ways, gives the same stamped output and state ({len(ref[1]) - 1} lines over "
+          f"{fmt_us(ref[0])} ms)" + (f": differs: {bad}" if bad else ""))
+    if bad:
+        for n, v in st.items():
+            print(f"      {n}: {v[0]} {v[1][:3]}")
     print("test_control: " + ("ALL PASS" if not failures else f"{failures} FAILED"))
     return 1 if failures else 0
 
