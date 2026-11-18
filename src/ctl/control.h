@@ -26,7 +26,8 @@
 //       b<n>:0x5678 for a banked address); not on the first instruction
 //   run until uart=/<re>/ [max <ms>]  as above: the output since the last
 //       uart read matches <re>, checked after each byte the firmware sends.
-//       POSIX extended regex, CRs removed; \n \r \t \xHH and \/ as escapes
+//       POSIX extended regex, CRs and NULs removed; \n \r \t \xHH and \/ as
+//       escapes
 //   run until <loc> <op> <value> [max <ms>]
 //       op == != < > or & (any bit set); the value at <loc> (1, 2 or 4
 //       bytes, little-endian: the symbol's size if it is one of those, else

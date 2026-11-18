@@ -35,7 +35,8 @@ in a burst (stat's port table) costs that per character, plus the firmware's
 TI handshake; and while a command prints, a paste arriving at the line rate
 overruns the firmware's serial ring (sbuf, 16 bytes): of 40 bytes, only the
 last 40 mod 16 are echoed once the editor runs again. With interrupts off,
-the UART itself drops what arrives while RI is set.
+the UART itself drops what arrives while RI is set. A NUL the firmware sends
+is in uart read, not in what run until uart matches.
 
 The prompt comes before cmd_editor_init(), which drops whatever arrived
 before it: input waits 10 ms after the boot's prompt.
@@ -190,10 +191,17 @@ def uart_timing(a):
         sim.run(1)
         sim.poke("s:0xa8", ie)
         overrun = [c[2] for c in sim.checks() if c[1] == "uart-lost"][len(lost):]
+        # a NUL sent (SBUF written through the SFR space): uart read has it,
+        # run until uart's regex doesn't, so glibc and musl builds match alike
+        sim.run(5)
+        sim.uart_read()
+        for b in (b"A", b"\x00", b"B"):
+            sim.poke("s:0x99", b)
+        nul = (sim.run_until_uart("AB$", max_ms=1), [x for _, x, _ in sim.uart_read()])
     rows = [(t, x) for t, x, done in lines if done and x[:1].isdigit() and "\t" in x]
     per = [(rows[i + 1][0] - rows[i][0]) / (len(rows[i][1]) + 2) for i in range(len(rows) - 1)]	# + CR LF
     keep = len(paste) % ring
-    return per, lines[-1][1], "> " + (paste[-keep:] if keep else ""), ring, lost, overrun
+    return per, lines[-1][1], "> " + (paste[-keep:] if keep else ""), ring, lost, overrun, nul
 
 
 def plain_boot(a):
@@ -264,7 +272,7 @@ def main():
     if bad:
         for n, v in st.items():
             print(f"      {n}: {v[0]} {v[1][:3]}")
-    per, tail, want, ring, lost, overrun = uart_timing(a)
+    per, tail, want, ring, lost, overrun, nul = uart_timing(a)
     check(per and all(86 < p < 92 for p in per),
           f"console output costs a character time a character: {', '.join(f'{p:.2f}' for p in per)} µs (87.04 + handshake)")
     check(tail == want and not lost,
@@ -272,6 +280,8 @@ def main():
           f"{len(lost)} lost at the UART itself")
     check(len(overrun) == 2 and "0x79" in overrun[0] and "0x7a" in overrun[1] and "RI still set" in overrun[0],
           f"with interrupts off, bytes after the first are lost at the UART (RI still set): {overrun}")
+    check(nul[0] is not None and nul[1] == ["A\x00B"],
+          f"a NUL sent is in uart read ({nul[1]}) and not in what run until uart matches (AB$ hit)")
     print("test_control: " + ("ALL PASS" if not failures else f"{failures} FAILED"))
     return 1 if failures else 0
 
