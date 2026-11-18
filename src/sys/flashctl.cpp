@@ -69,6 +69,42 @@ void flash_controller::sync()
 	m_synced_ops = ops();
 }
 
+// An erase or program starting: busy for `cycles` (with timing), and what
+// it changes, as it was.
+void flash_controller::begin_op(char kind, u32 addr, u32 len, u64 cycles)
+{
+	if (!timing)
+		return;
+	u64 const t0 = now();
+	m_busy_until = t0 + cycles;
+	m_op.kind = kind;
+	m_op.addr = addr & m_dev.addr_mask;
+	m_op.len = std::min<u32>(len, m_dev.size - m_op.addr);
+	m_op.start = t0;
+	m_op.end = m_busy_until;
+	m_op.before.clear();
+	if (keep_before)
+		m_op.before.assign(m_dev.mem + m_op.addr, m_dev.mem + m_op.addr + m_op.len);
+	if (on_busy)
+		on_busy();
+}
+
+void flash_controller::power_on(u64 cut)
+{
+	std::fill(std::begin(m_sfr), std::end(m_sfr), 0);
+	m_wel = false;
+	if (timing && cut < m_busy_until && m_op.end > m_op.start && m_op.before.size() == m_op.len) {
+		// done up to the share of its time that had passed
+		u32 const done = u32((cut - m_op.start) * m_op.len / (m_op.end - m_op.start));
+		std::copy(m_op.before.begin() + done, m_op.before.end(), m_dev.mem + m_op.addr + done);
+		if (op_log)
+			fprintf(op_log, "cut %c %06x: %u of %u bytes done\n", m_op.kind, m_op.addr, done, m_op.len);
+		if (m_mapped)
+			msync(m_dev.mem, m_dev.size, MS_SYNC);
+	}
+	m_busy_until = m_exec_until = 0;
+}
+
 void flash_controller::set_capacity()
 {
 	m_cap = 0;
@@ -118,7 +154,6 @@ void flash_controller::execute()
 		fprintf(stderr, "FLASH %s cmd=%02x tconf=%02x addr=%06x\n", write ? "W" : "R", cmd, tconf, addr);
 	if (timing)
 		m_exec_until = now() + t.transfer;
-	auto busy_for = [this](u64 c) { if (timing) m_busy_until = now() + c; };
 
 	if (write) {
 		switch (cmd) {
@@ -128,7 +163,7 @@ void flash_controller::execute()
 		case 0x02:						// page program
 			if (m_wel) {
 				unsigned const n = ops();
-				busy_for(t.program);
+				begin_op('P', addr, len, t.program);
 				fd_write(&m_dev, addr, data, len);
 				if (op_log && ops() != n)
 					fprintf(op_log, "P %06x %u\n", addr, len);
@@ -138,7 +173,7 @@ void flash_controller::execute()
 		case 0x20:						// sector erase
 			if (m_wel) {
 				unsigned const n = ops();
-				busy_for(t.sector_erase);
+				begin_op('E', addr & ~(FD_SECTOR_SIZE - 1), FD_SECTOR_SIZE, t.sector_erase);
 				fd_erase_sector(&m_dev, addr);
 				if (op_log && ops() != n)
 					fprintf(op_log, "E %06x\n", addr);
@@ -147,7 +182,7 @@ void flash_controller::execute()
 			break;
 		case 0xd8:						// 64K block erase
 			if (m_wel)
-				busy_for(t.block_erase);
+				begin_op('B', addr & ~0xffffu, 0x10000, t.block_erase);
 			if (m_wel)
 				for (u32 a = addr & ~0xffffu; a < (addr & ~0xffffu) + 0x10000; a += FD_SECTOR_SIZE) {
 					unsigned const n = ops();

@@ -436,7 +436,7 @@ void controller::powercut()
 	auto bc = std::move(m_sys->bankcheck);
 	auto flash = m_sys->take_flash();
 	m_sys.reset();
-	flash->power_on();
+	flash->power_on(t);
 	m_sys = m_make(std::move(flash));
 	if (!m_sys)
 		throw std::runtime_error("cannot rebuild the system");

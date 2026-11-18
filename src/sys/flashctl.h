@@ -64,10 +64,26 @@ public:
 	void power_cut_after(long n) { fd_fail_after(&m_dev, int(n)); }
 	bool power_cut() const { return m_dev.powercut; }
 	unsigned ops() const { return m_dev.erases + m_dev.writes; }
-	// Power off and on again: the controller's registers clear, the chip
-	// forgets its write enable, and an erase or program in flight (done at
-	// once, BUSY only for its time) is over.
-	void power_on() { std::fill(std::begin(m_sfr), std::end(m_sfr), 0); m_wel = false; m_busy_until = m_exec_until = 0; }
+	// The chip is busy with an erase or a program (with timing): its array
+	// can't be read. What it is doing, for reports.
+	bool busy() const { return timing && now && now() < m_busy_until; }
+	struct operation {
+		char kind = 0;		// 'E' sector erase, 'B' block erase, 'P' page program
+		u32 addr = 0, len = 0;
+		u64 start = 0, end = 0;
+		std::vector<u8> before;	// the bytes it changes, as they were (keep_before)
+	};
+	const operation &last_op() const { return m_op; }
+	bool keep_before = false;	// keep them, for a partial power cut
+	std::function<void()> on_busy;	// an erase or program has started (with timing)
+
+	// Power off at firmware time `cut` and on again: the controller's
+	// registers clear and the chip forgets its write enable. An operation in
+	// flight is done only in part: the model does it at once, so with
+	// keep_before the share of it its time hadn't reached is put back as it
+	// was (an erase erased its first part, a program wrote its first bytes);
+	// without, it counts as done.
+	void power_on(u64 cut);
 	// A flash file: write what changed since the last call back to it (msync),
 	// so a crash or a VM killed without a shutdown can't lose it.
 	void sync();
@@ -82,6 +98,8 @@ private:
 	bool m_wel = false;
 	bool m_mapped = false;
 	u64 m_busy_until = 0, m_exec_until = 0;
+	operation m_op;
+	void begin_op(char kind, u32 addr, u32 len, u64 cycles);
 	unsigned m_synced_ops = 0;
 	u8 m_status = 0;
 };
