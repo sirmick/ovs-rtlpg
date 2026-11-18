@@ -127,7 +127,8 @@ bytes) answers on the cage's I2C bus. `tools/mksfp.py` writes one
 | `--nic PATH --nic-port N` | wire physical port N to the CPU over a socket |
 | `--ofp PATH` | act as the OpenFlow controller of an OVS bridge on PATH |
 | `--sfp SLOT=FILE` | a module in an SFP cage |
-| `--map FILE` / `--check-banks MAP` | symbols; report constants read through the wrong code bank |
+| `--control SOCKET` | a test drives the clock over a socket (below) |
+| `--map FILE` / `--check-banks MAP` | symbols, for `--control`; report constants read through the wrong code bank |
 | `--flash-timing` | make flash erases/programs take their real time |
 | `--trace`, `--trace-sfr`, `--trace-reg`, `--trace-flash`, `--trace-nic`, `--trace-i2c`, `--trace-of`, `--trace-reset` | trace output on stderr |
 | `--print-flows` | print the compiled flow set at exit |
@@ -147,11 +148,40 @@ read as data, or a module's constant read with another bank mapped), using the
 SDCC `.rst` listings next to the map. `--trace-reset` logs each chip reset with
 its PC and whether `setup_clock()` had run since the last one.
 
+## Under test control
+
+    build/rtlsim --control /tmp/sim.sock --image fw.bin --board B.json --map rtlplayground.map
+
+With `--control`, rtlsim listens on a UNIX socket and starts paused: the
+firmware runs only when a request says so, and every input (UART bytes, a
+frame, a link change) goes in at the firmware time it is given at. Nothing
+reads the wall clock, so the same requests give the same replies, byte for
+byte. Firmware time is the cycle count (31.25 M a second), written ms.µs.
+The UART belongs to the socket, not stdin/stdout. The protocol (one line per
+request: `run`, `run until pc=|uart=|<sym> <op> <value>`, `peek`, `poke`,
+`sym`, `uart write|read`, `nic`, `link`, `checks`, `reset`, `powercut`,
+`quit`) is in `src/ctl/control.h`.
+
+`tests/rtlsim_ctl.py` is the Python client; its docstring has the API:
+
+    from rtlsim_ctl import Sim
+    with Sim(image, board=board, map=map_file) as sim:
+        sim.run_until_uart(r"\n> $")
+        sim.run(10)            # the prompt comes before cmd_editor_init(), which drops earlier input
+        sim.uart_write("version\r")
+        sim.run_until_pc("cmd_parser")
+        ticks = sim.read_struct("ticks", [("v", "I")])["v"]
+
+`tests/fw/test_control.py` (in `make test`; `make test-control CTL_IMAGE=..
+CTL_BOARD=..` for another image) boots under control, checks the boot prints
+what it prints without it, and runs its session twice for identical stamped
+transcripts.
+
 ## Tests
 
 | Target | Covers | Needs |
 |---|---|---|
-| `make test` | ISA vs host, bank mapping, firmware boot log vs golden, the NIC, the flow compiler goldens, the flash model, a firmware install | SDCC |
+| `make test` | ISA vs host, bank mapping, firmware boot log vs golden, the NIC, the flow compiler goldens, the flash model, a firmware install, the control socket | SDCC |
 | `make test-net` | Linux in a netns against the firmware over a tap and over OVS; three-host switching; two cabled switches | sudo |
 | `make test-vm` | the VM boots, switches, and keeps its flash | — |
 | `make test-flash` | the PoE board's RTL8238B; standard→compact migrations on 2 MiB | an image set |
