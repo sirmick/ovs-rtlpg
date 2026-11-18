@@ -63,7 +63,9 @@
 //       come). The
 //       bank checker (--check-banks) sums up its findings when asked: its
 //       lines carry the time of the checks request, not of the read.
-//   cov reset | cov dump <file>       ok (coverage: not yet; dump says err)
+//   cov reset | cov dump <file>       ok: which instructions ran since the start
+//       or the last cov reset, over power cuts and resets, written to <file>
+//       for tools/cov_report.py (format and regions: sys/coverage.h)
 //   reset                             ok <t>: a chip reset, as the firmware's
 //   powercut                          ok <t>: off and on: a new chip around the same
 //                                     flash; links stay as they are

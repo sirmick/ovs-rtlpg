@@ -197,6 +197,7 @@ private:
 	symbol_map m_map;
 	u64 m_base = 0;				// firmware time at the last power-on
 	u64 m_busy_violations = 0;		// in the systems before the last power cut
+	coverage m_cov;				// over power cuts, until cov reset
 	std::map<unsigned, int> m_links;	// link requests, kept over a power cut
 
 	std::vector<uart_line> m_uart;		// since the last uart read
@@ -217,6 +218,7 @@ void controller::attach()
 	s.slice = SLICE;
 	s.slice_phase = m_base % SLICE;
 	s.cpu().exact_time = true;
+	s.cpu().cov = &m_cov;
 	s.flash().timing = m_opt.flash_timing;
 	s.flash().t.sector_erase = 1250000;	// 40 ms
 	s.flash().t.program_first_ns = 30000;	// a program: tBP1 + (n - 1) tBP2,
@@ -575,9 +577,12 @@ bool controller::request(const std::string &line, std::string &reply)
 			}
 			reply = block(l);
 		} else if (c == "cov" && w.size() == 2 && w[1] == "reset") {
+			m_cov.reset();
 			reply = "ok";
 		} else if (c == "cov" && w.size() == 3 && w[1] == "dump") {
-			throw ctl_error("cov: no coverage in this build yet");
+			if (!m_cov.dump(w[2]))
+				throw ctl_error("cannot write " + w[2]);
+			reply = "ok";
 		} else if (c == "reset" && w.size() == 1) {
 			m_uart_open = false;
 			m_sys->resets++;

@@ -8,7 +8,7 @@
 //          [--print-flows] [--ageing S] [--powercut-after N] [--flash-ops FILE]
 //          [--rtl8238b-e8 N] [--rtl8238b-alt-arm] [--rtl8238b-dump FILE] [--trace-pse]
 //          [--flash-timing] [--trace-reset] [--flash-secreg FILE]
-//          [--control SOCKET [--map FILE] [--no-flash-timing]] [--check-flash-busy]
+//          [--control SOCKET [--map FILE] [--no-flash-timing]] [--check-flash-busy] [--cov FILE]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -91,6 +91,9 @@
 // programs, the bank window reads 0xff, and reading it (a fetch, movc, or
 // movx through the flash map) is reported on stderr, the first of each
 // operation with PC, PSBANK and SP.
+//
+// --cov FILE writes which instructions ran (sys/coverage.h) to FILE when
+// rtlsim ends, for tools/cov_report.py; with --control, cov dump does.
 //
 // Exits 0 when the program halts ("sjmp ."), 2 when the cycle budget runs out
 // (--cycles 0: no budget), 3 when stdin closes after input was given, 4 when
@@ -183,6 +186,8 @@ int main(int argc, char **argv)
 	const char *flash_secreg = nullptr;
 	control_options control;
 	bool check_flash_busy = false;
+	const char *cov_file = nullptr;
+	coverage cov_bits;
 	std::vector<std::pair<unsigned, std::string>> sfps;
 	std::vector<std::pair<unsigned, int>> links;
 	long long cycles = 100000000;
@@ -275,6 +280,8 @@ int main(int argc, char **argv)
 			control.flash_timing = false;
 		else if (!strcmp(argv[i], "--check-flash-busy"))
 			check_flash_busy = true;
+		else if (!strcmp(argv[i], "--cov") && i + 1 < argc)
+			cov_file = argv[++i];
 		else {
 			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
 				"[--trace-sfr] [--trace-reg] [--trace-flash] [--link P=SPEED] [--check-banks MAP] [--quiet] [--stats] "
@@ -282,7 +289,7 @@ int main(int argc, char **argv)
 				"[--ofp PATH] [--trace-of] [--board FILE] [--print-flows] [--ageing S] "
 				"[--powercut-after N] [--flash-ops FILE] [--rtl8238b-e8 N] [--rtl8238b-alt-arm] "
 				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing] [--trace-reset] [--flash-secreg FILE] "
-				"[--control SOCKET [--map FILE] [--no-flash-timing]] [--check-flash-busy]\n");
+				"[--control SOCKET [--map FILE] [--no-flash-timing]] [--check-flash-busy] [--cov FILE]\n");
 			return 1;
 		}
 	}
@@ -332,6 +339,8 @@ int main(int argc, char **argv)
 		sys.flash().trace = trace_flash;
 		sys.flash().timing = flash_timing || check_flash_busy;
 		sys.flash_busy_check = check_flash_busy;
+		if (cov_file)
+			sys.cpu().cov = &cov_bits;
 		if (powercut_after >= 0)
 			sys.flash().power_cut_after(powercut_after);
 		if (flash_secreg)
@@ -505,6 +514,8 @@ int main(int argc, char **argv)
 			break;
 		}
 	}
+	if (cov_file && !cov_bits.dump(cov_file))
+		fprintf(stderr, "rtlsim: cannot write %s\n", cov_file);
 	if (print_flows)
 		printf("\n--- flows\n%s", flows_text(compile_flows(sys.core(), sys.tables(), sys.board_info(), fcfg)).c_str());
 	sys.flash().sync();

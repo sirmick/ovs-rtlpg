@@ -73,6 +73,8 @@ void rtl837x_system::reset(bool chip_reset)
 	m_bank_ret.clear();
 	m_nic.reset();
 	m_cpu.reset();
+	m_cpu.cov_region = 0;		// the common code as the flash has it
+	m_cpu.cov_load_pending = false;
 	m_halted = false;
 	map_code_pages();
 }
@@ -179,8 +181,10 @@ void rtl837x_system::model_code_ram_load()
 	for (u32 i = 0; i < 0x1000; i++)
 		m_core.on_write(u16(0x80b0 + 4 * i), [this, i](u32 v) {
 			u32 const conf = m_core.reg(0x6040);
-			if (conf & 0x02)
+			if (conf & 0x02) {
 				m_code_ram[((conf >> 2) & 3) * 0x1000 + i] = u8(v);
+				m_cpu.cov_load_pending = true;
+			}
 			return v;
 		});
 }

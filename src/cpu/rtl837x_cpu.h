@@ -17,6 +17,7 @@
 
 #include "emu.h"
 #include "dw8051.h"
+#include "sys/coverage.h"
 
 #include <deque>
 #include <string>
@@ -82,6 +83,13 @@ public:
 	// instruction during which stop_request was set. Unset (-1, false), they
 	// cost one compare per instruction.
 	int break_pc = -1, break_bank = -1;
+	// Coverage (sys/coverage.h): each instruction run marks its address in
+	// region cov_region; cov_load_pending switches to region 1 when PC next
+	// reaches 0 (software loaded the common code and jumps to it). Unset,
+	// one compare per instruction.
+	coverage *cov = nullptr;
+	int cov_region = 0;
+	bool cov_load_pending = false;
 	bool stop_request = false;
 	bool stopped = false;
 
