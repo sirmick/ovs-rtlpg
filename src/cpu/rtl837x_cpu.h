@@ -5,7 +5,9 @@
 //   (sfr_read/sfr_write).
 // - movx @Ri takes its page from MPAGE (0x92), not P2.
 // - The UART works on whole bytes: a write to SBUF goes to uart_tx and sets TI,
-//   uart_rx() puts a byte in SBUF and sets RI.
+//   uart_rx() puts a byte in SBUF and sets RI. With uart_timing (the control
+//   socket) it takes its time instead: TI sets a character time after the
+//   write, and bytes queued with uart_rx_queue() arrive one a character time.
 // - DS80C320-style extended interrupts: enables EIE (0xe8), priorities EIP
 //   (0xf8), flags IE2..IE5 in EXIF (0x91) bits 4..7, which software clears;
 //   vectors 0x43, 0x4b, 0x53, 0x5b.
@@ -15,6 +17,9 @@
 
 #include "emu.h"
 #include "dw8051.h"
+
+#include <deque>
+#include <string>
 
 class rtl837x_cpu : public dw8051_device
 {
@@ -31,6 +36,20 @@ public:
 
 	// Feed a received byte; false while the previous one is still unread (RI set).
 	bool uart_rx(u8 c);
+
+	// The UART at its baud rate. A character is 10 bit-times (start, 8 data,
+	// stop) at the rate the firmware programmed: Timer 2 as the baud generator
+	// (RCLK/TCLK: 16 of its overflows a bit), else Timer 1 in mode 2 (16 of
+	// its overflows a bit with SMOD, else 32); 115200 baud before either runs.
+	// uart_rx_queue() puts bytes on the wire: each arrives a character time
+	// after the one before (the first, after now), at an exact cycle, and is
+	// lost, as on an 8051, if RI is still set or reception is off (REN):
+	// uart_lost says so.
+	bool uart_timing = false;
+	u32 char_cycles();
+	void uart_rx_queue(const std::string &bytes);
+	size_t uart_rx_pending() const { return m_rxq.size(); }
+	std::function<void(u8 c, bool ri)> uart_lost;
 	// Raise an extended interrupt request: n = 2..5 (EXIF IE2..IE5).
 	void ext_irq(int n);
 	void set_int0(bool asserted) { set_input_line(MCS51_INT0_LINE, asserted ? ASSERT_LINE : CLEAR_LINE); }
@@ -73,11 +92,17 @@ protected:
 	virtual void interrupt_taken() override;
 
 private:
+	void uart_events();
+	u64 uart_next() const;
 	bool take_ext_irq();
 	bool idle_skip();
 	void skip_reload(u8 &tl, u8 th, u32 n, int timer);
 
 	u8 m_mpage = 0, m_psbank = 0, m_eie = 0, m_eip = 0, m_exif = 0;
+	bool m_tx_busy = false;
+	u64 m_tx_done = 0;			// cycles_total when TI sets
+	std::deque<std::pair<u64, u8>> m_rxq;	// bytes on the wire, by arrival
+	u64 m_rx_last = 0;			// when the last queued byte arrives
 };
 
 #endif

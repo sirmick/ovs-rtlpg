@@ -21,6 +21,7 @@ void rtl837x_cpu::device_reset()
 {
 	dw8051_device::device_reset();
 	m_mpage = m_psbank = m_eie = m_eip = m_exif = 0;
+	m_tx_busy = false;		// what is on the wire keeps coming (m_rxq)
 }
 
 void rtl837x_cpu::sfr_map(address_map &map)
@@ -39,7 +40,16 @@ void rtl837x_cpu::sfr_map(address_map &map)
 	map(SFR_EIP, SFR_EIP).lrw8(NAME([this]() -> u8 { return m_eip; }), NAME([this](u8 d) { m_eip = d; }));
 	map(SFR_EXIF, SFR_EXIF).lrw8(NAME([this]() -> u8 { return m_exif; }), NAME([this](u8 d) { m_exif = d; }));
 	map(SFR_SBUF, SFR_SBUF).lrw8(NAME([this]() -> u8 { return m_sbuf; }),
-		NAME([this](u8 d) { if (uart_tx) uart_tx(d); set_ti(1); }));
+		NAME([this](u8 d) {
+			if (uart_tx)
+				uart_tx(d);
+			if (!uart_timing)
+				set_ti(1);
+			else {
+				m_tx_busy = true;
+				m_tx_done = cycles_total + char_cycles();
+			}
+		}));
 }
 
 offs_t rtl837x_cpu::external_ram_iaddr(offs_t offset, offs_t mem_mask)
@@ -56,6 +66,59 @@ bool rtl837x_cpu::uart_rx(u8 c)
 	m_sbuf = c;
 	set_ri(1);
 	return true;
+}
+
+u32 rtl837x_cpu::char_cycles()
+{
+	u32 bit;
+	if (BIT(m_t2con, T2CON_RCLK) || BIT(m_t2con, T2CON_TCLK))
+		bit = 16 * std::max<u32>(1, (0x10000 - m_rcap2) / 2);	// T2 counts 2 a cycle as the baud generator
+	else if (BIT(m_tcon, TCON_TR1) && ((m_tmod >> 4) & 3) == 2) {
+		u32 const per = BIT(m_sfr.read_byte(0x8e), 4) ? 1 : 3;
+		bit = (BIT(m_pcon, PCON_SMOD) ? 16 : 32) * (0x100 - m_th1) * per;
+	} else
+		return 2713;	// 115200 baud
+	return 10 * bit;
+}
+
+void rtl837x_cpu::uart_rx_queue(const std::string &bytes)
+{
+	u64 t = std::max(m_rx_last, cycles_total);
+	u32 const c = char_cycles();
+	for (u8 b : bytes)
+		m_rxq.emplace_back(t += c, b);
+	m_rx_last = t;
+}
+
+// TI and RI as their time comes, between instructions.
+void rtl837x_cpu::uart_events()
+{
+	if (m_tx_busy && cycles_total >= m_tx_done) {
+		m_tx_busy = false;
+		set_ti(1);
+	}
+	while (!m_rxq.empty() && m_rxq.front().first <= cycles_total) {
+		u8 const c = m_rxq.front().second;
+		m_rxq.pop_front();
+		if (BIT(m_scon, SCON_RI) || !BIT(m_scon, SCON_REN)) {
+			if (uart_lost)
+				uart_lost(c, BIT(m_scon, SCON_RI));
+		} else {
+			m_sbuf = c;
+			set_ri(1);
+		}
+	}
+}
+
+// When the UART next does something, or ~0.
+u64 rtl837x_cpu::uart_next() const
+{
+	u64 t = ~0ull;
+	if (m_tx_busy)
+		t = m_tx_done;
+	if (!m_rxq.empty())
+		t = std::min(t, m_rxq.front().first);
+	return t;
 }
 
 void rtl837x_cpu::ext_irq(int n)
@@ -125,6 +188,13 @@ bool rtl837x_cpu::idle_skip()
 		limit(0x10000 - m_t2, per(5));
 	if (!t0 && !t1 && !t2)
 		dist = m_icount;	// asleep for good: nothing but an external line wakes it
+	if (uart_timing) {		// wake for the UART's next event
+		u64 const next = uart_next();
+		if (next <= cycles_total)
+			return false;
+		if (next - cycles_total < dist)
+			dist = u32(next - cycles_total);
+	}
 	if (exact_time) {
 		// the timers' /3 prescaler is where it was after a multiple of 3
 		dist -= dist % 3;
@@ -197,6 +267,8 @@ void rtl837x_cpu::skip_reload(u8 &tl, u8 th, u32 n, int timer)
 void rtl837x_cpu::execute_run()
 {
 	do {
+		if (uart_timing)
+			uart_events();
 		bool const inhibit = m_irq_delayed == 0xff;	// RETI or an IE/IP write
 		u8 const active = m_irq_active;
 		check_irqs();
