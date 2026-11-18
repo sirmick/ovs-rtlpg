@@ -8,7 +8,7 @@
 //          [--print-flows] [--ageing S] [--powercut-after N] [--flash-ops FILE]
 //          [--rtl8238b-e8 N] [--rtl8238b-alt-arm] [--rtl8238b-dump FILE] [--trace-pse]
 //          [--flash-timing] [--trace-reset] [--flash-secreg FILE]
-//          [--control SOCKET [--map FILE]]
+//          [--control SOCKET [--map FILE] [--no-flash-timing]] [--check-flash-busy]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -86,9 +86,16 @@
 // go to its `checks` (and stderr, unless --quiet). --map FILE, the
 // firmware's .map, gives it symbols. Without --control nothing changes.
 //
+// --check-flash-busy (implies --flash-timing; always on with --control, unless
+// --no-flash-timing) enforces the flash busy rule: while the chip erases or
+// programs, the bank window reads 0xff, and reading it (a fetch, movc, or
+// movx through the flash map) is reported on stderr, the first of each
+// operation with PC, PSBANK and SP.
+//
 // Exits 0 when the program halts ("sjmp ."), 2 when the cycle budget runs out
 // (--cycles 0: no budget), 3 when stdin closes after input was given, 4 when
-// the bank check found something, 5 on a power cut (--powercut-after).
+// the bank check found something, 5 on a power cut (--powercut-after), 6 when
+// the program broke the flash busy rule (--check-flash-busy).
 #include "sys/system.h"
 #include "ctl/control.h"
 #include "net/stream.h"
@@ -175,6 +182,7 @@ int main(int argc, char **argv)
 	const char *flash_ops = nullptr;
 	const char *flash_secreg = nullptr;
 	control_options control;
+	bool check_flash_busy = false;
 	std::vector<std::pair<unsigned, std::string>> sfps;
 	std::vector<std::pair<unsigned, int>> links;
 	long long cycles = 100000000;
@@ -263,6 +271,10 @@ int main(int argc, char **argv)
 			control.path = argv[++i];
 		else if (!strcmp(argv[i], "--map") && i + 1 < argc)
 			control.map = argv[++i];
+		else if (!strcmp(argv[i], "--no-flash-timing"))
+			control.flash_timing = false;
+		else if (!strcmp(argv[i], "--check-flash-busy"))
+			check_flash_busy = true;
 		else {
 			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
 				"[--trace-sfr] [--trace-reg] [--trace-flash] [--link P=SPEED] [--check-banks MAP] [--quiet] [--stats] "
@@ -270,7 +282,7 @@ int main(int argc, char **argv)
 				"[--ofp PATH] [--trace-of] [--board FILE] [--print-flows] [--ageing S] "
 				"[--powercut-after N] [--flash-ops FILE] [--rtl8238b-e8 N] [--rtl8238b-alt-arm] "
 				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing] [--trace-reset] [--flash-secreg FILE] "
-				"[--control SOCKET [--map FILE]]\n");
+				"[--control SOCKET [--map FILE] [--no-flash-timing]] [--check-flash-busy]\n");
 			return 1;
 		}
 	}
@@ -318,7 +330,8 @@ int main(int argc, char **argv)
 		sys.core().trace = trace_reg;
 		sys.core().log_unmodelled = !quiet;
 		sys.flash().trace = trace_flash;
-		sys.flash().timing = flash_timing;
+		sys.flash().timing = flash_timing || check_flash_busy;
+		sys.flash_busy_check = check_flash_busy;
 		if (powercut_after >= 0)
 			sys.flash().power_cut_after(powercut_after);
 		if (flash_secreg)
@@ -498,6 +511,12 @@ int main(int argc, char **argv)
 	fflush(stdout);
 	if (sys.bankcheck && sys.bankcheck->report(stderr) && rc != 2)
 		rc = 4;
+	if (sys.flash_busy_violations) {
+		fprintf(stderr, "rtlsim: %llu reads of the bank window while the flash was busy\n",
+			(unsigned long long)sys.flash_busy_violations);
+		if (rc != 4 && rc != 5)
+			rc = 6;
+	}
 	double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 	if (stats) {
 		fprintf(stderr, "rtlsim: %llu machine cycles in %.3f s (%.1f M/s), %llu busy, %llu idle-skipped, %llu resets\n",

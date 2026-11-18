@@ -56,6 +56,7 @@ public:
 	void set_int1(bool asserted) { set_input_line(MCS51_INT1_LINE, asserted ? ASSERT_LINE : CLEAR_LINE); }
 
 	u16 pc() const { return m_pc; }
+	u16 ppc() const { return m_ppc; }	// the current instruction's
 	u64 idle_skipped = 0;		// machine cycles fast-forwarded while idle
 	u64 busy_cycles = 0;		// machine cycles spent running instructions
 	u64 cycles_total = 0;		// every machine cycle, the skipped idle ones too

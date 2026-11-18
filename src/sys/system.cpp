@@ -26,8 +26,8 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 	model_pse();
 	model_code_ram_load();
 	m_cpu.start();
-	m_cpu.space(AS_PROGRAM).set_external([this](offs_t a) { return code_read(a); }, [](offs_t, u8) {});
-	m_cpu.space(AS_DATA).set_external([this](offs_t a) { return xdata_r(a); }, [this](offs_t a, u8 d) { xdata_w(a, d); });
+	m_cpu.space(AS_PROGRAM).set_external([this](offs_t a) { return code_read(a, true); }, [](offs_t, u8) {});
+	m_cpu.space(AS_DATA).set_external([this](offs_t a) { return xdata_r(a, true); }, [this](offs_t a, u8 d) { xdata_w(a, d); });
 	m_cpu.space(rtl837x_cpu::SPACE_SFR).set_external([this](offs_t a) { return sfr_r(a); }, [this](offs_t a, u8 d) { sfr_w(a, d); });
 	m_cpu.sfr_read = [this](u8 a) { return sfr_r(a); };
 	m_cpu.sfr_write = [this](u8 a, u8 d) {
@@ -40,6 +40,12 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 	m_core.soc_reset = [this]() { m_reset_pending = true; };
 	m_core.on_write(0x6040, [this](u32 v) { m_clock_set = true; return v; });	// HW_CONF: setup_clock()
 	m_flash->now = [this]() { return m_cpu.cycles_total; };
+	m_flash->on_busy = [this]() {
+		if (!flash_busy_check)
+			return;
+		m_window_off = true;		// fetches from the window come through code_read()
+		map_code_pages();
+	};
 	m_core.pc = [this]() { return m_cpu.pc(); };
 	m_nic.xdata_r = [this](u16 a) { return xdata_r(a); };
 	m_nic.xdata_w = [this](u16 a, u8 d) { xdata_w(a, d); };
@@ -237,22 +243,60 @@ void rtl837x_system::map_code_pages()
 		prog.set_fast_page(page, &m_code_ram[page << 8]);
 	for (u32 page = 0x40; page < 0x100; page++) {
 		u32 f = code_flash_addr(page << 8, m_cpu.psbank());
-		prog.set_fast_page(page, f + 0x100 <= m_flash->size() ? &m_flash->dev().mem[f] : nullptr);
+		prog.set_fast_page(page, f + 0x100 <= m_flash->size() && !m_window_off ? &m_flash->dev().mem[f] : nullptr);
 	}
 }
 
-u8 rtl837x_system::code_read(u16 addr)
+u8 rtl837x_system::code_read(u16 addr, bool cpu)
 {
 	if (addr < 0x4000)
 		return m_code_ram[addr];
-	return m_flash->byte(code_flash_addr(addr, m_cpu.psbank()));
+	u32 const f = code_flash_addr(addr, m_cpu.psbank());
+	if (m_window_off)
+		return busy_read(f, addr, true, cpu);
+	return m_flash->byte(f);
 }
 
-u8 rtl837x_system::xdata_r(offs_t a)
+// A read of the bank window while the window is off: 0xff and a violation
+// while the flash is busy; once it isn't, the window is back.
+u8 rtl837x_system::busy_read(u32 flash_addr, u16 addr, bool code, bool cpu)
+{
+	if (!m_flash->busy()) {
+		m_window_off = false;
+		map_code_pages();
+		return m_flash->byte(flash_addr);
+	}
+	if (!cpu)
+		return 0xff;		// a look (a debugger, the halt check): no violation
+	flash_busy_violations++;
+	auto const &op = m_flash->last_op();
+	if (op.start != m_reported_op) {
+		m_reported_op = op.start;
+		u16 const ppc = m_cpu.ppc();
+		char const *what = !code ? "movx read" : u16(addr - ppc) < 3 ? "instruction fetch" : "movc";
+		u64 const now = m_flash->now();
+		auto ms = [](u64 c) {
+			char b[32];
+			u64 const us = c * 4 / 125;	// 31.25 cycles a µs
+			snprintf(b, sizeof b, "%llu.%03llu", (unsigned long long)(us / 1000), (unsigned long long)(us % 1000));
+			return std::string(b);
+		};
+		char const *kind = op.kind == 'E' ? "sector erase" : op.kind == 'B' ? "block erase" : "page program";
+		report("flash-busy", "flash busy (%s %06x, %s of %s ms left): %s of %04x (flash %06x) at pc=%04x psbank=%02x sp=%02x, t=%s ms",
+		       kind, op.addr, ms(op.end - now).c_str(), ms(op.end - op.start).c_str(), what, addr, flash_addr, ppc,
+		       m_cpu.psbank(), m_cpu.sp(), ms(now).c_str());
+	}
+	return 0xff;
+}
+
+u8 rtl837x_system::xdata_r(offs_t a, bool cpu)
 {
 	a &= 0xffff;
-	if (m_map_flash && a >= 0x4000 && a < 0xc000)
+	if (m_map_flash && a >= 0x4000 && a < 0xc000) {
+		if (m_window_off)
+			return busy_read(a, u16(a), false, cpu);
 		return m_flash->byte(a);	// TODO: which flash address (open question)
+	}
 	return a < XRAM_LEN ? m_xdata[a] : 0xff;
 }
 

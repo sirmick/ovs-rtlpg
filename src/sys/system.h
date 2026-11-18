@@ -45,7 +45,7 @@ public:
 	switch_tables &tables() { return m_tables; }
 	cpu_nic &nic() { return m_nic; }
 	i2c_controller &i2c() { return m_i2c; }
-	u8 code_read(u16 addr);			// as the CPU sees it now
+	u8 code_read(u16 addr, bool cpu = false);	// as the CPU sees it now (cpu: it is the CPU)
 	u32 code_flash_addr(u16 addr, u8 psbank) const;
 
 	// Link state of a physical port (0-9): a speed code as REG_LINKS has it
@@ -77,6 +77,15 @@ public:
 	u8 peek_sfr(u8 a);
 	void poke_sfr(u8 a, u8 d) { m_cpu.space(rtl837x_cpu::SPACE_SFR).write_byte(a, d); }
 	u8 bank_byte(u8 bank, u16 addr) const { return addr < 0x4000 ? m_code_ram[addr] : m_flash->byte(code_flash_addr(addr, bank)); }
+	// The flash busy rule (doc: no banked code while the flash erases or
+	// programs). With flash_busy_check and the flash's timing, the bank window
+	// (code 0x4000-0xffff, and xdata 0x4000-0xbfff while it maps the flash)
+	// reads 0xff while the chip is busy, as the array can't be read, and every
+	// such read is a violation: the first of each operation is reported
+	// ("flash-busy", with the operation, the access, PC, PSBANK, SP and the
+	// firmware time), all are counted.
+	bool flash_busy_check = false;
+	u64 flash_busy_violations = 0;
 	// The flash chip, out of a system about to be thrown away (a power cut:
 	// the next system is built around it).
 	std::unique_ptr<flash_controller> take_flash() { return std::move(m_flash); }
@@ -101,7 +110,7 @@ public:
 private:
 	u8 sfr_r(u8 a);
 	void sfr_w(u8 a, u8 d);
-	u8 xdata_r(offs_t a);
+	u8 xdata_r(offs_t a, bool cpu = false);
 	void xdata_w(offs_t a, u8 d);
 	void on_insn(offs_t pc);
 	void map_code_pages();
@@ -112,6 +121,7 @@ private:
 	void model_los();
 	void model_pse();
 	void model_code_ram_load();
+	u8 busy_read(u32 flash_addr, u16 addr, bool code, bool cpu);
 
 	rtl837x_cpu m_cpu;
 	std::unique_ptr<flash_controller> m_flash;
@@ -138,6 +148,8 @@ private:
 	u8 m_len[256] = {};
 	int m_link[10] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 	bool m_int0_pulse = false;
+	bool m_window_off = false;		// bank window unmapped: the flash is busy
+	u64 m_reported_op = ~0ull;		// the operation (its start) last reported
 	u64 m_gpio_ext = ~0ull;		// instruction lengths, from the disassembler
 };
 

@@ -67,7 +67,17 @@
 //   reset                             ok <t>: a chip reset, as the firmware's
 //   powercut                          ok <t>: off and on: a new chip around the same
 //                                     flash; links stay as they are
-//   quit                              ok, and rtlsim exits 0
+//   quit                              ok, and rtlsim exits: 0, or 6 if the firmware
+//                                     read the bank window while the flash was busy
+//
+// The flash takes its time (unless --no-flash-timing): a sector erase 40 ms,
+// a page program (the controller's, up to 4 bytes) 1 ms, a 64K block erase
+// 150 ms. While it is busy the bank window reads 0xff and every fetch, movc or
+// movx read from it is a violation: checks lists the first of each
+// operation as flash-busy, with PC, PSBANK, SP and the firmware time. A power
+// cut while an operation is in flight leaves it done in part, in proportion
+// to the time it had (an erase erased its first bytes, a program wrote its
+// first ones).
 #ifndef RTLSIM_CONTROL_H
 #define RTLSIM_CONTROL_H
 
@@ -80,6 +90,7 @@ struct control_options {
 	const char *path = nullptr;
 	const char *map = nullptr;	// --map: the firmware's .map, for symbols
 	bool quiet = false;		// findings only through checks, not on stderr
+	bool flash_timing = true;	// the flash busy model (--no-flash-timing: off)
 };
 
 // Builds a system around a flash chip as the command line says (the board,
