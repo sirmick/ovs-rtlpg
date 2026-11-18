@@ -14,6 +14,9 @@
   symbol) and answers.
 - Nothing reads the bank window while the flash erases or programs (the
   boot writes its default config).
+- The boot's coverage (cov dump, tools/cov_report.py) has main,
+  print_string and flash_default_config run, cmd_parser not yet, and is the
+  same in both runs.
 - A power cut and a chip reset both boot it again, with time running on; a
   line the cut interrupted stays unfinished, and the boot starts afresh.
 
@@ -37,8 +40,10 @@ the UART itself drops what arrives while RI is set.
 The prompt comes before cmd_editor_init(), which drops whatever arrived
 before it: input waits 10 ms after the boot's prompt.
 """
-import argparse, os, sys
+import argparse, os, sys, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../tools"))
+from cov_report import Coverage
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rtlsim_ctl import Sim, fmt_us
 from console import Console, PROMPT
@@ -78,6 +83,9 @@ def session(a):
     with Sim(a.image, board=a.board, map=a.map, rtlsim=a.rtlsim, args=["--quiet"]) as sim:
         log(f"time {sim.time()}")
         boot(sim, "boot")
+        cov = os.path.join(tempfile.mkdtemp(prefix="rtlsim-cov-"), "boot.cov")
+        sim.cmd(f"cov dump {cov}")		# the boot, to its prompt and 10 ms on
+        facts["cov"] = cov
 
         space, addr, size = sim.sym("ticks")
         log(f"sym ticks {space} {addr:#x} {size}")
@@ -226,7 +234,22 @@ def main():
           f"(40 ms erases, 1 ms programs): {f['flash-busy'][:1]}")
     check(f["powercut_lines"][0] == ("ver", False) and f["powercut_lines"][1:3] == f["boot_lines"][:2],
           "a line the power cut interrupted stays unfinished; the boot after it starts a line of its own")
-    second, _ = session(a)
+    second, f2 = session(a)
+    boot1, boot2 = Coverage(f["cov"], a.map), Coverage(f2["cov"], a.map)
+    if a.transcript:
+        with open(a.transcript + ".functions", "w") as o:
+            for n, (r, t, mod) in sorted(boot1.functions.items(), key=lambda kv: (kv[1][2], kv[0])):
+                if r:
+                    o.write(f"{r:5d}/{t:<5d} {n}  {mod}\n")
+    ran = [n for n, v in boot1.functions.items() if v[0]]
+    check(all(boot1.ran_function(n) for n in ("main", "print_string", "flash_default_config"))
+          and not boot1.ran_function("cmd_parser"),
+          f"the boot's coverage: {len(ran)} of {len(boot1.functions)} functions ran (main, print_string, "
+          f"flash_default_config; cmd_parser not yet), region {boot1.region}")
+    check(boot1.functions == boot2.functions, "and two boots' coverage is the same, function by function")
+    for c in (f["cov"], f2["cov"]):
+        os.unlink(c)
+        os.rmdir(os.path.dirname(c))
     diff = next((i for i, (x, y) in enumerate(zip(first, second)) if x != y), None)
     check(first == second, f"two runs give byte-identical stamped transcripts ({len(first)} lines)"
           + ("" if diff is None else f": line {diff}: {first[diff]!r} vs {second[diff]!r}"))

@@ -133,6 +133,7 @@ bytes) answers on the cage's I2C bus. `tools/mksfp.py` writes one
 | `--trace`, `--trace-sfr`, `--trace-reg`, `--trace-flash`, `--trace-nic`, `--trace-i2c`, `--trace-of`, `--trace-reset` | trace output on stderr |
 | `--print-flows` | print the compiled flow set at exit |
 | `--stats`, `--quiet` | summary counters; suppress the "unmodelled" log |
+| `--cov FILE` | write which instructions ran, for `tools/cov_report.py` |
 
 `--ofp PATH` makes rtlsim the controller of an OVS bridge
 (`ovs-vsctl set-controller BR unix:PATH`, `fail_mode=secure`): OpenFlow port N
@@ -174,6 +175,14 @@ request: `run`, `run until pc=|uart=|<sym> <op> <value>`, `peek`, `poke`,
         sim.uart_write("version\r")
         sim.run_until_pc("cmd_parser")
         ticks = sim.read_struct("ticks", [("v", "I")])["v"]
+
+Coverage: `cov dump FILE` (or `--cov FILE` without `--control`) writes which
+instructions ran; `tools/cov_report.py FILE --map rtlplayground.map` lists
+the functions that ran, `--lines sched.c` a file's lines, `--require-lines`
+and `--require-functions` fail on what didn't run, `--diff FILE2` compares
+two runs by function; as a module, `Coverage(FILE, MAP)` gives the same to a
+test. On a boot image with the loader, the loader's coverage is kept apart
+(`--region boot` with the loader's map).
 
 `tests/fw/test_control.py` (in `make test`; `make test-control CTL_IMAGE=..
 CTL_BOARD=..` for another image) boots under control, checks the boot prints

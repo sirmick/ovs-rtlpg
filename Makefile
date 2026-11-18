@@ -54,6 +54,7 @@ test: $(BUILD)/rtlsim $(BUILD)/test_flash_dev
 	$(MAKE) -C tests/bank RTLSIM=$(abspath $(BUILD)/rtlsim) SDCC_DIR=$(SDCC_DIR)
 	$(MAKE) -C tests/flashbusy RTLSIM=$(abspath $(BUILD)/rtlsim) SDCC_DIR=$(SDCC_DIR)
 	python3 tests/flashbusy/test_busy_control.py --rtlsim $(BUILD)/rtlsim
+	python3 tests/cov/test_cov.py --rtlsim $(BUILD)/rtlsim
 ifneq ($(FW_IMAGE),)
 	python3 tests/fw/test_boot.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/net/test_nic.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
