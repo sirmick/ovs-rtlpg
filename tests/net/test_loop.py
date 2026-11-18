@@ -10,12 +10,12 @@ unplugged. With "loop on" and the cable plugged in, the RLDP engine
 higher port. Checks:
 - the firmware reports the loop and blocks front 4 (MSTP_STATES);
 - one broadcast from h1 doesn't come back: the blocked port stops the loop;
-- h1 still reaches the switch;
+- h1 still reaches the switch, and the web UI's /loop.json reports it;
 - unplugging: the firmware reports the loop gone and unblocks;
 - with STP on, a loop is reported but nothing blocked.
 Needs sudo; skipped without it.
 """
-import argparse, os, re, subprocess, sys, time
+import argparse, json, os, re, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "../../tools"))
 from rtlswitch import Net
@@ -90,6 +90,15 @@ def main():
         check(copies == "0", f"one broadcast from h1 doesn't come back through the loop ({copies or r.stderr[-80:]} copies)")
         r = net.sh("h1", "ping", "-c", "3", "-i", "0.3", "-W", "2", SW_IP, timeout=20)
         check(r.returncode == 0, "h1 still reaches the switch")
+        jar = "/tmp/loop-test-%d.jar" % os.getpid()
+        net.sh("h1", "curl", "-s", "-m", "10", "-c", jar, "-d", "pwd=1234", f"http://{SW_IP}/login", "-o", "/dev/null", timeout=20)
+        r = net.sh("h1", "curl", "-s", "-m", "10", "-b", jar, f"http://{SW_IP}/loop.json", timeout=20)
+        try:
+            j = json.loads(r.stdout)
+        except ValueError:
+            j = None
+        check(j == {"on": True, "stp": False, "looped": [3, 4], "blocked": [4]},
+              f"the web UI's /loop.json says so: {r.stdout.strip()[:80]}")
 
         net.link("a.3", False)
         check(wait_for(net, r"Loop on port 4 gone", 15), "unplugged: the firmware reports the loop gone")
