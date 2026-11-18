@@ -367,9 +367,12 @@ bool rtl837x_system::run(int cycles)
 	m_cpu.m_insn_hook = (trace_insn || bankcheck) ? std::function<void(offs_t)>([this](offs_t pc) { on_insn(pc); }) : nullptr;
 	int left = cycles;
 	while (left > 0 && !m_halted && !m_cpu.stopped) {
+		u64 const before = m_cpu.cycles_total;
 		int n = m_cpu.run(std::min(left, 256));
 		left -= n;
 		this->cycles += n;
+		if (slice && (slice_phase + before) / slice == (slice_phase + m_cpu.cycles_total) / slice)
+			continue;
 		if (!m_rx.empty() && m_cpu.uart_rx(m_rx.front()))
 			m_rx.pop_front();
 		if (m_int0_pulse) {

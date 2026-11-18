@@ -86,6 +86,12 @@ public:
 	std::unique_ptr<bank_checker> bankcheck;	// set to check banked constant reads
 	bool trace_sfr = false;
 	bool stop_on_halt = true;		// "sjmp ." stops the run (tests)
+	// What the model does between instructions (a UART byte in, INT0 released,
+	// a pending chip reset, the halt check) happens after each run of the CPU;
+	// with slice set, only when that run crossed a multiple of slice cycles of
+	// slice_phase + the CPU's cycles, so inputs go in at fixed firmware times
+	// however the runs are cut (the control socket).
+	u64 slice = 0, slice_phase = 0;
 	u64 instructions = 0;			// counted only while tracing
 	u64 cycles = 0;
 	u64 resets = 0;

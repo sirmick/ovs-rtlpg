@@ -41,6 +41,10 @@ public:
 	u64 busy_cycles = 0;		// machine cycles spent running instructions
 	u64 cycles_total = 0;		// every machine cycle, the skipped idle ones too
 	bool fast_idle = true;
+	// Fast-forward idle only by whole multiples of 3 cycles, and T2 as a baud
+	// generator by 2 a cycle, so that idling through a run in one call or in
+	// several ends in the same state (the control socket). Off, as it was.
+	bool exact_idle = false;
 	u8 psbank() const { return m_psbank; }
 	u8 sp() const { return m_sp; }
 	u8 acc() const { return m_acc; }

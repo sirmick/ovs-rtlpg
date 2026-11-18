@@ -125,6 +125,23 @@ bool rtl837x_cpu::idle_skip()
 		limit(0x10000 - m_t2, per(5));
 	if (!t0 && !t1 && !t2)
 		dist = m_icount;	// asleep for good: nothing but an external line wakes it
+	if (exact_idle) {
+		// the timers' /3 prescaler is where it was after a multiple of 3
+		dist -= dist % 3;
+		if (dist < 16)
+			return false;
+		bool const baud = BIT(m_t2con, T2CON_RCLK) || BIT(m_t2con, T2CON_TCLK);
+		if (t0)
+			update_timer_t0(dist / per(3));
+		if (t1)
+			update_timer_t1(dist / per(4));
+		if (t2)
+			update_timer_t2(baud ? 2 * dist : dist / per(5));
+		m_icount -= dist;
+		idle_skipped += dist;
+		cycles_total += dist;
+		return true;
+	}
 	if (dist < 16)
 		return false;
 	if (t0)
