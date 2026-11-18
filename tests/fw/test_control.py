@@ -21,7 +21,9 @@ byte. --transcript writes the first.
 And inputs go in at fixed firmware times, however the test advances: a
 command queued after the boot, then 5 ms run in one go, in uneven pieces,
 up to the prompt and on, and up to cmd_parser and on, gives the same stamped
-UART output each way, and, run on to the same cycle, the same timers.
+UART output each way, and, run on to the same cycle, the same timers;
+Timer 1, which runs free as the baud generator, stays in step with the
+cycle count through all the idling.
 
 The prompt comes before cmd_editor_init(), which drops whatever arrived
 before it: input waits 10 ms after the boot's prompt.
@@ -120,6 +122,7 @@ def styles(a):
             sim.run(10)
             sim.uart_read()
             t0 = sim.time()[1]
+            c0, tl1_0 = sim.time()[0], sim.peek("s:0x8b", 1)[0]
             sim.uart_write("version\r")
             for kind, arg in steps:
                 if kind == "run":
@@ -134,7 +137,14 @@ def styles(a):
             # multiple of 256 cycles (a time in ms.µs doesn't pin a cycle)
             n = int.from_bytes(sim.peek_sym("ticks"), "little") + 2
             sim.run_until("ticks", ">", n, max_ms=100)
-            state = f"cycles {sim.time()[0]} timers {sim.peek('s:0x88', 6).hex()} t2 {sim.peek('s:0xcc', 2).hex()} ticks {sim.peek_sym('ticks').hex()}"
+            c1, tl1_1 = sim.time()[0], sim.peek("s:0x8b", 1)[0]
+            th1 = sim.peek("s:0x8d", 1)[0]
+            # Timer 1 (mode 2, a count a cycle: the baud generator) runs free:
+            # its phase moves with the cycles, however the idle was skipped
+            period = 0x100 - th1
+            phase = ((tl1_1 - th1) - (tl1_0 - th1) - (c1 - c0)) % period
+            out.setdefault("t1 phase", []).append(phase)
+            state = f"cycles {sim.time()[0]} TL0 {sim.peek('s:0x8a', 1).hex()} TL1 {sim.peek('s:0x8b', 1).hex()} timers {sim.peek('s:0x88', 6).hex()} t2 {sim.peek('s:0xcc', 2).hex()} ticks {sim.peek_sym('ticks').hex()}"
             out[name] = (sim.time()[1] - t0, [f"{fmt_us(t)}{'' if d else '+'} {x}" for t, x, d in sim.uart_read()] + [state])
     return out
 
@@ -180,6 +190,8 @@ def main():
     check(first == second, f"two runs give byte-identical stamped transcripts ({len(first)} lines)"
           + ("" if diff is None else f": line {diff}: {first[diff]!r} vs {second[diff]!r}"))
     st = styles(a)
+    phases = st.pop("t1 phase")
+    check(set(phases) == {0}, f"Timer 1 (baud generator, mode 2) keeps time with the cycles through idle: phase errors {phases}")
     ref = next(iter(st.values()))
     bad = [n for n, v in st.items() if v != ref]
     check(not bad and any("Software version" in l for l in ref[1]),

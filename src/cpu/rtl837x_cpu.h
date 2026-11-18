@@ -41,10 +41,14 @@ public:
 	u64 busy_cycles = 0;		// machine cycles spent running instructions
 	u64 cycles_total = 0;		// every machine cycle, the skipped idle ones too
 	bool fast_idle = true;
-	// Fast-forward idle only by whole multiples of 3 cycles, and T2 as a baud
-	// generator by 2 a cycle, so that idling through a run in one call or in
-	// several ends in the same state (the control socket). Off, as it was.
-	bool exact_idle = false;
+	// Time kept exactly (the control socket), so that a run done in one call or
+	// in several ends in the same state, and the timers keep step with
+	// cycles_total: idle fast-forwards only by whole multiples of 3 cycles
+	// (the /3 prescaler stays put), an auto-reload timer wraps as often as
+	// it would cycle by cycle, T2 as a baud generator counts 2 a cycle, and
+	// an interrupt's entry (4 cycles, burnt by the core) counts in
+	// cycles_total. Off, as it was.
+	bool exact_time = false;
 	u8 psbank() const { return m_psbank; }
 	u8 sp() const { return m_sp; }
 	u8 acc() const { return m_acc; }
@@ -66,10 +70,12 @@ protected:
 	virtual void sfr_map(address_map &map) override;
 	virtual offs_t external_ram_iaddr(offs_t offset, offs_t mem_mask) override;
 	virtual void execute_run() override;
+	virtual void interrupt_taken() override;
 
 private:
 	bool take_ext_irq();
 	bool idle_skip();
+	void skip_reload(u8 &tl, u8 th, u32 n, int timer);
 
 	u8 m_mpage = 0, m_psbank = 0, m_eie = 0, m_eip = 0, m_exif = 0;
 };

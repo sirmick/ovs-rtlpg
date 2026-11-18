@@ -125,15 +125,19 @@ bool rtl837x_cpu::idle_skip()
 		limit(0x10000 - m_t2, per(5));
 	if (!t0 && !t1 && !t2)
 		dist = m_icount;	// asleep for good: nothing but an external line wakes it
-	if (exact_idle) {
+	if (exact_time) {
 		// the timers' /3 prescaler is where it was after a multiple of 3
 		dist -= dist % 3;
 		if (dist < 16)
 			return false;
 		bool const baud = BIT(m_t2con, T2CON_RCLK) || BIT(m_t2con, T2CON_TCLK);
-		if (t0)
+		if (t0 && (m_tmod & 3) == 2)
+			skip_reload(m_tl0, m_th0, dist / per(3), 0);
+		else if (t0)
 			update_timer_t0(dist / per(3));
-		if (t1)
+		if (t1 && ((m_tmod >> 4) & 3) == 2)
+			skip_reload(m_tl1, m_th1, dist / per(4), 1);
+		else if (t1)
 			update_timer_t1(dist / per(4));
 		if (t2)
 			update_timer_t2(baud ? 2 * dist : dist / per(5));
@@ -154,6 +158,38 @@ bool rtl837x_cpu::idle_skip()
 	idle_skipped += dist;
 	cycles_total += dist;
 	return true;
+}
+
+// The core burns the 4 cycles of an interrupt's entry itself.
+void rtl837x_cpu::interrupt_taken()
+{
+	dw8051_device::interrupt_taken();
+	if (exact_time)
+		cycles_total += 4;
+}
+
+// An 8-bit auto-reload timer (mode 2) counted on by n at once, as n single
+// counts would: it may wrap many times (Timer 1 as the baud generator
+// reloads every 17 cycles), each wrap reloading TH, setting TF and, for
+// Timer 1, clocking the serial port. The core's mode 2 reloads once.
+void rtl837x_cpu::skip_reload(u8 &tl, u8 th, u32 n, int timer)
+{
+	u32 const to_wrap = 0x100 - tl;
+	if (n < to_wrap) {
+		tl += n;
+		return;
+	}
+	u32 const period = 0x100 - th, rest = n - to_wrap;
+	u32 const wraps = 1 + rest / period;
+	tl = u8(th + rest % period);
+	if (timer == 0) {
+		set_tf0(1);
+		return;
+	}
+	if (((m_tmod & 3) != 3))
+		set_tf1(1);
+	for (u32 i = 0; i < wraps; i++)
+		transmit_receive(1);
 }
 
 // mcs51_cpu_device::execute_run() with the extended interrupt poll and the

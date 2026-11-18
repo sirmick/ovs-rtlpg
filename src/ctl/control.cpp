@@ -213,7 +213,7 @@ void controller::attach()
 	rtl837x_system &s = *m_sys;
 	s.slice = SLICE;
 	s.slice_phase = m_base % SLICE;
-	s.cpu().exact_idle = true;
+	s.cpu().exact_time = true;
 	s.core().log_unmodelled = true;
 	s.flash().now = [this]() { return now(); };
 	s.cpu().uart_tx = [this](u8 c) {
