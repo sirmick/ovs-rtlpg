@@ -52,6 +52,8 @@ test: $(BUILD)/rtlsim $(BUILD)/test_flash_dev
 	$(BUILD)/test_flash_dev
 	$(MAKE) -C tests/isa RTLSIM=$(abspath $(BUILD)/rtlsim) SDCC_DIR=$(SDCC_DIR)
 	$(MAKE) -C tests/bank RTLSIM=$(abspath $(BUILD)/rtlsim) SDCC_DIR=$(SDCC_DIR)
+	$(MAKE) -C tests/flashbusy RTLSIM=$(abspath $(BUILD)/rtlsim) SDCC_DIR=$(SDCC_DIR)
+	python3 tests/flashbusy/test_busy_control.py --rtlsim $(BUILD)/rtlsim
 ifneq ($(FW_IMAGE),)
 	python3 tests/fw/test_boot.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/net/test_nic.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
@@ -120,6 +122,7 @@ clean:
 	rm -rf $(BUILD)
 	$(MAKE) -C tests/isa clean
 	$(MAKE) -C tests/bank clean
+	$(MAKE) -C tests/flashbusy clean
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 

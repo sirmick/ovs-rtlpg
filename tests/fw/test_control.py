@@ -12,6 +12,8 @@
   and moves on as firmware time does; run until <sym> > value stops there.
 - A command typed on the UART reaches cmd_parser (run until pc, a banked
   symbol) and answers.
+- Nothing reads the bank window while the flash erases or programs (the
+  boot writes its default config).
 - A power cut and a chip reset both boot it again, with time running on; a
   line the cut interrupted stays unfinished, and the boot starts afresh.
 
@@ -107,8 +109,10 @@ def session(a):
         log(f"reset {fmt_us(sim.reset())}")
         boot(sim, "reset")
         log(f"time {sim.time()}")
-        for t, kind, text in sim.checks():
+        found = sim.checks()
+        for t, kind, text in found:
             log(f"check {fmt_us(t)} {kind} {text}")
+        facts["flash-busy"] = [c for c in found if c[1] == "flash-busy"]
     return out, facts
 
 
@@ -218,6 +222,8 @@ def main():
           "a typed command reaches cmd_parser (run until pc, banked) and answers")
     check(f["powercut"] is not None and f["reset"] is not None and f["powercut"] > f["boot"],
           "a power cut and a chip reset boot it again, firmware time running on")
+    check(not f["flash-busy"], f"boots, saves its config and answers without reading a bank while the flash is busy "
+          f"(40 ms erases, 1 ms programs): {f['flash-busy'][:1]}")
     check(f["powercut_lines"][0] == ("ver", False) and f["powercut_lines"][1:3] == f["boot_lines"][:2],
           "a line the power cut interrupted stays unfinished; the boot after it starts a line of its own")
     second, _ = session(a)

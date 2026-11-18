@@ -162,6 +162,8 @@ public:
 
 	// One request; false after quit.
 	bool request(const std::string &line, std::string &reply);
+	// The exit code: 6 if the firmware broke the flash busy rule.
+	int exit_code() const { return m_busy_violations + m_sys->flash_busy_violations ? 6 : 0; }
 
 private:
 	enum class stop { done, hit, halt };
@@ -194,6 +196,7 @@ private:
 	system_factory m_make;
 	symbol_map m_map;
 	u64 m_base = 0;				// firmware time at the last power-on
+	u64 m_busy_violations = 0;		// in the systems before the last power cut
 	std::map<unsigned, int> m_links;	// link requests, kept over a power cut
 
 	std::vector<uart_line> m_uart;		// since the last uart read
@@ -214,6 +217,12 @@ void controller::attach()
 	s.slice = SLICE;
 	s.slice_phase = m_base % SLICE;
 	s.cpu().exact_time = true;
+	s.flash().timing = m_opt.flash_timing;
+	s.flash().t.sector_erase = 1250000;	// 40 ms
+	s.flash().t.program = 31250;		// 1 ms
+	s.flash().t.block_erase = 4687500;	// 150 ms (W25Q16JV, typical)
+	s.flash().keep_before = true;
+	s.flash_busy_check = m_opt.flash_timing;
 	s.cpu().uart_timing = true;
 	s.cpu().uart_lost = [this](u8 c, bool ri) {
 		report("uart-lost", "uart: received 0x%02x lost, %s", c, ri ? "RI still set (the last byte unread)" : "reception off (REN)");
@@ -434,6 +443,7 @@ void controller::powercut()
 {
 	u64 const t = now();
 	auto bc = std::move(m_sys->bankcheck);
+	m_busy_violations += m_sys->flash_busy_violations;
 	auto flash = m_sys->take_flash();
 	m_sys.reset();
 	flash->power_on(t);
@@ -636,7 +646,7 @@ int control_main(const control_options &opt, std::unique_ptr<rtl837x_system> sys
 		while ((nl = in.find('\n')) == std::string::npos) {
 			ssize_t n = read(fd, buf, sizeof buf);
 			if (n <= 0)
-				return 0;	// the client went away
+				return ctl->exit_code();	// the client went away
 			in.append(buf, n);
 		}
 		std::string line = in.substr(0, nl);
@@ -646,6 +656,6 @@ int control_main(const control_options &opt, std::unique_ptr<rtl837x_system> sys
 		std::string reply;
 		bool const more = ctl->request(line, reply);
 		if (!send_all(fd, reply + "\n") || !more)
-			return 0;
+			return ctl->exit_code();
 	}
 }
