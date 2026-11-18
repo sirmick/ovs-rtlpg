@@ -78,6 +78,17 @@ void rtl837x_system::seed_chip()
 	m_core.set_reg(0x0004, 0x83000000 | ((m_id.rtl8373 ? 0x73u : 0x72u) << 16) | (m_id.n_variant ? 0x7000 : 0));
 	m_core.set_reg(0x0010, m_id.uuid);
 	m_core.set_reg(0x0014, m_id.lot_no);
+	// Reset values measured on the 8x (RTL8373): MSTP_STATES all forwarding;
+	// the RLDP block (loop detection) off, compare-ID on, 8/8 retries,
+	// 2000/2000 ms periods, every port probing.
+	m_core.set_reg(0x5310, 0x000fffff);
+	m_core.set_reg(0x106c, 0x00000004);
+	m_core.set_reg(0x1070, 0x00000808);
+	m_core.set_reg(0x1074, 0x07d007d0);
+	m_core.set_reg(0x1078, 0x000003ff);
+	// LOOP_STATE and LEAVE_LOOP_STATE latch; a 1 written clears its bit
+	for (u16 r : {u16(0x108c), u16(0x1094)})
+		m_core.on_write(r, [this, r](u32 v) { return m_core.reg(r) & ~v; });
 	u8 rev = m_id.revision;
 	m_core.on_read(0x000c, [rev](u32 v) { return (v & 0xa0000) == 0xa0000 ? (v & ~0xff00u) | (u32(rev) << 8) : v; });
 }

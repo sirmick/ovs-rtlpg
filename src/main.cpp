@@ -410,6 +410,7 @@ int main(int argc, char **argv)
 		if (ofp) {
 			ofp->poll();
 			fab->update();
+			fab->tick();
 		}
 		if (!sys.run(slice)) {
 			rc = 0;

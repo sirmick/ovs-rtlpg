@@ -8,10 +8,13 @@
 enum : u16 {
 	REG_INGRESS = 0x4e10, VLAN_CTRL = 0x4e14, VLAN_IGR_FLTR = 0x4e18, PVID_BASE = 0x4e1c,
 	PORT_ISOLATION = 0x50c0, IGMP_PORT_CFG = 0x52a0, IPV4_PORT_MC_LM_ACT = 0x4f78,
+	MSTP_STATES = 0x5310, RLDP_RLPP_CTRL = 0x106c,
 };
 enum : u32 { VLAN_VALID = 1u << 25, VLAN_CVLAN_FILTER = 0x4 };
 // RTL837X_IGMP_PORT_CFG: igmp on sets these trap bits per port (igmp off: flood 0x15).
 enum : u32 { IGMP_TRAP = 0x2a, ETH_P_IP = 0x0800, IPPROTO_IGMP = 2 };
+// RLDP probes (Realtek's RRCP EtherType) and the control register's enable bit
+enum : u32 { ETH_P_RRCP = 0x8899, RLDP_EN = 0x01 };
 // Metadata: bits 9:0 the ingress port's isolation mask; bit 10 set by table 0
 // when the frame came in untagged (table 0 pushes a tag on every frame).
 enum : u64 { META_ISOLATION = 0x3ff, META_UNTAGGED = 0x400 };
@@ -48,7 +51,42 @@ std::vector<flow> compile_flows(const switch_core &core, const switch_tables &ta
 	std::vector<unsigned> ports;
 	for (auto &p : b.ports)
 		ports.push_back(p.phys);
-	auto isolation = [&](unsigned p) -> u64 { return core.reg(PORT_ISOLATION + 4 * p) & 0x3ff; };
+	// MSTP_STATES, 2 bits a port: 11 forwarding; 01 blocking, 10 learning and
+	// 00 disabled all forward nothing (learning would learn: not modelled).
+	// The CPU port always forwards.
+	auto forwarding = [&](unsigned p) { return p == CPU_PORT || (core.reg(MSTP_STATES) >> (2 * p) & 3) == 3; };
+	auto isolation = [&](unsigned p) -> u64 {
+		u64 m = core.reg(PORT_ISOLATION + 4 * p) & 0x3ff;
+		for (unsigned q : ports)
+			if (!forwarding(q))
+				m &= ~(1ull << q);	// nothing leaves through a port that isn't forwarding
+		return m;
+	};
+
+	// 0: a port that isn't forwarding takes in only BPDUs, which reach the CPU
+	// (silicon: "BPDUs reach the CPU even on a blocked port"; LACP doesn't).
+	for (unsigned p : ports) {
+		if (forwarding(p))
+			continue;
+		flow drop = make(TABLE_CLASSIFY, 250);
+		drop.in_port = p + 1;
+		fl.push_back(drop);
+		flow bpdu = make(TABLE_CLASSIFY, 260);
+		bpdu.in_port = p + 1;
+		bpdu.has_dst = true;
+		bpdu.dst = {0x01, 0x80, 0xc2, 0x00, 0x00, 0x00};
+		bpdu.actions.push_back({of_action::CONTROLLER});
+		fl.push_back(bpdu);
+	}
+	// 0: with loop detection on, every RLDP probe goes to the chip's RLDP
+	// engine (fabric.cpp), from any port, a blocked one too: the engine keeps
+	// probing through a port the firmware blocked.
+	if (core.reg(RLDP_RLPP_CTRL) & RLDP_EN) {
+		flow r = make(TABLE_CLASSIFY, 400);
+		r.eth_type = ETH_P_RRCP;
+		r.actions.push_back({of_action::CONTROLLER});
+		fl.push_back(r);
+	}
 
 	// 0: classify
 	for (unsigned p : ports) {
@@ -126,9 +164,11 @@ std::vector<flow> compile_flows(const switch_core &core, const switch_tables &ta
 		drop.priority = 90;	// isolated from the ingress port
 		fl.push_back(drop);
 		d.meta = d.meta_mask = 1ull << q;
-		if (q != CPU_PORT && untagged(tables.vlan(vid), q))
-			d.actions.push_back({of_action::POP_VLAN});
-		d.actions.push_back(out(q));
+		if (forwarding(q)) {
+			if (q != CPU_PORT && untagged(tables.vlan(vid), q))
+				d.actions.push_back({of_action::POP_VLAN});
+			d.actions.push_back(out(q));
+		}
 		fl.push_back(d);
 	}
 	flow learn = make(TABLE_LEARN, 0);
