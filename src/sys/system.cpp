@@ -273,7 +273,8 @@ u8 rtl837x_system::busy_read(u32 flash_addr, u16 addr, bool code, bool cpu)
 	if (op.start != m_reported_op) {
 		m_reported_op = op.start;
 		u16 const ppc = m_cpu.ppc();
-		char const *what = !code ? "movx read" : u16(addr - ppc) < 3 ? "instruction fetch" : "movc";
+		u8 const op0 = code_read(ppc);	// a look: 0xff if it is in the window itself
+		char const *what = !code ? "movx read" : op0 == 0x93 || op0 == 0x83 ? "movc" : "instruction fetch";
 		u64 const now = m_flash->now();
 		auto ms = [](u64 c) {
 			char b[32];

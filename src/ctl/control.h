@@ -71,7 +71,8 @@
 //                                     read the bank window while the flash was busy
 //
 // The flash takes its time (unless --no-flash-timing): a sector erase 40 ms,
-// a page program (the controller's, up to 4 bytes) 1 ms, a 64K block erase
+// a page program of n bytes (the controller sends up to 4) 30 + 2.5 (n - 1)
+// µs, at most 400 µs (W25Q typical, sys/flashctl.h), a 64K block erase
 // 150 ms. While it is busy the bank window reads 0xff and every fetch, movc or
 // movx read from it is a violation: checks lists the first of each
 // operation as flash-busy, with PC, PSBANK, SP and the firmware time. A power

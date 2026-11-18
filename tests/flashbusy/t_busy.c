@@ -16,11 +16,17 @@ __sfr __at(0xab) FL_ADDR16;
 __sfr __at(0xaa) FL_ADDR8;
 __sfr __at(0xa9) FL_ADDR0;
 __sfr __at(0xac) FL_DATA0;
+__sfr __at(0xad) FL_DATA8;
+__sfr __at(0xae) FL_DATA16;
+__sfr __at(0xaf) FL_DATA24;
 
 uint8_t b1_value(uint8_t x) __banked;
 
 /* the sector to erase: one nothing runs from (a test may poke another) */
 __xdata uint32_t erase_addr = 0x70000;
+/* set by a test: then program 4 bytes and 1 byte into it after the erase,
+ * between markers it can time */
+__xdata uint8_t do_program = 0;
 
 static void go(void)
 {
@@ -56,12 +62,45 @@ void wait_idle(void)
 		;
 }
 
+/* page program of n (1-4) bytes at erase_addr + off, as flash_write_bytes() */
+void program(uint8_t off, uint8_t n)
+{
+	uint32_t const a = erase_addr + off;
+	FL_TCONF = 0x18;
+	FL_CMD = 0x06;
+	go();
+	FL_TCONF = 0x08 | n;
+	FL_CMD = 0x02;
+	FL_ADDR16 = a >> 16;
+	FL_ADDR8 = a >> 8;
+	FL_ADDR0 = a;
+	FL_DATA0 = 0x5a;
+	FL_DATA8 = 0xa5;
+	FL_DATA16 = 0x3c;
+	FL_DATA24 = 0xc3;
+	go();
+}
+
+/* markers for a test to stop at (an asm body: SDCC drops calls to empty ones) */
+void mark_programmed(void) { __asm nop __endasm; }
+void mark_idle(void) { __asm nop __endasm; }
+
 int main(void)
 {
 	out_s("erase\n");
 	erase_start();
 #ifdef WAIT_IN_COMMON
 	wait_idle();
+	if (do_program) {
+		program(0, 4);
+		mark_programmed();
+		wait_idle();
+		mark_idle();
+		program(4, 1);
+		mark_programmed();
+		wait_idle();
+		mark_idle();
+	}
 #endif
 	out_kv("b1", b1_value(7));
 	out_kv("psbank", PSBANK);

@@ -10,6 +10,10 @@ With the images the Makefile builds (busy_bad.bin, busy_good.bin):
   exits 6.
 - busy_good: no finding, exit 0, and the call comes one sector erase (40 ms)
   after the erase started.
+- A page program of n bytes keeps the chip busy tBP1 + (n - 1) tBP2 (30 +
+  2.5 µs): the home bank's status polling (a read every ~8 µs) sees it end
+  37.5 µs after a 4-byte program and 30 µs after a 1-byte one, plus at most
+  a poll; the bytes are written.
 - A power cut half way through the erase of a sector full of a pattern
   leaves it erased up to about half, and the rest as it was.
 """
@@ -58,6 +62,19 @@ def main():
     check(not found and sim.p.returncode == 0 and [x for _, x, _ in lines][:3] == ["erase", "b1=00000031", "psbank=00000000"],
           f"busy_good: clean, exit {sim.p.returncode}, the same answer")
     check(40000 <= gap < 41000, f"busy_good: BANK1 is called {gap / 1000:.3f} ms after the erase began (a sector erase: 40 ms)")
+
+    with Sim(good, map=mp, rtlsim=a.rtlsim, args=["--quiet"]) as sim:
+        sim.run_until_pc("main", max_ms=10)
+        sim.poke("x:do_program", b"\x01")	# after the startup code set it
+        win = {}
+        for n in (4, 1):
+            t0 = sim.run_until_pc("mark_programmed", max_ms=100)
+            win[n] = sim.run_until_pc("mark_idle", max_ms=10) - t0
+        written = sim.peek(f"b{(SECTOR - 0x4000) // 0xc000 + 1}:0x4000", 6)
+        found = [c for c in sim.checks() if c[1] == "flash-busy"]
+    check(37 <= win[4] < 50 and 30 <= win[1] < 42 and written == bytes.fromhex("5aa53cc35aff") and not found,
+          f"a page program is timed by its bytes: busy seen {win[4]} µs after 4 bytes (37.5), {win[1]} µs after 1 (30); "
+          f"written {written.hex()}")
 
     # a flash with the image and a pattern in the sector the program erases
     flash = os.path.join(a.out, "busy_cut.flash")

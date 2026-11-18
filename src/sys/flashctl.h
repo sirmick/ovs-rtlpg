@@ -49,12 +49,32 @@ public:
 	std::vector<u8> secreg;
 
 	// Timing (timing = true; else everything is done at once), in machine
-	// cycles (31.25 M a second), as measured on the bench SWTG024AS's W25Q40:
-	// a page program keeps the chip BUSY ~1.9 ms, a 4K sector erase ~45 ms
+	// cycles (31.25 M a second), from the bench SWTG024AS's W25Q40: a page
+	// program command keeps the chip BUSY ~1.9 ms, a 4K sector erase ~45 ms
 	// (datasheet typical), a 64K block ~150 ms; a transfer keeps the
 	// controller's EXEC busy ~8 us (reads ~500 KiB/s). `now` is the clock.
+	//
+	// The 1.9 ms is likely not per command: the controller programs at most 4
+	// bytes a command, and RTLPlayground's flash_write_bytes() sends write
+	// enable + page program per 4 bytes, waiting for BUSY each time, so a 256
+	// byte write is 64 commands of ~30 us, ~1.9 ms. A program of n bytes
+	// takes tBP1 + (n - 1) tBP2 (W25Q BV/DV/JV: 30 + 2.5 us typical, 50 + 12
+	// max); tPP (0.4 ms typical, 0.7 max) is for a whole page, which this
+	// firmware never sends. With program_first_ns set, a program is timed so
+	// (capped at page_max_ns); else it takes `program`, whatever its length.
+	// To measure on the 8x (phase C): flash_write_bytes() of 4 and of 256.
 	struct timings {
 		u64 program = 59375, sector_erase = 1406250, block_erase = 4687500, transfer = 250;
+		u64 program_first_ns = 0, program_byte_ns = 0, page_max_ns = 0;
+		u64 program_cycles(unsigned n) const
+		{
+			if (!program_first_ns)
+				return program;
+			u64 ns = program_first_ns + (n ? n - 1 : 0) * program_byte_ns;
+			if (page_max_ns && ns > page_max_ns)
+				ns = page_max_ns;
+			return ns / 32;		// 31.25 cycles a µs: 32 ns a cycle
+		}
 	} t;
 	bool timing = false;
 	std::function<u64()> now;

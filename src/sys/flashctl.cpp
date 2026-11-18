@@ -163,7 +163,7 @@ void flash_controller::execute()
 		case 0x02:						// page program
 			if (m_wel) {
 				unsigned const n = ops();
-				begin_op('P', addr, len, t.program);
+				begin_op('P', addr, len, t.program_cycles(len));
 				fd_write(&m_dev, addr, data, len);
 				if (op_log && ops() != n)
 					fprintf(op_log, "P %06x %u\n", addr, len);

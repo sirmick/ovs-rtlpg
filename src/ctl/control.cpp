@@ -219,7 +219,9 @@ void controller::attach()
 	s.cpu().exact_time = true;
 	s.flash().timing = m_opt.flash_timing;
 	s.flash().t.sector_erase = 1250000;	// 40 ms
-	s.flash().t.program = 31250;		// 1 ms
+	s.flash().t.program_first_ns = 30000;	// a program: tBP1 + (n - 1) tBP2,
+	s.flash().t.program_byte_ns = 2500;	// W25Q typical (flashctl.h)
+	s.flash().t.page_max_ns = 400000;	// tPP, for a whole page
 	s.flash().t.block_erase = 4687500;	// 150 ms (W25Q16JV, typical)
 	s.flash().keep_before = true;
 	s.flash_busy_check = m_opt.flash_timing;
