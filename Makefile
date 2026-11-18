@@ -13,7 +13,7 @@ SDCC_DIR ?= $(firstword $(wildcard $(RTLPG)/toolchain/sdcc-*/bin))
 
 BUILD = build
 MAME_SRC = $(addprefix third_party/mame/mcs51/,i8051.cpp mcs51ops.cpp i8052.cpp dw8051.cpp mcs51dasm.cpp)
-SIM_SRC = $(wildcard src/cpu/*.cpp) $(wildcard src/sys/*.cpp) $(wildcard src/net/*.cpp) $(wildcard src/fabric/*.cpp)
+SIM_SRC = $(wildcard src/cpu/*.cpp) $(wildcard src/sys/*.cpp) $(wildcard src/net/*.cpp) $(wildcard src/fabric/*.cpp) $(wildcard src/ctl/*.cpp)
 C_SRC = src/sys/flash_dev.c
 MAIN_SRC = src/main.cpp
 

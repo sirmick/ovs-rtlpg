@@ -8,6 +8,7 @@
 //          [--print-flows] [--ageing S] [--powercut-after N] [--flash-ops FILE]
 //          [--rtl8238b-e8 N] [--rtl8238b-alt-arm] [--rtl8238b-dump FILE] [--trace-pse]
 //          [--flash-timing] [--trace-reset] [--flash-secreg FILE]
+//          [--control SOCKET [--map FILE]]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -78,10 +79,18 @@
 // --check-banks MAP reports constants read with movc from bytes that ran as
 // code in the same bank (the const-bank bug class; see sys/bankcheck.h).
 //
+// --control SOCKET hands the clock to a test (ctl/control.h, and the client
+// tests/rtlsim_ctl.py): rtlsim listens on a UNIX socket, starts paused, and
+// runs, reads and writes the firmware only as the requests on it say, in
+// firmware time; the UART is the socket's, not stdin/stdout, and findings
+// go to its `checks` (and stderr, unless --quiet). --map FILE, the
+// firmware's .map, gives it symbols. Without --control nothing changes.
+//
 // Exits 0 when the program halts ("sjmp ."), 2 when the cycle budget runs out
 // (--cycles 0: no budget), 3 when stdin closes after input was given, 4 when
 // the bank check found something, 5 on a power cut (--powercut-after).
 #include "sys/system.h"
+#include "ctl/control.h"
 #include "net/stream.h"
 #include "net/openflow.h"
 #include "fabric/fabric.h"
@@ -165,6 +174,7 @@ int main(int argc, char **argv)
 	const char *pse_dump = nullptr;
 	const char *flash_ops = nullptr;
 	const char *flash_secreg = nullptr;
+	control_options control;
 	std::vector<std::pair<unsigned, std::string>> sfps;
 	std::vector<std::pair<unsigned, int>> links;
 	long long cycles = 100000000;
@@ -249,13 +259,18 @@ int main(int argc, char **argv)
 			stats = true;
 		else if (!strcmp(argv[i], "--trace-reset"))
 			trace_reset = true;
+		else if (!strcmp(argv[i], "--control") && i + 1 < argc)
+			control.path = argv[++i];
+		else if (!strcmp(argv[i], "--map") && i + 1 < argc)
+			control.map = argv[++i];
 		else {
 			fprintf(stderr, "usage: rtlsim [--image fw.bin] [--flash state.bin] [--flash-size 512K] [--cycles N] [--trace] "
 				"[--trace-sfr] [--trace-reg] [--trace-flash] [--link P=SPEED] [--check-banks MAP] [--quiet] [--stats] "
 				"[--nic PATH --nic-port N] [--trace-nic] [--realtime|--no-realtime] [--sfp SLOT=EEPROM.bin] [--trace-i2c] "
 				"[--ofp PATH] [--trace-of] [--board FILE] [--print-flows] [--ageing S] "
 				"[--powercut-after N] [--flash-ops FILE] [--rtl8238b-e8 N] [--rtl8238b-alt-arm] "
-				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing] [--trace-reset] [--flash-secreg FILE]\n");
+				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing] [--trace-reset] [--flash-secreg FILE] "
+				"[--control SOCKET [--map FILE]]\n");
 			return 1;
 		}
 	}
@@ -292,37 +307,54 @@ int main(int argc, char **argv)
 		fprintf(stderr, "rtlsim: %s\n", e.what());
 		return 1;
 	}
-	rtl837x_system sys(std::move(flash), brd);
-	sys.trace_insn = trace;
-	sys.trace_reset = trace_reset;
-	sys.trace_sfr = trace_sfr;
-	sys.core().trace = trace_reg;
-	sys.core().log_unmodelled = !quiet;
-	sys.flash().trace = trace_flash;
-	sys.flash().timing = flash_timing;
-	if (powercut_after >= 0)
-		sys.flash().power_cut_after(powercut_after);
-	if (flash_secreg)
-		sys.flash().secreg = load(flash_secreg);
-	if (flash_ops && !(sys.flash().op_log = fopen(flash_ops, "w"))) {
-		fprintf(stderr, "rtlsim: cannot write %s\n", flash_ops);
-		return 1;
-	}
-	for (auto &[p, sp] : links)
-		sys.set_link(p, sp);
-	sys.i2c().trace = trace_i2c;
-	if (auto *pse = sys.pse()) {
-		pse->e8 = pse_e8;
-		pse->alt_arm = pse_alt;
-		pse->trace = trace_pse;
-		if (pse_dump)
-			pse->on_image = [pse_dump](const std::vector<u8> &img) {
-				if (FILE *f = fopen(pse_dump, "wb")) {
-					fwrite(img.data(), 1, img.size(), f);
-					fclose(f);
-				}
-			};
-	}
+	// The chip around the flash, as the command line has it (again after a
+	// power cut in control mode); nullptr after saying what was wrong.
+	system_factory make_system = [&](std::unique_ptr<flash_controller> flash) -> std::unique_ptr<rtl837x_system> {
+		auto sysp = std::make_unique<rtl837x_system>(std::move(flash), brd);
+		rtl837x_system &sys = *sysp;
+		sys.trace_insn = trace;
+		sys.trace_reset = trace_reset;
+		sys.trace_sfr = trace_sfr;
+		sys.core().trace = trace_reg;
+		sys.core().log_unmodelled = !quiet;
+		sys.flash().trace = trace_flash;
+		sys.flash().timing = flash_timing;
+		if (powercut_after >= 0)
+			sys.flash().power_cut_after(powercut_after);
+		if (flash_secreg)
+			sys.flash().secreg = load(flash_secreg);
+		if (flash_ops && !sys.flash().op_log && !(sys.flash().op_log = fopen(flash_ops, "w"))) {
+			fprintf(stderr, "rtlsim: cannot write %s\n", flash_ops);
+			return nullptr;
+		}
+		for (auto &[p, sp] : links)
+			sys.set_link(p, sp);
+		sys.i2c().trace = trace_i2c;
+		if (auto *pse = sys.pse()) {
+			pse->e8 = pse_e8;
+			pse->alt_arm = pse_alt;
+			pse->trace = trace_pse;
+			if (pse_dump)
+				pse->on_image = [pse_dump](const std::vector<u8> &img) {
+					if (FILE *f = fopen(pse_dump, "wb")) {
+						fwrite(img.data(), 1, img.size(), f);
+						fclose(f);
+					}
+				};
+		}
+		for (auto &[slot, path] : sfps) {
+			std::vector<u8> e = load(path.c_str());
+			if (e.size() != 256 && e.size() != 512) {
+				fprintf(stderr, "rtlsim: %s: an SFP EEPROM is 256 or 512 bytes\n", path.c_str());
+				return nullptr;
+			}
+			if (!sys.set_sfp(slot, e)) {
+				fprintf(stderr, "rtlsim: the %s board has no SFP slot %u\n", sys.board_info().name.c_str(), slot);
+				return nullptr;
+			}
+		}
+		return sysp;
+	};
 	for (auto &c : brd.sfp) {	// the board's modules, unless --sfp says otherwise
 		bool given = false;
 		for (auto &[slot, path] : sfps)
@@ -330,17 +362,25 @@ int main(int argc, char **argv)
 		if (!c.module.empty() && !given)
 			sfps.emplace_back(c.slot, c.module);
 	}
-	for (auto &[slot, path] : sfps) {
-		std::vector<u8> e = load(path.c_str());
-		if (e.size() != 256 && e.size() != 512) {
-			fprintf(stderr, "rtlsim: %s: an SFP EEPROM is 256 or 512 bytes\n", path.c_str());
+	auto sysp = make_system(std::move(flash));
+	if (!sysp)
+		return 1;
+	if (control.path) {
+		if (nic_path || ofp_path || powercut_after >= 0) {
+			fprintf(stderr, "rtlsim: --control takes no --nic, --ofp or --powercut-after\n");
 			return 1;
 		}
-		if (!sys.set_sfp(slot, e)) {
-			fprintf(stderr, "rtlsim: the %s board has no SFP slot %u\n", sys.board_info().name.c_str(), slot);
-			return 1;
+		if (check_map) {
+			sysp->bankcheck = std::make_unique<bank_checker>();
+			if (!sysp->bankcheck->load_map(check_map)) {
+				fprintf(stderr, "rtlsim: cannot read %s\n", check_map);
+				return 1;
+			}
 		}
+		control.quiet = quiet;
+		return control_main(control, std::move(sysp), make_system);
 	}
+	rtl837x_system &sys = *sysp;
 	std::unique_ptr<stream_port> wire;
 	std::unique_ptr<of_controller> ofp;
 	try {
