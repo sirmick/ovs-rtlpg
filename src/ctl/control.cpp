@@ -365,10 +365,15 @@ void controller::poke(const loc &l, const std::vector<u8> &d)
 
 bool controller::uart_matches()
 {
+#ifdef REG_STARTEND
 	regmatch_t m[1];
 	m[0].rm_so = 0;
 	m[0].rm_eo = regoff_t(m_uart_text.size());
 	return regexec(m_uart_re, m_uart_text.c_str(), 1, m, REG_STARTEND) == 0;
+#else
+	// musl (the VM's build) has no REG_STARTEND: a NUL the firmware sent ends the text
+	return regexec(m_uart_re, m_uart_text.c_str(), 0, nullptr, 0) == 0;
+#endif
 }
 
 std::string controller::block(const std::vector<std::string> &lines)
