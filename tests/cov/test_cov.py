@@ -14,9 +14,16 @@ a test sets do_program:
   same line by line; --require-lines fails on them, --require-functions too;
 - two runs diff clean; one with do_program set differs in exactly program(),
   the markers and main (its branch), and program()'s lines all ran;
-- cov reset forgets what ran before it.
+- cov reset forgets what ran before it;
+- lines that can't run by design are left out: t_busy.c's "return 0;" and
+  "}" after halt() carry cov:ignore, so with do_program every line ran;
+  without the source (--src elsewhere) they are misses, and --except
+  FILE:LINE-LAST leaves them out instead; --except on all but one miss fails
+  on that one;
+- two linked objects of one basename (a/m.rel, b/m.rel) are both read, as
+  modules a/m and b/m.
 """
-import argparse, os, subprocess, sys, tempfile
+import argparse, os, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, ".."))
 sys.path.insert(0, os.path.join(HERE, "../../tools"))
@@ -92,9 +99,43 @@ def main():
           f"with do_program the diff is exactly {changed} (main: its if branch), and program()'s lines ran")
     empty = Coverage(c4, mp)
     check(not any(f[0] for f in empty.functions.values()), "cov reset forgets what ran before it")
-    for f in os.listdir(d):
-        os.unlink(os.path.join(d, f))
-    os.rmdir(d)
+
+    nowhere = os.path.join(d, "nosrc")
+    os.mkdir(nowhere)
+    req = lambda dump, *extra: subprocess.run(report + [dump, "--map", mp, "--require-lines", "t_busy.c", *extra],
+                                              capture_output=True, text=True)
+    marked, unmarked = req(c3), req(c3, "--src", nowhere)
+    excepted = req(c3, "--src", nowhere, "--except", "t_busy.c:109-110")
+    check(marked.returncode == 0 and "2 lines left out" in marked.stdout and unmarked.returncode == 1
+          and "t_busy.c:109: didn't run" in unmarked.stdout and "t_busy.c:110: didn't run" in unmarked.stdout
+          and excepted.returncode == 0,
+          "cov:ignore leaves halt()'s dead return and } out (every other line ran); without the source they are "
+          "misses; --except t_busy.c:109-110 leaves them out too")
+    misses = [n for n, _ in Coverage(c1, mp, src_dirs=[nowhere]).missed_lines("t_busy.c")]
+    all_but_one = req(c1, "--src", nowhere, *[x for n in misses[1:] for x in ("--except", f"t_busy.c:{n}")])
+    check(all_but_one.returncode == 1 and f"t_busy.c:{misses[0]}: didn't run" in all_but_one.stdout
+          and all_but_one.stdout.count("didn't run") == 1,
+          f"--except on {len(misses) - 1} of {len(misses)} misses fails on the one left: line {misses[0]}")
+
+    # two objects named m, in a/ and b/: a link of both, m's functions fa and fb
+    syn = os.path.join(d, "syn")
+    for sub, fn, addr in (("a", "fa", 0x100), ("b", "fb", 0x200)):
+        os.makedirs(os.path.join(syn, sub))
+        with open(os.path.join(syn, sub, "m.rst"), "w") as o:
+            o.write(f"                                      1 ;\t-----\n"
+                    f"                                      2 ;\t function {fn}\n"
+                    f"                                      3 ;\tm.c:5: x = 0;\n"
+                    f"      {addr:06X} E4               [12]    4 \tclr\ta\n")
+    with open(os.path.join(syn, "syn.map"), "w") as o:
+        o.write("Files Linked                              [ module(s) ]\n\nsyn/a/m.rel  [  ]\nsyn/b/m.rel  [  ]\n\n\nUser Base Address Definitions\n")
+    bits = bytearray(8192)
+    bits[0x100 >> 3] |= 1 << (0x100 & 7)
+    with open(os.path.join(syn, "syn.cov"), "wb") as o:
+        o.write(b"RTLCOV1\n" + bytes([0, 0, 0, 0]) + bits)
+    syncov = Coverage(os.path.join(syn, "syn.cov"), os.path.join(syn, "syn.map"))
+    check(syncov.functions == {"fa": (1, 1, "syn/a/m"), "fb": (0, 1, "syn/b/m")},
+          f"two linked objects named m are both read, as modules syn/a/m and syn/b/m: {syncov.functions}")
+    shutil.rmtree(d)
     print("test_cov: " + ("ALL PASS" if not failures else f"{failures} FAILED"))
     return 1 if failures else 0
 

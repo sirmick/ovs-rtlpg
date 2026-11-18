@@ -8,6 +8,15 @@
         [--require-functions NAME...]       exit 1 unless each of them ran
         [--diff DUMP2]                      functions that ran in one dump and not the
                                             other, or ran other instructions; exit 1 if any
+        [--except FILE:LINE[-LAST]]...      leave lines out of --lines/--require-lines
+        [--src DIR]...                      where the .c files are (for cov:ignore)
+
+Lines that can't run by design (the epilogue under the "}" of a function
+that never returns, a defensive branch) are left out of --lines and
+--require-lines with --except FILE:LINE, or by "cov:ignore" in a comment on
+the line in the source (/* cov:ignore: never returns */), the .c found
+where the .rst cites it, under --src, else the map's directory or up to
+three above it. --require-lines says which it left out.
 
 DUMP's addresses are mapped through the SDCC relocated listings (*.rst) of
 the objects the map's link took (its "Files Linked", found under --rst,
@@ -33,6 +42,7 @@ As a module, for tests:
     cov.ran_function("sched_run")    # True / False
     cov.lines("sched.c")             # {line: (ran, instructions, source)}
     cov.missed_lines("sched.c")      # [(line, source)] that have code and didn't run
+    Coverage(..., excepts=["sched.c:120"], src_dirs=[...])  # as --except, --src
 """
 import argparse, os, re, sys
 
@@ -64,7 +74,8 @@ def load_dump(path):
 def rst_files(top, map_path):
     """{module: its .rst}, for every object the map's link took ("Files
     Linked"): its path, as the link had it, found under `top` by dropping
-    leading directories until it exists."""
+    leading directories until it exists. A module is named by its basename,
+    or, where two linked objects share one, by the path the link gave it."""
     found = {}
     lines = open(map_path, errors="replace").read().splitlines()
     try:
@@ -78,11 +89,15 @@ def rst_files(top, map_path):
             for k in range(len(parts)):
                 cand = os.path.join(top, *parts[k:]) + ".rst"
                 if os.path.exists(cand):
-                    found[parts[-1]] = cand
+                    found["/".join(parts)] = cand
                     break
         elif w and not w[0].startswith("[") and found:
             break		# the next section
-    return found
+    base = {}
+    for path in found:
+        base.setdefault(path.rsplit("/", 1)[-1], []).append(path)
+    return {(path.rsplit("/", 1)[-1] if len(base[path.rsplit("/", 1)[-1]]) == 1 else path): rst
+            for path, rst in found.items()}
 
 
 def load_listing(files):
@@ -108,9 +123,26 @@ def load_listing(files):
     return insns
 
 
+IGNORE = "cov:ignore"
+
+
 class Coverage:
-    def __init__(self, dump, map_path, rst_dir=None, region="auto"):
+    def __init__(self, dump, map_path, rst_dir=None, region="auto", src_dirs=(), excepts=()):
+        """excepts: "FILE:LINE" or "FILE:FIRST-LAST" to leave out of the lines
+        (by-design dead code); a source line holding "cov:ignore" (in a
+        comment) is left out too, its .c looked up in src_dirs, else under
+        the map's directory and up to three above it."""
         self.map = map_path
+        top = os.path.dirname(os.path.abspath(map_path))
+        self.src_dirs = list(src_dirs) or [top] + [os.path.abspath(os.path.join(top, *[".."] * n)) for n in (1, 2, 3)]
+        self.excepts = {}
+        for e in excepts:
+            f, _, r = e.rpartition(":")
+            if not f or not r:
+                raise ValueError(f"--except FILE:LINE[-LAST], not {e}")
+            lo, _, hi = r.partition("-")
+            self.excepts.setdefault(os.path.basename(f), set()).update(range(int(lo), int(hi or lo) + 1))
+        self._src = {}
         regions = load_dump(dump)
         if region == "auto":
             region = "loaded" if regions[1] else "boot"
@@ -133,16 +165,44 @@ class Coverage:
             raise KeyError(f"no function {name} in the listings")
         return f[0] > 0
 
+    def source(self, cfile):
+        """The C file as SDCC cited it, its lines, or None if not found."""
+        if cfile not in self._src:
+            self._src[cfile] = None
+            for d in self.src_dirs:
+                p = cfile if os.path.isabs(cfile) else os.path.join(d, cfile)
+                if os.path.exists(p):
+                    self._src[cfile] = open(p, errors="replace").read().splitlines()
+                    break
+        return self._src[cfile]
+
+    def ignored(self, cfile, line):
+        """Left out by --except or a cov:ignore comment on the line."""
+        if line in self.excepts.get(os.path.basename(cfile), ()):
+            return True
+        src = self.source(cfile)
+        return bool(src) and 0 < line <= len(src) and IGNORE in src[line - 1]
+
     def lines(self, cfile):
         """{line: (instructions ran, instructions, source)} for a C file's lines
-        with code (its name as SDCC wrote it, or its basename)."""
-        out = {}
+        with code (its name as SDCC wrote it, or its basename), but those
+        ignored()."""
+        out, cited = {}, {}
         for a, _, _, f, line, src in self.insns:
             if f is None or (f != cfile and os.path.basename(f) != os.path.basename(cfile)):
                 continue
+            cited[line] = f
             ran, total, _ = out.get(line, (0, 0, src))
             out[line] = (ran + (a in self.addrs), total + 1, src)
-        return dict(sorted(out.items()))
+        return {n: v for n, v in sorted(out.items()) if not self.ignored(cited[n], n)}
+
+    def ignored_lines(self, cfile):
+        """The lines with code that ignored() leaves out: [(line, source)]."""
+        out = {}
+        for a, _, _, f, line, src in self.insns:
+            if f is not None and (f == cfile or os.path.basename(f) == os.path.basename(cfile)) and self.ignored(f, line):
+                out[line] = src
+        return sorted(out.items())
 
     def missed_lines(self, cfile):
         return [(n, src) for n, (ran, _, src) in self.lines(cfile).items() if not ran]
@@ -160,8 +220,12 @@ def main():
     ap.add_argument("--require-lines", metavar="FILE.c")
     ap.add_argument("--require-functions", nargs="+", metavar="NAME")
     ap.add_argument("--diff", metavar="DUMP2")
+    ap.add_argument("--except", dest="excepts", action="append", default=[], metavar="FILE:LINE[-LAST]",
+                    help="leave a line (or lines) out of --lines and --require-lines (repeatable)")
+    ap.add_argument("--src", action="append", default=[], metavar="DIR",
+                    help="where the .c files are, for cov:ignore (default: the map's directory and up to 3 above)")
     a = ap.parse_args()
-    cov = Coverage(a.dump, a.map, a.rst, a.region)
+    cov = Coverage(a.dump, a.map, a.rst, a.region, a.src, a.excepts)
     rc = 0
 
     if a.diff:
@@ -184,6 +248,9 @@ def main():
     if a.require_lines:
         missed = cov.missed_lines(a.require_lines)
         n = len(cov.lines(a.require_lines))
+        ign = cov.ignored_lines(a.require_lines)
+        if ign:
+            print(f"{a.require_lines}: {len(ign)} lines left out (--except, cov:ignore): {', '.join(str(l) for l, _ in ign)}")
         if not n:
             print(f"{a.require_lines}: no lines with code in the listings")
             rc = 1

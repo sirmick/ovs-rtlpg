@@ -106,5 +106,5 @@ int main(void)
 	out_kv("psbank", PSBANK);
 	out_s("done\n");
 	halt();
-	return 0;
-}
+	return 0;	/* cov:ignore: halt() doesn't return */
+}		/* cov:ignore */
