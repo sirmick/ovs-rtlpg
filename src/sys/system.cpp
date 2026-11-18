@@ -1,5 +1,6 @@
 // system.cpp - see system.h.
 #include "sys/system.h"
+#include "sys/report.h"
 
 #include <sstream>
 
@@ -308,8 +309,8 @@ void rtl837x_system::sfr_w(u8 a, u8 d)
 	if (a == SFR_BANK_RET) {
 		if (m_bank_ret.size() >= BANK_RET_DEPTH) {	// a write without its read: keep the newest
 			if (!m_bank_ret_overflow)
-				fprintf(stderr, "rtlsim: SFR 0xbb bank stack deeper than %u at pc=%04x; dropping the oldest\n",
-					BANK_RET_DEPTH, m_cpu.pc());
+				report("bank-ret", "rtlsim: SFR 0xbb bank stack deeper than %u at pc=%04x; dropping the oldest",
+				       BANK_RET_DEPTH, m_cpu.pc());
 			m_bank_ret_overflow = true;
 			m_bank_ret.erase(m_bank_ret.begin());
 		}
@@ -320,7 +321,7 @@ void rtl837x_system::sfr_w(u8 a, u8 d)
 	if (!m_sfr_seen[a]) {
 		m_sfr_seen[a] = true;
 		if (!trace_sfr)
-			fprintf(stderr, "unmodelled SFR %02x written (%02x) at pc=%04x\n", a, d, m_cpu.pc());
+			report("unmodelled", "unmodelled SFR %02x written (%02x) at pc=%04x", a, d, m_cpu.pc());
 	}
 	m_sfr[a] = d;
 }

@@ -1,5 +1,6 @@
 // flashctl.cpp - see flashctl.h.
 #include "sys/flashctl.h"
+#include "sys/report.h"
 
 #include <cstdio>
 #include <cstring>
@@ -157,7 +158,7 @@ void flash_controller::execute()
 			m_wel = false;
 			break;
 		default:
-			fprintf(stderr, "flash: unmodelled write command %02x (tconf %02x)\n", cmd, tconf);
+			report("unmodelled", "flash: unmodelled write command %02x (tconf %02x)", cmd, tconf);
 		}
 		return;
 	}
@@ -183,6 +184,6 @@ void flash_controller::execute()
 			data[i] = addr + i < secreg.size() ? secreg[addr + i] : 0xff;
 		break;
 	default:
-		fprintf(stderr, "flash: unmodelled read command %02x (tconf %02x)\n", cmd, tconf);
+		report("unmodelled", "flash: unmodelled read command %02x (tconf %02x)", cmd, tconf);
 	}
 }

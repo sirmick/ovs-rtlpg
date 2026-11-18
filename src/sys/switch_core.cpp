@@ -1,5 +1,6 @@
 // switch_core.cpp - see switch_core.h.
 #include "sys/switch_core.h"
+#include "sys/report.h"
 
 #include <cstdio>
 #include <random>
@@ -76,7 +77,7 @@ void switch_core::note(u16 addr, bool write, u32 v)
 	}
 	if (log_unmodelled && !m_rhook.count(addr) && !m_whook.count(addr) && m_seen.insert(addr).second && !trace) {
 		const char *n = name(addr);
-		fprintf(stderr, "unmodelled reg %04x %s (%s %08x) pc=%04x\n", addr, n ? n : "", write ? "W" : "R", v, pc ? pc() : 0);
+		report("unmodelled", "unmodelled reg %04x %s (%s %08x) pc=%04x", addr, n ? n : "", write ? "W" : "R", v, pc ? pc() : 0);
 	}
 }
 
