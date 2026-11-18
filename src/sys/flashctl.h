@@ -64,6 +64,10 @@ public:
 	void power_cut_after(long n) { fd_fail_after(&m_dev, int(n)); }
 	bool power_cut() const { return m_dev.powercut; }
 	unsigned ops() const { return m_dev.erases + m_dev.writes; }
+	// Power off and on again: the controller's registers clear, the chip
+	// forgets its write enable, and an erase or program in flight (done at
+	// once, BUSY only for its time) is over.
+	void power_on() { std::fill(std::begin(m_sfr), std::end(m_sfr), 0); m_wel = false; m_busy_until = m_exec_until = 0; }
 	// A flash file: write what changed since the last call back to it (msync),
 	// so a crash or a VM killed without a shutdown can't lose it.
 	void sync();

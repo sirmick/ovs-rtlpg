@@ -286,6 +286,13 @@ u8 rtl837x_system::sfr_r(u8 a)
 	return v;
 }
 
+u8 rtl837x_system::peek_sfr(u8 a)
+{
+	if (a == SFR_BANK_RET && !m_bank_ret.empty())
+		return m_bank_ret.back();
+	return m_cpu.space(rtl837x_cpu::SPACE_SFR).read_byte(a);
+}
+
 void rtl837x_system::sfr_w(u8 a, u8 d)
 {
 	if (trace_sfr)
@@ -359,7 +366,7 @@ bool rtl837x_system::run(int cycles)
 		return false;
 	m_cpu.m_insn_hook = (trace_insn || bankcheck) ? std::function<void(offs_t)>([this](offs_t pc) { on_insn(pc); }) : nullptr;
 	int left = cycles;
-	while (left > 0 && !m_halted) {
+	while (left > 0 && !m_halted && !m_cpu.stopped) {
 		int n = m_cpu.run(std::min(left, 256));
 		left -= n;
 		this->cycles += n;

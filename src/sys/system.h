@@ -69,6 +69,18 @@ public:
 	void uart_input(const std::string &s) { m_rx.insert(m_rx.end(), s.begin(), s.end()); }
 	bool uart_idle() const { return m_rx.empty(); }
 
+	// A debugger's view (the control socket): xdata as the CPU reads it (the
+	// flash window too) and writes it; an SFR as the CPU reads it, except the
+	// bank stack (0xbb), whose top is read without popping it.
+	u8 peek_xdata(u16 a) { return xdata_r(a); }
+	void poke_xdata(u16 a, u8 d) { xdata_w(a, d); }
+	u8 peek_sfr(u8 a);
+	void poke_sfr(u8 a, u8 d) { m_cpu.space(rtl837x_cpu::SPACE_SFR).write_byte(a, d); }
+	u8 bank_byte(u8 bank, u16 addr) const { return addr < 0x4000 ? m_code_ram[addr] : m_flash->byte(code_flash_addr(addr, bank)); }
+	// The flash chip, out of a system about to be thrown away (a power cut:
+	// the next system is built around it).
+	std::unique_ptr<flash_controller> take_flash() { return std::move(m_flash); }
+
 	FILE *uart_out = stdout;
 	bool trace_insn = false;
 	std::unique_ptr<bank_checker> bankcheck;	// set to check banked constant reads

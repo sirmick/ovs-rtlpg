@@ -152,7 +152,8 @@ void rtl837x_cpu::execute_run()
 		if (idle_skip())
 			continue;
 
-		if (instruction_enabled()) {
+		bool const ran = instruction_enabled();
+		if (ran) {
 			m_ppc = m_pc;
 			debugger_instruction_hook(m_pc);
 			u8 op = m_program.read_byte(m_pc++);
@@ -166,5 +167,10 @@ void rtl837x_cpu::execute_run()
 		cycles_total += m_inst_cycles;
 		handle_ta_window();
 		m_inst_cycles = 0;
+		if (stop_request || (ran && int(m_pc) == break_pc && (break_bank < 0 || m_psbank == break_bank))) {
+			stop_request = false;
+			stopped = true;
+			break;
+		}
 	} while (m_icount > 0);
 }

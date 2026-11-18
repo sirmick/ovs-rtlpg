@@ -46,6 +46,16 @@ public:
 	u8 acc() const { return m_acc; }
 	u16 dptr() const { return m_dptr; }
 	u8 iram(u8 a) const { return m_internal_ram[a]; }
+	void iram_w(u8 a, u8 d) { m_internal_ram[a] = d; }
+
+	// Stopping between instructions (the control socket's breakpoints): run()
+	// returns early, with `stopped` set, once an instruction leaves PC at
+	// break_pc (with PSBANK break_bank, unless that is -1), or after the
+	// instruction during which stop_request was set. Unset (-1, false), they
+	// cost one compare per instruction.
+	int break_pc = -1, break_bank = -1;
+	bool stop_request = false;
+	bool stopped = false;
 
 protected:
 	virtual void device_reset() override;
