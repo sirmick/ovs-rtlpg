@@ -19,11 +19,18 @@ Then the same session again: both stamped transcripts are identical, byte for
 byte. --transcript writes the first.
 
 And inputs go in at fixed firmware times, however the test advances: a
-command queued after the boot, then 5 ms run in one go, in uneven pieces,
+command queued after the boot, then 60 ms run in one go, in uneven pieces,
 up to the prompt and on, and up to cmd_parser and on, gives the same stamped
 UART output each way, and, run on to the same cycle, the same timers;
 Timer 1, which runs free as the baud generator, stays in step with the
 cycle count through all the idling.
+
+The UART runs at its baud rate (115200: 87 µs a character). Console output
+in a burst (stat's port table) costs that per character, plus the firmware's
+TI handshake; and while a command prints, a paste arriving at the line rate
+overruns the firmware's serial ring (sbuf, 16 bytes): of 40 bytes, only the
+last 40 mod 16 are echoed once the editor runs again. With interrupts off,
+the UART itself drops what arrives while RI is set.
 
 The prompt comes before cmd_editor_init(), which drops whatever arrived
 before it: input waits 10 ms after the boot's prompt.
@@ -106,10 +113,10 @@ def session(a):
 
 
 STYLES = {
-    "run 5": [("run", "5")],
-    "run 0.517 + 1.111 + 3.372": [("run", "0.517"), ("run", "1.111"), ("run", "3.372")],
-    "until uart, run on": [("uart", r"\n> $"), ("to", "5")],
-    "until pc=cmd_parser, until uart, run on": [("pc", "cmd_parser"), ("uart", r"\n> $"), ("to", "5")],
+    "run 60": [("run", "60")],
+    "run 0.517 + 11.111 + 48.372": [("run", "0.517"), ("run", "11.111"), ("run", "48.372")],
+    "until uart, run on": [("uart", r"\n> $"), ("to", "60")],
+    "until pc=cmd_parser, until uart, run on": [("pc", "cmd_parser"), ("uart", r"\n> $"), ("to", "60")],
 }
 
 
@@ -128,9 +135,9 @@ def styles(a):
                 if kind == "run":
                     sim.run(arg)
                 elif kind == "uart":
-                    sim.run_until_uart(arg, max_ms=5)
+                    sim.run_until_uart(arg, max_ms=60)
                 elif kind == "pc":
-                    sim.run_until_pc(arg, max_ms=5)
+                    sim.run_until_pc(arg, max_ms=60)
                 else:
                     sim.run(fmt_us(t0 + int(arg) * 1000 - sim.time()[1]))
             # end on the same cycle: a value watch stops at a slice's end, a
@@ -147,6 +154,34 @@ def styles(a):
             state = f"cycles {sim.time()[0]} TL0 {sim.peek('s:0x8a', 1).hex()} TL1 {sim.peek('s:0x8b', 1).hex()} timers {sim.peek('s:0x88', 6).hex()} t2 {sim.peek('s:0xcc', 2).hex()} ticks {sim.peek_sym('ticks').hex()}"
             out[name] = (sim.time()[1] - t0, [f"{fmt_us(t)}{'' if d else '+'} {x}" for t, x, d in sim.uart_read()] + [state])
     return out
+
+
+def uart_timing(a):
+    """Console output's cost per character, and a paste during a command."""
+    with Sim(a.image, board=a.board, map=a.map, rtlsim=a.rtlsim, args=["--quiet"]) as sim:
+        sim.run_until_uart(PROMPT_RE, max_ms=30000)
+        sim.run(20)
+        sim.uart_read()
+        sim.uart_write("stat\r")
+        sim.run_until_uart(r"Port", max_ms=100)
+        paste = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"
+        sim.uart_write(paste)
+        sim.run_until_uart(r"\n> [A-Za-z]*$", max_ms=400)
+        sim.run(20)
+        lines = sim.uart_read()
+        ring = sim.sym("sbuf")[2]
+        lost = [c for c in sim.checks() if c[1] == "uart-lost"]
+        # interrupts off: nobody reads SBUF, so the UART itself overruns
+        ie = sim.peek("s:0xa8", 1)
+        sim.poke("s:0xa8", b"\x00")
+        sim.uart_write("xyz")
+        sim.run(1)
+        sim.poke("s:0xa8", ie)
+        overrun = [c[2] for c in sim.checks() if c[1] == "uart-lost"][len(lost):]
+    rows = [(t, x) for t, x, done in lines if done and x[:1].isdigit() and "\t" in x]
+    per = [(rows[i + 1][0] - rows[i][0]) / (len(rows[i][1]) + 2) for i in range(len(rows) - 1)]	# + CR LF
+    keep = len(paste) % ring
+    return per, lines[-1][1], "> " + (paste[-keep:] if keep else ""), ring, lost, overrun
 
 
 def plain_boot(a):
@@ -200,6 +235,14 @@ def main():
     if bad:
         for n, v in st.items():
             print(f"      {n}: {v[0]} {v[1][:3]}")
+    per, tail, want, ring, lost, overrun = uart_timing(a)
+    check(per and all(86 < p < 92 for p in per),
+          f"console output costs a character time a character: {', '.join(f'{p:.2f}' for p in per)} µs (87.04 + handshake)")
+    check(tail == want and not lost,
+          f"a 40-byte paste while stat prints overruns the {ring}-byte serial ring: {tail!r} echoed, {want!r} expected; "
+          f"{len(lost)} lost at the UART itself")
+    check(len(overrun) == 2 and "0x79" in overrun[0] and "0x7a" in overrun[1] and "RI still set" in overrun[0],
+          f"with interrupts off, bytes after the first are lost at the UART (RI still set): {overrun}")
     print("test_control: " + ("ALL PASS" if not failures else f"{failures} FAILED"))
     return 1 if failures else 0
 

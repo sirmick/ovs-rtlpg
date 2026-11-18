@@ -39,10 +39,15 @@
 //       idata (0-0xff), s SFR (as the CPU reads it), c code in the current
 //       bank, b<n> code in bank n (below 0x4000: the common code RAM)
 //   poke <loc> <hex>                  ok (x, i and s)
-//   uart write <text>                 ok; queued for the firmware to read. Escapes
-//                                     \\ \r \n \t \xHH; "hex:<hex>" for raw bytes
+//   uart write <text>                 ok; onto the wire, after what is on it: a byte
+//       arrives every character time (10 bit-times at the programmed baud
+//       rate, 87 µs at RTLPlayground's 115200), whether the firmware reads
+//       it or not; one that finds RI still set is lost (checks: uart-lost).
+//       Escapes \\ \r \n \t \xHH; "hex:<hex>" for raw bytes. A power cut
+//       drops what is still on the wire
 //   uart read                         ok <n>, then a line per line of output since
-//       the last read: "<t> <text>", t when its first byte went out; the
+//       the last read: "<t> <text>", t when its first byte was written to
+//       SBUF (TI sets a character time later); the
 //       last, if unfinished, "<t>+ <text>" (the rest comes in the next read);
 //       one that a reset or power cut ended is "<t>+" too, and what follows
 //       starts a new line.
@@ -54,7 +59,8 @@
 //   link <port> up [<speed>] | down   ok (physical port 0-9; speed as --link, 1g)
 //   checks                            ok <n>, then "<t> <kind> <text>": everything
 //       the model found since the start, t when it found it (kinds:
-//       unmodelled, bank-ret, bank; flash-busy and stack are to come). The
+//       unmodelled, bank-ret, uart-lost, bank; flash-busy and stack are to
+//       come). The
 //       bank checker (--check-banks) sums up its findings when asked: its
 //       lines carry the time of the checks request, not of the read.
 //   cov reset | cov dump <file>       ok (coverage: not yet; dump says err)

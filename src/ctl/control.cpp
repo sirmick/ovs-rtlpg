@@ -214,6 +214,10 @@ void controller::attach()
 	s.slice = SLICE;
 	s.slice_phase = m_base % SLICE;
 	s.cpu().exact_time = true;
+	s.cpu().uart_timing = true;
+	s.cpu().uart_lost = [this](u8 c, bool ri) {
+		report("uart-lost", "uart: received 0x%02x lost, %s", c, ri ? "RI still set (the last byte unread)" : "reception off (REN)");
+	};
 	s.core().log_unmodelled = true;
 	s.flash().now = [this]() { return now(); };
 	s.cpu().uart_tx = [this](u8 c) {
@@ -507,7 +511,7 @@ bool controller::request(const std::string &line, std::string &reply)
 				t.assign(d.begin(), d.end());
 			} else
 				t = unescape(t, false);
-			m_sys->uart_input(t);
+			m_sys->cpu().uart_rx_queue(t);
 			reply = "ok";
 		} else if (c == "uart" && w.size() == 2 && w[1] == "read") {
 			std::vector<std::string> l;

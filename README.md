@@ -157,7 +157,10 @@ firmware runs only when a request says so, and every input (UART bytes, a
 frame, a link change) goes in at the firmware time it is given at. Nothing
 reads the wall clock, so the same requests give the same replies, byte for
 byte. Firmware time is the cycle count (31.25 M a second), written ms.µs.
-The UART belongs to the socket, not stdin/stdout. The protocol (one line per
+The UART belongs to the socket, not stdin/stdout, and runs at the baud rate
+the firmware programmed (87 µs a character at 115200): TI a character time
+after each SBUF write, and input one character at a time, lost as on an 8051
+if the firmware hasn't read the last. The protocol (one line per
 request: `run`, `run until pc=|uart=|<sym> <op> <value>`, `peek`, `poke`,
 `sym`, `uart write|read`, `nic`, `link`, `checks`, `reset`, `powercut`,
 `quit`) is in `src/ctl/control.h`.
