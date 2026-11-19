@@ -18,15 +18,15 @@ rtlsim --control, as oldnew.py does, and prints each check's verdict:
   image, the config) is a result: oldnew.py compares it, here it is shown.
 
 Times are firmware times, the frames' send times as rtlsim captured them.
-PASS, FAIL, KNOWN (a failure --known lists: <scenario glob> <check glob>,
-one a line, '#' comments), SKIP. Exit 0 when no check FAILs.
+PASS, FAIL, KNOWN (a failure --known lists, within its ceiling:
+oldnew.load_known()), SKIP. Exit 0 when no check FAILs.
 """
 import argparse, os, sys, time
 from concurrent.futures import ProcessPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from oldnew import run_one, verdicts, load_expect, default_payload
+from oldnew import run_one, verdicts, load_known, stale_known, default_payload
 from scenarios import SCENARIOS
 
 CHECKED = ["lacp", "stp", "upload", "l2_big", "lacp_l2", "stp_upload"]
@@ -47,7 +47,7 @@ def main():
         if n not in SCENARIOS:
             sys.exit(f"checks: no scenario {n} (have: {' '.join(SCENARIOS)})")
     opts = {"board": a.board, "rtlsim": a.rtlsim, "payload": a.payload or default_payload(a.image)}
-    known = load_expect(a.known)
+    known = load_known(a.known)
     t0 = time.time()
     print(f"image: {a.image}" + (f"\nknown failures: {a.known}" if a.known else ""))
     fails, used = 0, set()
@@ -59,9 +59,8 @@ def main():
                 print(f"  {v} {c}: {text}")
             for k in sorted(k for k in res if " flash " in k):
                 print(f"  {k[4:]}: {res[k]}")
-    for s, g, line in known:
-        if line not in used:
-            print(f"known: {a.known}:{line}: '{s} {g}' matched no failed check")
+    for l in stale_known(known, used, names, a.known):
+        print(l)
     print(f"checks: {fails} failed, {time.time() - t0:.0f} s wall")
     sys.exit(1 if fails else 0)
 

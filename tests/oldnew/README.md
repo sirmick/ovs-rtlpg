@@ -58,7 +58,9 @@ holds what it was sent.
 
 l2_big's MACs are sequential (02:00:00:01:00:00 on); the sim's L2 table is
 the chip's geometry, 1024 buckets of 4 with an index per entry, its hash a
-placeholder: a MAC whose bucket is full is not learned, as on the chip.
+placeholder: a MAC whose bucket is full is not learned, as on the chip. The
+scenario checks that all 1000 are in the table (else it errs, on either
+side), so a learning regression can't hide by being on both.
 
 ## The new-only checks
 
@@ -86,10 +88,17 @@ overlaps the window counts, and so does the silence from the last frame to
 its end. Each verdict says the window and the min/max gap per port.
 
 Verdicts: PASS, FAIL, SKIP, and KNOWN: a failure that `--known FILE` lists
-(`<scenario glob> <check glob>  # why`, as `--expect`). `known-failures` is
-today's: the l2 gap, the hello during the upload, the CLI_RUN and HOUSE_SEC
-long steps. A line no failed check matched is flagged: a fix shows as a stale
-line. `checks.py` exits with 1 if any check FAILs.
+for that scenario, within the line's ceiling:
+
+    <scenario glob>[,<scenario glob>...]: <check glob> [<= <n> ms|s]   # why
+
+The ceiling bounds the check's worst measure (a long step's maximum, a gap
+check's largest gap out of bounds); above it the check FAILs, naming the
+line. `known-failures` is today's (dated in its header): the l2 gap, the
+hello during the upload, and the CLI_RUN, HOUSE_SEC and RX_STEP long steps,
+each in the scenarios it is seen in. A line that names a scenario that ran
+but matched no failed check is flagged: a fix shows as a stale line.
+`checks.py` exits with 1 if any check FAILs.
 
 Each step of a scenario owns a slot of firmware time:
 - Its input goes in at the slot's start.
