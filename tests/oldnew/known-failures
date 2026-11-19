@@ -1,14 +1,16 @@
 # The new-only checks' failures on record (checks.py --known, oldnew.py --known),
 # as of 2026-11-19: fork main b635486 and M2 f621897, the 8x and the SWGT024,
 # rtlsim e2b1bd2 (--control). One a line (oldnew.load_known()):
-#   <scenario glob>[,<scenario glob>...]: <check glob> [<= <n> ms|s]   # why
+#   <scenario glob>[,<scenario glob>...]: <check glob> [<= <n> ms|s [by <measure>] | unbounded]   # why
 # A failure is KNOWN only in the scenarios named and within the ceiling (a long
-# step's maximum, a gap check's largest gap out of bounds); above it, it FAILs.
+# step's maximum, a gap check's largest gap over its upper bound); above it, it
+# FAILs. A gap under a lower bound always FAILs. A saturated long step (>400ms)
+# needs `by cli <command>` (that command's reply, firmware time) or `unbounded`.
 # Ceilings: the worst measured on either board, rounded up. A line that names a
 # scenario run but matched no failed check is flagged: a fix shows as a stale line.
 lacp_l2: lacp gap <= 4 s		# `l2` prints 1000 entries in one go: 3.86 s without a LACPDU
 stp_upload: stp hello <= 3 s		# the upload's flash writes hold the loop: no BPDU for 2.85 s before the answer
 cli,vlan,stp,lacp,lacp_slow,lldp,loop,config,sfp,flaps: long step CLI_RUN <= 50 ms	# a command's reply printed in one step: 46 ms (8x), 33 ms (SWGT); silicon.md 86 ms
-l2_big,lacp_l2: long step CLI_RUN <= 500 ms	# `l2` of 1000 entries in one step: > 400 ms (the measure saturates)
+l2_big,lacp_l2: long step CLI_RUN <= 3.5 s by cli l2	# `l2` of 1000 entries: > 400 ms in one step, where `health tasks` saturates; bounded by the `l2` reply (typed to prompt, 3.22 s; UART-bound, so it can't tell one step from many)
 *: long step HOUSE_SEC <= 45 ms		# loader_confirm()'s one-time sector erase 15 s after boot (E0, evidence e0-leftovers); owner E3. 40 ms in every scenario
 web,vlan,lldp: long step RX_STEP <= 40 ms	# a web reply built in one RX step: 34.7 ms; silicon.md 21.0 ms

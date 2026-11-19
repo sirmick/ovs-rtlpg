@@ -68,7 +68,8 @@ class Run:
     def __init__(self, image, board, rtlsim, payload):
         self.b = Bench(image, board=board, rtlsim=rtlsim)
         self.payload = open(payload, "rb").read() if payload else b""
-        self.checks = []		# (name, [violations], what was measured, worst µs): not results
+        self.checks = []		# (name, [violations], what was measured, worst µs, hard, saturated): not results
+        self.replies = {}		# "cli <line>" -> its longest reply, firmware µs from typed to prompt
         # the front ports, as the board has them (rtlsim's default: the SWTG024AS)
         ports = json.load(open(board or DEFAULT_BOARD))["ports"]
         copper = [p for p in ports if "sfp" not in p]
@@ -127,8 +128,13 @@ class Run:
         self.host.sw_mac = None
 
     def cli(self, line, slot=5000):
-        before, out = self.b.console(line, self._slot(slot))
+        until = self._slot(slot)
+        start = self.b.now
+        before, out = self.b.console(line, until)
         self._console(before)
+        if out is not None:		# a measure for the checks, not a result
+            k = f"cli {line}"
+            self.replies[k] = max(self.replies.get(k, 0), self.b.now - start)
         self.results[self._key(f"cli {line}")] = out if out is not None else "<timeout>"
 
     def tables(self):
@@ -303,11 +309,14 @@ class Run:
         """The gaps between the frames of `kind` the chip sent per port, every
         gap that overlaps [t0, t1] (so the one across t0 too, and the silence
         from the last frame to t1), each within [lo, hi] s. Ports: those
-        given, else every port that sent two or more in the window."""
+        given, else every port that sent two or more in the window. The
+        worst measure is the longest gap over hi (or the silence at the end);
+        a gap under lo is hard, a failure no known line covers (frames too
+        often hide behind none)."""
         ts = {p: v for (p, k), v in self.b.times.items() if k == kind}
         if ports is None:
             ports = sorted(p for p, v in ts.items() if sum(t0 <= t <= t1 for t in v) >= 2)
-        bad, what, worst = [], [], 0
+        bad, what, worst, hard = [], [], 0, []
         for p in ports:
             v = ts.get(p, [])
             gaps = [(a, b) for a, b in zip(v, v[1:]) if b >= t0 and a <= t1]
@@ -319,7 +328,9 @@ class Run:
             g = [b - a for a, b in gaps]
             what.append(f"port {p}: {len(g)} gaps" + (f", min {min(g) / 1e6:.3f} s max {max(g) / 1e6:.3f} s" if g else ""))
             for a, b in gaps:
-                if (lo is not None and b - a < lo * 1e6) or (hi is not None and b - a > hi * 1e6):
+                if lo is not None and b - a < lo * 1e6:
+                    hard.append(f"port {p}: {(b - a) / 1e6:.3f} s from {a / 1e6:.3f} s, under {lo} s")
+                elif hi is not None and b - a > hi * 1e6:
                     bad.append(f"port {p}: {(b - a) / 1e6:.3f} s from {a / 1e6:.3f} s")
                     worst = max(worst, b - a)
             if hi is not None and tail is not None and tail > hi * 1e6:
@@ -328,8 +339,8 @@ class Run:
         if not ports:
             bad.append(f"no port sent two in {t0 / 1e6:.3f}..{t1 / 1e6:.3f} s")
         bounds = (f"{lo}" if lo is not None else "") + ".." + (f"{hi}" if hi is not None else "") + " s"
-        self.checks.append((name, bad, f"{kind} {bounds}, {t0 / 1e6:.3f}..{t1 / 1e6:.3f} s: " + "; ".join(what),
-                            worst or None))
+        self.checks.append((name, bad + hard, f"{kind} {bounds}, {t0 / 1e6:.3f}..{t1 / 1e6:.3f} s: " + "; ".join(what),
+                            worst or None, hard, None))
 
     def lacp_check(self, t0, t1, ports):
         """lacp gap: the switch's LACPDUs on the LAG, < 1.2 s apart (its fast
@@ -348,7 +359,7 @@ class Run:
         is; skipped ("long steps") on a build without the command."""
         _, out = self.b.console("health tasks", self.b.now + slot * 1000)
         if out is None or "state\truns\tmax" not in out:
-            self.checks.append(("long steps", None, "no `health tasks` in this build: skipped", None))
+            self.checks.append(("long steps", None, "no `health tasks` in this build: skipped", None, [], None))
             return
         bad, longest = [], (0, "")
         for l in out.split("state\truns\tmax", 1)[1].splitlines():
@@ -360,12 +371,15 @@ class Run:
             if us > longest[0] and st != "FL_ERASE":
                 longest = (us, st)
             if us > limit_ms * 1000 and st != "FL_ERASE":
-                self.checks.append((f"long step {st}", [f"{over}{v}{unit}, {runs} runs"], f"over {limit_ms} ms", us))
+                # ">400ms": the measure saturates (16 bits of 6.144 µs); a known
+                # line bounds it by another measure (a console reply, `by`)
+                self.checks.append((f"long step {st}", [f"{over}{v}{unit}, {runs} runs"], f"over {limit_ms} ms", us,
+                                    [], dict(self.replies) if over else None))
                 bad.append(st)
         if not bad:
             m = re.search(r"passes .*", out)
             self.checks.append(("long steps", [], f"none over {limit_ms} ms but FL_ERASE; longest {longest[1]} "
-                                f"{longest[0] / 1000:.3f} ms; {m.group(0) if m else ''}", None))
+                                f"{longest[0] / 1000:.3f} ms; {m.group(0) if m else ''}", None, [], None))
 
     def flash_regions(self):
         """The flash after an upload, region by region, as results: the
@@ -517,7 +531,7 @@ def run_one(job):
         except Exception:
             pass
         res = {"<error>": f"{type(e).__name__}: {e}"}
-        checks = [("<error>", [res["<error>"]], "the scenario didn't finish", None)]
+        checks = [("<error>", [res["<error>"]], "the scenario didn't finish", None, [], None)]
     return name, side, res, checks, time.time() - t0
 
 
@@ -525,10 +539,13 @@ def verdicts(name, checks, known, used=None):
     """[(PASS|FAIL|KNOWN|SKIP, check, text)]: a check with no violations
     passes; one that a known line (load_known()) lists, for this scenario,
     and whose worst measure is within the line's ceiling, is KNOWN: a
-    failure of today's build that is on record. Over the ceiling it FAILs.
+    failure of today's build that is on record. Over the ceiling it FAILs,
+    and so does a hard violation (a gap too short) whatever the lines say.
+    A measure that saturated (`health tasks`' >400ms) is bounded only by a
+    line's `by` measure (a console reply) or a line that says `unbounded`.
     The known lines that matched go into `used`."""
     out = []
-    for c, bad, what, worst in checks:
+    for c, bad, what, worst, hard, sat in checks:
         if bad is None:
             out.append(("SKIP", c, what))
             continue
@@ -536,15 +553,32 @@ def verdicts(name, checks, known, used=None):
             out.append(("PASS", c, what))
             continue
         text = "; ".join(bad) + (f" [{what}]" if what else "")
-        lines = [k for k in known if any(fnmatch.fnmatch(name, g) for g in k[0]) and fnmatch.fnmatch(c, k[1])]
-        ok = [k for k in lines if k[2] is None or (worst is not None and worst <= k[2])]
+        if hard:
+            out.append(("FAIL", c, text + " (under the lower bound: no known line covers it)"))
+            continue
+        lines = [k for k in known if any(fnmatch.fnmatch(name, g) for g in k["scenarios"]) and fnmatch.fnmatch(c, k["check"])]
+        ok, why = [], []
+        for k in lines:
+            if sat is not None and not k["unbounded"]:
+                if not k["by"]:
+                    why.append(f" (saturated: line {k['line']} needs a `by` measure or `unbounded`)")
+                    continue
+                if k["by"] not in sat:
+                    why.append(f" (line {k['line']}'s measure `{k['by']}` wasn't taken)")
+                    continue
+                m = sat[k["by"]]
+                if m <= k["ceiling"]:
+                    ok.append(k)
+                    text += f" [by {k['by']}: {_us(m)}]"
+                else:
+                    why.append(f" (by {k['by']}: {_us(m)}, over line {k['line']}'s ceiling {_us(k['ceiling'])})")
+            elif k["ceiling"] is None or (worst is not None and worst <= k["ceiling"]):
+                ok.append(k)
+            else:
+                why.append(f" (over line {k['line']}'s ceiling {_us(k['ceiling'])})")
         if used is not None:
-            used.update(k[3] for k in ok)
-        if ok:
-            out.append(("KNOWN", c, text))
-        else:
-            over = "".join(f" (over line {k[3]}'s ceiling {_us(k[2])})" for k in lines)
-            out.append(("FAIL", c, text + over))
+            used.update(k["line"] for k in ok)
+        out.append(("KNOWN", c, text) if ok else ("FAIL", c, text + "".join(why)))
     return out
 
 
@@ -555,11 +589,14 @@ def _us(v):
 def load_known(path):
     """The checks' known failures, one a line:
 
-        <scenario glob>[,<scenario glob>...]: <check glob> [<= <n> ms|s]   # why
+        <scenario glob>[,<scenario glob>...]: <check glob> [<= <n> ms|s [by <measure>] | unbounded]   # why
 
-    [(scenario globs, check glob, ceiling µs or None, line number)]. The
-    ceiling bounds the check's worst measure: a long step's maximum, a gap
-    check's largest gap out of bounds."""
+    The ceiling bounds the check's worst measure: a long step's maximum, a
+    gap check's largest gap over its upper bound. Where that measure
+    saturates (a long step's >400ms), `by <measure>` bounds it instead by
+    another: `cli <command>`, the command's reply in firmware time, from
+    typed to its prompt (it holds every step the command ran); or the line
+    says `unbounded`. [{scenarios, check, ceiling µs|None, by, unbounded, line}]"""
     out = []
     if not path:
         return out
@@ -567,18 +604,19 @@ def load_known(path):
         l = l.split("#", 1)[0].strip()
         if not l:
             continue
-        m = re.match(r"([^:\s]+):\s*(.+?)(?:\s*<=\s*([\d.]+)\s*(ms|s))?$", l)
+        m = re.match(r"([^:\s]+):\s*(.+?)(?:\s*<=\s*([\d.]+)\s*(ms|s)(?:\s+by\s+(.+?))?|\s+(unbounded))?$", l)
         if not m:
-            sys.exit(f"{path}:{n}: not '<scenarios>: <check> [<= <n> ms|s]': {l}")
+            sys.exit(f"{path}:{n}: not '<scenarios>: <check> [<= <n> ms|s [by <measure>] | unbounded]': {l}")
         ceil = float(m.group(3)) * (1000 if m.group(4) == "ms" else 1_000_000) if m.group(3) else None
-        out.append((m.group(1).split(","), m.group(2), ceil, n))
+        out.append({"scenarios": m.group(1).split(","), "check": m.group(2), "ceiling": ceil, "by": m.group(5),
+                    "unbounded": bool(m.group(6)), "line": n})
     return out
 
 
 def stale_known(known, used, names, path):
     """A line no failed check matched, among those naming a scenario run."""
-    return [f"known: {path}:{n}: '{','.join(s)}: {g}' matched no failed check"
-            for s, g, _, n in known if n not in used and any(fnmatch.fnmatch(x, p) for x in names for p in s)]
+    return [f"known: {path}:{k['line']}: '{','.join(k['scenarios'])}: {k['check']}' matched no failed check"
+            for k in known if k["line"] not in used and any(fnmatch.fnmatch(x, p) for x in names for p in k["scenarios"])]
 
 
 def load_expect(path):

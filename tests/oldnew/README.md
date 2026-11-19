@@ -90,11 +90,14 @@ its end. Each verdict says the window and the min/max gap per port.
 Verdicts: PASS, FAIL, SKIP, and KNOWN: a failure that `--known FILE` lists
 for that scenario, within the line's ceiling:
 
-    <scenario glob>[,<scenario glob>...]: <check glob> [<= <n> ms|s]   # why
+    <scenario glob>[,<scenario glob>...]: <check glob> [<= <n> ms|s [by <measure>] | unbounded]   # why
 
 The ceiling bounds the check's worst measure (a long step's maximum, a gap
-check's largest gap out of bounds); above it the check FAILs, naming the
-line. `known-failures` is today's (dated in its header): the l2 gap, the
+check's largest gap over its upper bound); above it the check FAILs, naming
+the line. A gap under the lower bound (hello < 1.95 s) FAILs whatever the
+lines say. `health tasks` saturates at >400ms: such a step is bounded only by
+`by cli <command>`, the command's console reply in firmware time (typed to
+prompt, which holds every step it ran), or a line that says `unbounded`. `known-failures` is today's (dated in its header): the l2 gap, the
 hello during the upload, and the CLI_RUN, HOUSE_SEC and RX_STEP long steps,
 each in the scenarios it is seen in. A line that names a scenario that ran
 but matched no failed check is flagged: a fix shows as a stale line.
