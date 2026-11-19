@@ -205,6 +205,7 @@ private:
 	coverage m_cov;				// over power cuts, until cov reset
 	std::map<unsigned, int> m_links;	// link requests, kept over a power cut
 	std::map<unsigned, std::vector<u8>> m_sfps;	// sfp requests, the same
+	bool m_ring_full = false;		// dropping for want of room in the RX ring
 
 	std::vector<uart_line> m_uart;		// since the last uart read
 	std::string m_uart_text;		// the same, for run until uart
@@ -259,6 +260,14 @@ void controller::attach()
 			m_uart_text += char(c);
 		if (m_uart_re)
 			m_sys->cpu().stop_request = true;
+	};
+	s.nic().rx_ring_cap = m_opt.nic_rx_ring;
+	m_ring_full = false;
+	s.nic().ring_full = [this](unsigned p, size_t len, unsigned used, unsigned limit) {
+		if (!m_ring_full)
+			report("nic-rx-full", "nic: RX ring full, a %zu-byte frame from port %u dropped (%u of %u slots in use), "
+			       "and any more until a frame fits", len, p, used, limit);
+		m_ring_full = true;
 	};
 	s.nic().transmit = [this](unsigned p, const std::vector<u8> &f) {
 		if (m_capture)
@@ -562,11 +571,26 @@ bool controller::request(const std::string &line, std::string &reply)
 			// the CPU as it came in, with no 802.1Q tag
 			bool const igmp = f.size() >= 24 && f[12] == 0x08 && f[13] == 0x00 && f[23] == 2 &&
 					  (m_sys->core().reg(u16(0x52a0 + 4 * p)) & 0x2a) == 0x2a;
-			if (f.size() >= 15 && f[12] == 0x88 && f[13] == 0x99 && f[14] == 0x23) {
+			if (m_sys->link(p) == rtl837x_system::LINK_DOWN)
+				reply = "ok dropped";			// nothing arrives on a port without a link
+			else if (f.size() >= 15 && f[12] == 0x88 && f[13] == 0x99 && f[14] == 0x23) {
 				m_rldp->rx(p, f.data(), f.size());	// a loop-detection probe: the chip's
 				reply = "ok taken";
 			} else
-				reply = !m_sys->held() && m_sys->nic().receive(p, f.data(), f.size(), igmp) ? "ok taken" : "ok dropped";
+				{
+				bool const taken = !m_sys->held() && m_sys->nic().receive(p, f.data(), f.size(), igmp);
+				if (taken)
+					m_ring_full = false;
+				reply = taken ? "ok taken" : "ok dropped";
+			}
+		} else if (c == "nic" && w.size() == 2 && w[1] == "stats") {
+			auto &n = m_sys->nic();
+			char b[256];
+			snprintf(b, sizeof b, "ok rx %llu dropped %llu off %llu no_cpu_vlan %llu ring_full %llu tx %llu tx_dropped %llu ring %u/%u",
+				 (unsigned long long)n.stats.rx, (unsigned long long)n.stats.rx_dropped, (unsigned long long)n.stats.rx_off,
+				 (unsigned long long)n.stats.rx_no_cpu_vlan, (unsigned long long)n.stats.rx_ring_full,
+				 (unsigned long long)n.stats.tx, (unsigned long long)n.stats.tx_dropped, n.rx_used(), n.rx_limit());
+			reply = b;
 		} else if (c == "nic" && w.size() == 3 && w[1] == "capture" && (w[2] == "on" || w[2] == "off")) {
 			m_capture = w[2] == "on";
 			reply = "ok";

@@ -72,9 +72,24 @@ public:
 	std::function<u64()> busy;		// the CPU's busy machine cycles, for traces
 	bool trace = false;
 
+	// The ring's capacity on silicon, in bytes: frames (each its 8-byte
+	// descriptor and the frame, CPU tag in, padded to 8) take at most this
+	// much of it at once, however large the firmware programmed it; one
+	// that doesn't fit is dropped (ring_full). The ring's geometry stays
+	// what the firmware programmed. 0: no limit but the ring. RTLPlayground
+	// programs 10 KiB (RTL837X_NIC_RX_LAST_SLOT 0x4ff), the default under
+	// --control (--nic-rx-ring): ~6 full frames, ~140 minimum ones. The
+	// silicon figure is to be measured on the 8x (O5).
+	unsigned rx_ring_cap = 0;
+	// A frame dropped for want of room, with the slots in use and the limit.
+	std::function<void(unsigned port, size_t len, unsigned used, unsigned limit)> ring_full;
+
 	struct counters {
 		u64 rx = 0, rx_dropped = 0, tx = 0, tx_dropped = 0;
+		u64 rx_off = 0, rx_no_cpu_vlan = 0, rx_ring_full = 0;	// rx_dropped, by why
 	} stats;
+	unsigned rx_used() const { return m_rx_used; }		// slots (8 bytes)
+	unsigned rx_limit() const;				// slots frames may take
 
 private:
 	struct rx_frame {

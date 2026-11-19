@@ -9,7 +9,7 @@
 //          [--rtl8238b-e8 N] [--rtl8238b-alt-arm] [--rtl8238b-dump FILE] [--trace-pse]
 //          [--flash-timing] [--trace-reset] [--flash-secreg FILE]
 //          [--control SOCKET [--map FILE] [--no-flash-timing] [--no-early-reset-hang]]
-//          [--check-flash-busy] [--cov FILE] [--early-reset-hang]
+//          [--check-flash-busy] [--cov FILE] [--early-reset-hang] [--nic-rx-ring BYTES]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -104,6 +104,11 @@
 // where every reset boots, as it always has: the existing plain-mode runs and
 // harnesses (power-cut sweeps, update rehearsals, the VM) keep their output,
 // and plain mode has no power cycle to get out of the hang with.
+//
+// --nic-rx-ring BYTES is the NIC RX ring's capacity on silicon (sys/nic.h):
+// frames in it take at most that much at once, and one that doesn't fit is
+// dropped. With --control it is 10240 unless given; without, only the ring
+// the firmware programs limits it, as before (RTLPlayground programs 10 KiB).
 //
 // --cov FILE writes which instructions ran (sys/coverage.h) to FILE when
 // rtlsim ends, for tools/cov_report.py; with --control, cov dump does.
@@ -201,6 +206,7 @@ int main(int argc, char **argv)
 	control_options control;
 	bool check_flash_busy = false;
 	bool early_reset_hang = false;
+	long nic_rx_ring = -1;
 	const char *cov_file = nullptr;
 	coverage cov_bits;
 	std::vector<std::pair<unsigned, std::string>> sfps;
@@ -295,6 +301,8 @@ int main(int argc, char **argv)
 			control.flash_timing = false;
 		else if (!strcmp(argv[i], "--check-flash-busy"))
 			check_flash_busy = true;
+		else if (!strcmp(argv[i], "--nic-rx-ring") && i + 1 < argc)
+			nic_rx_ring = atol(argv[++i]);
 		else if (!strcmp(argv[i], "--early-reset-hang"))
 			early_reset_hang = true;
 		else if (!strcmp(argv[i], "--no-early-reset-hang"))
@@ -309,7 +317,7 @@ int main(int argc, char **argv)
 				"[--powercut-after N] [--flash-ops FILE] [--rtl8238b-e8 N] [--rtl8238b-alt-arm] "
 				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing] [--trace-reset] [--flash-secreg FILE] "
 				"[--control SOCKET [--map FILE] [--no-flash-timing] [--no-early-reset-hang]] [--check-flash-busy] [--cov FILE] "
-				"[--early-reset-hang]\n");
+				"[--early-reset-hang] [--nic-rx-ring BYTES]\n");
 			return 1;
 		}
 	}
@@ -360,6 +368,8 @@ int main(int argc, char **argv)
 		sys.flash().timing = flash_timing || check_flash_busy;
 		sys.flash_busy_check = check_flash_busy;
 		sys.early_reset_hang = early_reset_hang;
+		if (nic_rx_ring >= 0)
+			sys.nic().rx_ring_cap = unsigned(nic_rx_ring);
 		if (cov_file)
 			sys.cpu().cov = &cov_bits;
 		if (powercut_after >= 0)
@@ -421,6 +431,8 @@ int main(int argc, char **argv)
 			}
 		}
 		control.quiet = quiet;
+		if (nic_rx_ring >= 0)
+			control.nic_rx_ring = unsigned(nic_rx_ring);
 		return control_main(control, std::move(sysp), make_system);
 	}
 	rtl837x_system &sys = *sysp;

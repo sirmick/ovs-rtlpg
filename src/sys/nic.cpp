@@ -67,6 +67,12 @@ unsigned cpu_nic::rx_slots() const
 	return last && (last + 1) * 8 <= NIC_MEM ? last + 1 : 0;
 }
 
+unsigned cpu_nic::rx_limit() const
+{
+	unsigned const slots = rx_slots();
+	return rx_ring_cap && rx_ring_cap / 8 < slots ? rx_ring_cap / 8 : slots;
+}
+
 unsigned cpu_nic::tx_slots() const
 {
 	unsigned last = m_core.reg(NIC_BUFFSIZE_TX) & 0xfff;
@@ -127,6 +133,7 @@ bool cpu_nic::receive(unsigned port, const u8 *frame, size_t len, bool as_is)
 	unsigned const slots = rx_slots();
 	if (len < 14 || !slots || !(m_core.reg(RX_CTRL) & 1)) {
 		stats.rx_dropped++;
+		stats.rx_off++;
 		if (trace)
 			fprintf(stderr, "NIC RX p%u %zuB dropped: NIC RX off (RX_CTRL %08x, %u slots)\n", port, len, m_core.reg(RX_CTRL), slots);
 		return false;
@@ -141,6 +148,7 @@ bool cpu_nic::receive(unsigned port, const u8 *frame, size_t len, bool as_is)
 	u32 const vlan = m_tables.vlan(tci & 0xfff);
 	if (!as_is && (!(vlan & VLAN_VALID) || !(vlan & (1u << CPU_PORT)))) {
 		stats.rx_dropped++;
+		stats.rx_no_cpu_vlan++;
 		if (trace)
 			fprintf(stderr, "NIC RX p%u %zuB dropped: VLAN %u (%08x) doesn't have the CPU\n", port, len, tci & 0xfff, vlan);
 		return false;
@@ -154,10 +162,14 @@ bool cpu_nic::receive(unsigned port, const u8 *frame, size_t len, bool as_is)
 	}
 
 	unsigned const need = 1 + (f.size() + 7) / 8;
-	if (m_rx_used + need > slots) {
+	unsigned const limit = rx_limit();
+	if (m_rx_used + need > limit) {
 		stats.rx_dropped++;
+		stats.rx_ring_full++;
 		if (trace)
-			fprintf(stderr, "NIC RX p%u %zuB dropped: ring full (%u of %u slots)\n", port, f.size(), m_rx_used, slots);
+			fprintf(stderr, "NIC RX p%u %zuB dropped: ring full (%u of %u slots)\n", port, f.size(), m_rx_used, limit);
+		if (ring_full)
+			ring_full(port, f.size(), m_rx_used, limit);
 		return false;
 	}
 	u8 desc[8] = { m_seq++, 0, 0, u8(port & 0xf), u8(f.size()), u8(f.size() >> 8), 0, 0 };

@@ -53,11 +53,19 @@
 //       one that a reset or power cut ended is "<t>+" too, and what follows
 //       starts a new line.
 //       CRs removed; \ and bytes outside 0x20-0x7e but tab as \\ and \xHH
-//   nic inject <port> <hex>           ok taken | ok dropped (a frame on physical port;
+//   nic inject <port> <hex>           ok taken | ok dropped (a frame on physical port,
+//       dropped if the port has no link;
 //       an untagged IGMP one on a port the firmware set to trap IGMP reaches
 //       the CPU as it came in, with no 802.1Q tag, as the fabric's does; an
 //       RLDP probe (0x8899, protocol 0x23) goes to the chip's loop detection,
 //       sys/rldp.h, not the CPU)
+//   nic stats                         ok rx <n> dropped <n> off <n> no_cpu_vlan <n>
+//       ring_full <n> tx <n> tx_dropped <n> ring <used>/<limit>: the NIC's counts
+//       since the last power-on (dropped = off + no_cpu_vlan + ring_full), and
+//       the RX ring's 8-byte slots in use now, of what frames may take. The
+//       ring holds --nic-rx-ring bytes (10 KiB, sys/nic.h); a frame that finds
+//       it full is dropped, and checks lists the first of each run of such
+//       drops as nic-rx-full
 //   nic capture on|off                ok
 //   nic capture read                  ok <n>, then "<t> <port> <hex>" per frame sent
 //       out of a port with a link (the --link ones, and link up): the CPU's,
@@ -65,7 +73,8 @@
 //   link <port> up [<speed>] | down   ok (physical port 0-9; speed as --link, 1g)
 //   checks                            ok <n>, then "<t> <kind> <text>": everything
 //       the model found since the start, t when it found it (kinds:
-//       unmodelled, bank-ret, uart-lost, bank, flash-busy, early-reset;
+//       unmodelled, bank-ret, uart-lost, bank, flash-busy, early-reset,
+//       nic-rx-full;
 //       stack is to come). The
 //       bank checker (--check-banks) sums up its findings when asked: its
 //       lines carry the time of the checks request, not of the read.
@@ -127,6 +136,7 @@ struct control_options {
 	bool quiet = false;		// findings only through checks, not on stderr
 	bool flash_timing = true;	// the flash busy model (--no-flash-timing: off)
 	bool early_reset_hang = true;	// --no-early-reset-hang: off
+	unsigned nic_rx_ring = 10240;	// --nic-rx-ring: the NIC RX ring's capacity, bytes (sys/nic.h)
 };
 
 // Builds a system around a flash chip as the command line says (the board,
