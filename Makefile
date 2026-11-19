@@ -89,6 +89,19 @@ ER_EXPECT ?= boot
 test-early-reset: $(BUILD)/rtlsim
 	python3 tests/fw/test_early_reset.py $(ER_IMAGE) $(if $(ER_BOARD),--board $(ER_BOARD)) --expect $(ER_EXPECT) --rtlsim $(BUILD)/rtlsim
 
+# Old vs new (tests/oldnew/README.md): the reference scenarios on two boot
+# images in rtlsim --control, compared on results; < 1 min in parallel.
+#   make oldnew OLD=... NEW=... [BOARD=boards/....json] [EXPECT=file] [ONLY="boot cli"]
+# OLD defaults to the reference build of fork main for the 8x in
+# ~/src/rtlpg-ref (tests/oldnew/README.md), NEW to OLD: old against old, which
+# must match on every scenario.
+OLD ?= $(firstword $(wildcard $(HOME)/src/rtlpg-ref/output/KEEPLINK_KP_9000_9XHPML_V1_2-compact/rtlplayground-boot-v*.bin))
+NEW ?= $(OLD)
+BOARD ?= $(if $(findstring KEEPLINK_KP_9000_9XHPML,$(OLD)),boards/keeplink_kp_9000_9xhpml_v1_2.json)
+oldnew: $(BUILD)/rtlsim
+	python3 tests/oldnew/oldnew.py --old $(OLD) --new $(NEW) $(if $(BOARD),--board $(BOARD)) \
+		$(if $(EXPECT),--expect $(EXPECT)) $(if $(ONLY),--only $(ONLY)) --rtlsim $(BUILD)/rtlsim
+
 # The firmware against Linux's TCP/IP in a network namespace (needs sudo;
 # real time, so a few seconds): ping, the web UI, and what each frame costs.
 # Once over a tap on the --nic socket, once through a private OVS bridge;
@@ -143,4 +156,4 @@ clean:
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
-.PHONY: all test test-control test-early-reset test-net test-update test-flash test-powercut vm test-vm check-banks clean
+.PHONY: all test test-control test-early-reset oldnew test-net test-update test-flash test-powercut vm test-vm check-banks clean

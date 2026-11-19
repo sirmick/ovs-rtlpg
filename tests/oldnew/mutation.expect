@@ -1,0 +1,6 @@
+# The differences the harness's own check build makes (b635486 with two
+# changes, the README's "a deliberately changed build"): with this list, old
+# against that build passes; without it, it fails on exactly these.
+*  *boot          # print_sw_version(): "Build date" printed before "Software version"
+*  *cli version   # the same, in the version command
+*  reg 7124       # rtl8373_init(): 0x1050 written as 0x1051
