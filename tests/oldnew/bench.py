@@ -1,15 +1,16 @@
 """bench.py - one firmware image in rtlsim --control, with what a scenario
-needs around it: the console, a host on a front port that speaks ARP, TCP and
-HTTP, cables between front ports, SFP modules, and a count of every frame the
-chip sends, by port and kind.
+needs around it: the console, devices on front ports (a host that speaks ARP,
+TCP and HTTP; an LACP partner, lacp_partner.py), cables between front ports,
+SFP modules, and a count of every frame the chip sends, by port and kind.
 
 Time is firmware time in µs (rtlsim_ctl's). The bench advances on a fixed
 grid (GRID µs from firmware time 0; COARSE while no cable is in and nothing
 is waited for), and only at its points does it look at
 the frames sent: it counts them, hands them to the host, and puts those sent
 out of a cabled port into the port at the cable's other end. So two images
-given the same scenario see a frame cross a cable, or the host answer, at the
-same firmware times whenever they sent it at the same times.
+given the same scenario see a frame cross a cable, or a device answer, at the
+same firmware times whenever they sent it at the same times; a device's own
+timers (tick) run at the grid points too.
 """
 import os, re, struct, sys
 from collections import Counter
@@ -78,7 +79,7 @@ class Bench:
         self.now = 0
         self.frames = Counter()		# (port, kind) -> frames sent
         self.cables = {}		# port -> the port at the other end
-        self.hosts = []
+        self.devices = []		# on the ports: take(port, frame), tick(now)
         self.uart = ""			# console output not yet taken
 
     def close(self):
@@ -90,9 +91,8 @@ class Bench:
             self.frames[(p, kind(f))] += 1
             if p in self.cables:
                 self.sim.nic_inject(self.cables[p], f)
-            for h in self.hosts:
-                if p == h.port:
-                    h.take(f)
+            for d in self.devices:
+                d.take(p, f)
 
     def advance(self, until, stop=None):
         """Run to firmware time `until` (µs), looking at the wire at each grid
@@ -102,6 +102,8 @@ class Bench:
             t = min(until, (self.now // g + 1) * g)
             self.now = self.sim.run(f"{(t - self.now) // 1000}.{(t - self.now) % 1000:03d}")
             self._look()
+            for d in self.devices:
+                d.tick(self.now)
             if stop and stop():
                 return True
         return False
@@ -166,7 +168,10 @@ class Host:
         self.sw_mac = None
         self.rx = []			# TCP segments for us, not yet handled
         self.next_port = 40000
-        bench.hosts.append(self)
+        bench.devices.append(self)
+
+    def tick(self, now):
+        pass
 
     def _eth(self, dst, et, p):
         return dst + self.mac + struct.pack("!H", et) + p
@@ -175,8 +180,8 @@ class Host:
         h = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(p), 0, 0x4000, 64, proto, 0, self.ip, self.sw_ip)
         return h[:10] + struct.pack("!H", 0xffff ^ csum(h)) + h[12:] + p
 
-    def take(self, f):
-        if f[:6] not in (self.mac, BCAST) or len(f) < 14:
+    def take(self, port, f):
+        if port != self.port or f[:6] not in (self.mac, BCAST) or len(f) < 14:
             return
         et = struct.unpack("!H", f[12:14])[0]
         if et == 0x0806 and len(f) >= 42:

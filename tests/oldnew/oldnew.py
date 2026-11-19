@@ -44,6 +44,7 @@ from concurrent.futures import ProcessPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from bench import Bench, Host, ip_bytes, csum, PROMPT
+from lacp_partner import LacpPartner
 from scenarios import SCENARIOS
 
 CONFIG_START, CONFIG_LEN = 0x7f000, 0x1000	# layout.h, compact
@@ -171,6 +172,20 @@ class Run:
     def uncable(self, a):
         self._now()
         self.b.uncable(a)
+
+    def partner(self, ports):
+        """An LACP partner (lacp_partner.py) on these physical ports."""
+        self._now()
+        self.lacp = LacpPartner(self.b, ports)
+        return self.lacp
+
+    def partner_view(self):
+        """What the partner sees: its own state and the switch's, per port."""
+        self._now()
+        p = self.lacp
+        self.results[self._key("lacp partner")] = "\n".join(
+            f"{x}: actor {p.state(x):02x} partner {p.st[x]['partner']['state'] if p.st[x]['partner'] else 0:02x}"
+            f" in {p.pdus_in[x]} out {p.pdus_out[x]}" for x in p.ports)
 
     def sfp(self, slot, eeprom):
         self._now()

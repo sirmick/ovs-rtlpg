@@ -16,11 +16,13 @@ rtlsim, and all of them run in parallel. The full set takes about 30 s on the
 
 ## Files
 
-- `bench.py`: one image in rtlsim with the console and a host on front port 1
-  that speaks ARP, TCP and HTTP. It also provides cables between ports, SFP
-  modules, and a count of the frames the chip sends, by port and kind.
+- `bench.py`: one image in rtlsim with the console and devices on its ports:
+  a host on front port 1 that speaks ARP, TCP and HTTP, and an LACP partner.
+  It also provides cables between ports, SFP modules, and a count of the
+  frames the chip sends, by port and kind.
 - `scenarios.py`: the reference scenarios.
 - `oldnew.py`: the run, the results, and the comparison.
+- `lacp_partner.py`: an LACP partner (802.1AX), deterministic, on the bench.
 - `mutation.expect`: the expected differences of the check build (below).
 
 ## Scenarios
@@ -32,7 +34,7 @@ rtlsim, and all of them run in parallel. The full set takes about 30 s on the
 | web | every page and JSON endpoint, before and after login |
 | vlan | VLANs and PVIDs from the console and from the web (POST /cmd) |
 | stp | RSTP on, with a loop cable between front 3 and 4: one port blocks, BPDUs flow |
-| lacp | LACP on front 3 and 4, then a static LAG. **Pending D0a**: no LACP partner yet, so only the actor's side shows (its PDUs and state, no aggregation) |
+| lacp | LACP on front 3 and 4 against a partner (`lacp_partner.py`): both ports aggregate, then the partner goes silent and the switch times it out, then it comes back; then a static LAG |
 | loop | loop detection, with a cable between front 5 and 6 (3 and 4 on a smaller board): the loop is found, a port blocked, then released when unplugged |
 | igmp | snooping: a query, a report (the group's L3 multicast entry), a leave |
 | config | a setting from the web, the config saved as the UI saves it (POST /config) and read back, then a power cut: the boot applies it |
@@ -100,4 +102,8 @@ Control mode (`src/ctl/control.h`) gives the harness what it needs:
 - `reg dump`, `table dump vlan|l2`, `flash read` and `sfp`;
 - the IGMP trap on `nic inject`;
 - the chip's loop detection (`src/sys/rldp.h`, the fabric's RLDP engine, now
-  shared).
+  shared);
+- a frame injected on a port without a link is dropped;
+- the NIC RX ring's capacity (10 KiB, `--nic-rx-ring`) and its drops (`nic stats`);
+- the link-change latch (0x5f88) is write-1-to-clear: without it, LACP
+  expired every port once a second.

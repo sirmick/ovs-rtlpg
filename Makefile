@@ -65,6 +65,7 @@ ifneq ($(FW_IMAGE),)
 	python3 tests/flash/test_boot0.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/fw/test_control.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/fw/test_nic_ring.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
+	python3 tests/fw/test_lacp.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 ifneq ($(FW_BOOT_IMAGE),)
 	python3 tests/fw/test_early_reset.py $(FW_BOOT_IMAGE) --rtlsim $(BUILD)/rtlsim
 endif

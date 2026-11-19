@@ -96,19 +96,30 @@ def stp(r):
 
 
 def lacp(r):
-    """LACP on front ports 3 and 4. Pending D0a (the LACP partner): no
-    partner answers, so only the actor's side shows - its PDUs, its state,
-    and no aggregation. Then a static LAG of 2 and 3."""
+    """LACP on front ports 3 and 4 against a partner (lacp_partner.py):
+    both ports aggregate; the partner goes silent and the switch times it
+    out; it comes back. Then a static LAG of 2 and 3."""
     P, F = r.P, r.F
     r.boot()
     for i in (2, 3):
         r.link(P[i], True)
+    partner = r.partner([P[2], P[3]])
     r.cli(f"lag 1 lacp {F[2]} {F[3]}")
-    r.wait(10000)
+    r.wait(5000)
     r.cli("lacp show")
     r.cli("lag show")
+    r.partner_view()
     r.login()
     r.get("/lag.json")
+    r._now()
+    partner.stop()
+    r.wait(6000)
+    r.cli("lacp show")
+    r._now()
+    partner.start()
+    r.wait(5000)
+    r.cli("lacp show")
+    r.partner_view()
     r.cli("lag 1 lacp off")
     r.cli(f"lag 2 {F[1]} {F[2]}")
     r.cli("lag show")
