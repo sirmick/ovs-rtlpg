@@ -53,10 +53,15 @@
 //       one that a reset or power cut ended is "<t>+" too, and what follows
 //       starts a new line.
 //       CRs removed; \ and bytes outside 0x20-0x7e but tab as \\ and \xHH
-//   nic inject <port> <hex>           ok taken | ok dropped (a frame on physical port)
+//   nic inject <port> <hex>           ok taken | ok dropped (a frame on physical port;
+//       an untagged IGMP one on a port the firmware set to trap IGMP reaches
+//       the CPU as it came in, with no 802.1Q tag, as the fabric's does; an
+//       RLDP probe (0x8899, protocol 0x23) goes to the chip's loop detection,
+//       sys/rldp.h, not the CPU)
 //   nic capture on|off                ok
 //   nic capture read                  ok <n>, then "<t> <port> <hex>" per frame sent
-//       out of a port with a link (the --link ones, and link up)
+//       out of a port with a link (the --link ones, and link up): the CPU's,
+//       and the loop detection's probes (sys/rldp.h)
 //   link <port> up [<speed>] | down   ok (physical port 0-9; speed as --link, 1g)
 //   checks                            ok <n>, then "<t> <kind> <text>": everything
 //       the model found since the start, t when it found it (kinds:
@@ -67,6 +72,18 @@
 //   cov reset | cov dump <file>       ok: which instructions ran since the start
 //       or the last cov reset, over power cuts and resets, written to <file>
 //       for tools/cov_report.py (format and regions: sys/coverage.h)
+//   reg dump                          ok <n>, then the switch core's stored state,
+//       sorted: "r <addr> <value>" per register, "s <id>.<page>.<reg> <value>"
+//       per SerDes and "p <phy>.<mmd>.<reg> <value>" per PHY register (hex).
+//       What was written or seeded, not what a read hook would make of it
+//   table dump vlan                   ok <n>, then "<vid> <word>" per VID whose
+//       entry isn't 0 (hex)
+//   table dump l2                     ok <n>, then "<idx> <a> <b> <c>" per entry
+//       present (hex; L3 multicast ones too), by index
+//   flash read <addr> <len>           ok <hex>: the flash chip's bytes (up to 64 KiB)
+//   sfp <slot> <hex> | sfp <slot> empty   ok: a module in SFP cage slot (the
+//       firmware's, 1-based), its EEPROM 256 or 512 bytes as for --sfp; or
+//       pulled. Kept over a power cut, as link is
 //   reset                             ok <t>: a chip reset, as the firmware's
 //                                     (an early one hangs the chip too, below)
 //   powercut                          ok <t>: off and on: a new chip around the same

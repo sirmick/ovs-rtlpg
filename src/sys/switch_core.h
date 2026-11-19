@@ -34,6 +34,12 @@ public:
 	u32 reg(u16 addr) const;
 	void set_reg(u16 addr, u32 v) { m_reg[addr] = v; }
 	u16 phy(u8 phy, u8 mmd, u16 reg) const;
+	// Everything stored (what was written, or seeded), for a dump: registers
+	// by address; SerDes and PHY registers by key (sds: id << 24 | page << 16
+	// | reg; phy: phy << 24 | mmd << 16 | reg).
+	const std::unordered_map<u16, u32> &regs() const { return m_reg; }
+	const std::unordered_map<u32, u16> &sds_regs() const { return m_sds; }
+	const std::unordered_map<u32, u16> &phy_regs() const { return m_phy; }
 	void set_phy(u8 phy, u8 mmd, u16 reg, u16 v) { m_phy[key(phy, mmd, reg)] = v; }
 
 	// Behaviours: a read hook returns the value to read; a write hook gets

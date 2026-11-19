@@ -1,8 +1,10 @@
 // control.cpp - see control.h.
 #include "ctl/control.h"
 #include "ctl/symmap.h"
+#include "sys/rldp.h"
 #include "sys/report.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <map>
@@ -194,6 +196,7 @@ private:
 
 	control_options m_opt;
 	std::unique_ptr<rtl837x_system> m_sys;
+	std::unique_ptr<rldp_engine> m_rldp;	// the chip's loop detection, as the fabric's
 	system_factory m_make;
 	symbol_map m_map;
 	u64 m_base = 0;				// firmware time at the last power-on
@@ -201,6 +204,7 @@ private:
 	u64 m_early_resets = 0;			// the same, chips an early reset hung
 	coverage m_cov;				// over power cuts, until cov reset
 	std::map<unsigned, int> m_links;	// link requests, kept over a power cut
+	std::map<unsigned, std::vector<u8>> m_sfps;	// sfp requests, the same
 
 	std::vector<uart_line> m_uart;		// since the last uart read
 	std::string m_uart_text;		// the same, for run until uart
@@ -260,8 +264,15 @@ void controller::attach()
 		if (m_capture)
 			m_frames.emplace_back(now(), p, f);
 	};
+	m_rldp = std::make_unique<rldp_engine>(s);
+	m_rldp->out = [this](unsigned p, const std::vector<u8> &f) {
+		if (m_capture && m_sys->link(p) != rtl837x_system::LINK_DOWN)
+			m_frames.emplace_back(now(), p, f);
+	};
 	for (auto &[p, sp] : m_links)
 		s.set_link(p, sp);
+	for (auto &[slot, e] : m_sfps)
+		s.set_sfp(slot, e);
 	peers();
 }
 
@@ -287,6 +298,7 @@ controller::stop controller::advance(u64 target, const std::function<bool()> &on
 		u64 const n = std::min(target - t, SLICE - t % SLICE);
 		cpu.stopped = false;
 		bool const alive = m_sys->run(int(n));
+		m_rldp->tick();
 		bool const stopped = cpu.stopped;
 		cpu.stopped = false;
 		cpu.stop_request = false;
@@ -545,7 +557,16 @@ bool controller::request(const std::string &line, std::string &reply)
 			if (p > 9)
 				throw ctl_error("port: 0-9");
 			auto f = parse_hex(w[3]);
-			reply = !m_sys->held() && m_sys->nic().receive(p, f.data(), f.size()) ? "ok taken" : "ok dropped";
+			// The IGMP trap, as the fabric has it (fabric/compiler.cpp): with the
+			// port's IGMP_PORT_CFG trap bits set, an untagged IGMP frame reaches
+			// the CPU as it came in, with no 802.1Q tag
+			bool const igmp = f.size() >= 24 && f[12] == 0x08 && f[13] == 0x00 && f[23] == 2 &&
+					  (m_sys->core().reg(u16(0x52a0 + 4 * p)) & 0x2a) == 0x2a;
+			if (f.size() >= 15 && f[12] == 0x88 && f[13] == 0x99 && f[14] == 0x23) {
+				m_rldp->rx(p, f.data(), f.size());	// a loop-detection probe: the chip's
+				reply = "ok taken";
+			} else
+				reply = !m_sys->held() && m_sys->nic().receive(p, f.data(), f.size(), igmp) ? "ok taken" : "ok dropped";
 		} else if (c == "nic" && w.size() == 3 && w[1] == "capture" && (w[2] == "on" || w[2] == "off")) {
 			m_capture = w[2] == "on";
 			reply = "ok";
@@ -581,6 +602,69 @@ bool controller::request(const std::string &line, std::string &reply)
 						l.push_back(fmt_time(now()) + " bank " + escape(x));
 			}
 			reply = block(l);
+		} else if (c == "reg" && w.size() == 2 && w[1] == "dump") {
+			char b[64];
+			std::vector<std::pair<u32, u32>> r;
+			for (auto &[a, v] : m_sys->core().regs())
+				r.emplace_back(a, v);
+			std::sort(r.begin(), r.end());
+			std::vector<std::string> l;
+			for (auto &[a, v] : r) {
+				snprintf(b, sizeof b, "r %04x %08x", a, v);
+				l.push_back(b);
+			}
+			for (auto *m : {&m_sys->core().sds_regs(), &m_sys->core().phy_regs()}) {
+				std::vector<std::pair<u32, u16>> x(m->begin(), m->end());
+				std::sort(x.begin(), x.end());
+				for (auto &[k, v] : x) {
+					snprintf(b, sizeof b, "%c %x.%02x.%04x %04x", m == &m_sys->core().sds_regs() ? 's' : 'p',
+						 k >> 24, (k >> 16) & 0xff, k & 0xffff, v);
+					l.push_back(b);
+				}
+			}
+			reply = block(l);
+		} else if (c == "table" && w.size() == 3 && w[1] == "dump" && (w[2] == "vlan" || w[2] == "l2")) {
+			char b[64];
+			std::vector<std::string> l;
+			auto &t = m_sys->tables();
+			if (w[2] == "vlan") {
+				for (unsigned vid = 0; vid < 4096; vid++)
+					if (t.vlan(u16(vid))) {
+						snprintf(b, sizeof b, "%03x %08x", vid, t.vlan(u16(vid)));
+						l.push_back(b);
+					}
+			} else {
+				std::vector<switch_tables::l2_entry> e;
+				for (auto &x : t.l2())
+					if (x.present)
+						e.push_back(x);
+				std::sort(e.begin(), e.end(), [](auto &p, auto &q) { return p.idx < q.idx; });
+				for (auto &x : e) {
+					snprintf(b, sizeof b, "%03x %08x %08x %08x", x.idx, x.a, x.b, x.c);
+					l.push_back(b);
+				}
+			}
+			reply = block(l);
+		} else if (c == "flash" && w.size() == 4 && w[1] == "read") {
+			u32 const a = u32(parse_num(w[2])), n = u32(parse_num(w[3]));
+			if (n > 0x10000)
+				throw ctl_error("too long");
+			std::vector<u8> d(n);
+			for (u32 i = 0; i < n; i++)
+				d[i] = m_sys->flash().byte(a + i);
+			reply = "ok " + hex(d.data(), d.size());
+		} else if (c == "sfp" && w.size() == 3) {
+			unsigned const slot = unsigned(parse_num(w[1]));
+			std::vector<u8> e;
+			if (w[2] != "empty") {
+				e = parse_hex(w[2]);
+				if (e.size() != 256 && e.size() != 512)
+					throw ctl_error("an SFP EEPROM is 256 or 512 bytes");
+			}
+			if (!m_sys->set_sfp(slot, e))
+				throw ctl_error("no SFP slot " + std::to_string(slot) + " on this board");
+			m_sfps[slot] = e;
+			reply = "ok";
 		} else if (c == "cov" && w.size() == 2 && w[1] == "reset") {
 			m_cov.reset();
 			reply = "ok";
