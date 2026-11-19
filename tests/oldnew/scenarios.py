@@ -165,6 +165,34 @@ def lacp_slow(r):
     r.frames("lacp")
 
 
+def lldp(r):
+    """LLDP on, with the longest names its TLVs carry: a 23-character
+    hostname (system name), VLAN 10 and 20 named (the 802.1 VLAN name TLVs),
+    front port 2 named with 31 characters (port description, its most).
+    70 s: the fast transmissions and an interval or two. The frames
+    themselves are compared, TLV by TLV (oldnew.lldp_text()), and their
+    counts, the VLANs and the JSON."""
+    P, F = r.P, r.F
+    host, pname = "oldnew-lldp-hostname-23", "front-port-two-name-is-31-chars"
+    assert len(host) == 23 and len(pname) == 31
+    r.boot()
+    for i in (1, 2):
+        r.link(P[i], True)
+    r.wait(1000)		# a line typed while the link change prints is lost
+    r.cli(f"hostname {host}")
+    r.cli(f"vlan 10 office {F[1]} {F[2]}t")
+    r.cli(f"vlan 20 lab {F[2]}")
+    r.cli(f"port {F[1]} name {pname}")
+    r.cli("lldp on")
+    r.wait(70000)
+    r.cli("vlan show")
+    r.login()
+    r.get("/vlanlist.json")
+    r.get("/lldp.json")
+    r.lldp_frames()
+    r.frames("lldp")
+
+
 def loop(r):
     """Loop detection (the chip's RLDP engine, sys/rldp.h) with a cable
     between front ports 5 and 6 (3 and 4 on a board with fewer copper
@@ -285,4 +313,4 @@ def flaps(r):
     r.cli("l2")
 
 
-SCENARIOS = {f.__name__: f for f in (boot, cli, web, vlan, stp, lacp, lacp_slow, loop, igmp, config, upload, sfp, flaps)}
+SCENARIOS = {f.__name__: f for f in (boot, cli, web, vlan, stp, lacp, lacp_slow, lldp, loop, igmp, config, upload, sfp, flaps)}

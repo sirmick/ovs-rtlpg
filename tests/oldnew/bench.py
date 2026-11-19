@@ -94,6 +94,8 @@ class Bench:
         self.sim.nic_capture(True)
         self.now = 0
         self.frames = Counter()		# (port, kind) -> frames sent
+        self.keep = {"lldp"}		# kinds whose frames are kept too, in order
+        self.kept = []			# (port, kind, frame)
         self.cables = {}		# port -> the port at the other end
         self.devices = []		# on the ports: take(port, frame), tick(now)
         self.uart = ""			# console output not yet given out: every byte is
@@ -104,7 +106,10 @@ class Bench:
     # --- time
     def _look(self):
         for _, p, f in self.sim.nic_read():
-            self.frames[(p, kind(f))] += 1
+            k = kind(f)
+            self.frames[(p, k)] += 1
+            if k in self.keep:
+                self.kept.append((p, k, f))
             if p in self.cables:
                 self.sim.nic_inject(self.cables[p], f)
             for d in self.devices:

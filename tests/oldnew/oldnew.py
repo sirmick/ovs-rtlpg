@@ -140,6 +140,26 @@ class Run:
         self.results[self._key(f"frames {kind}")] = " ".join(
             f"{p}:{n}" for (p, k), n in sorted(self.b.frames.items()) if k == kind)
 
+    def lldp_frames(self):
+        """The LLDP frames the chip has sent so far, decoded (lldp_text()):
+        per port, in order, each run of identical frames once with its
+        count."""
+        self._now()
+        self._console()
+        out = []
+        for port in sorted({p for p, k, _ in self.b.kept if k == "lldp"}):
+            runs = []
+            for p, k, f in self.b.kept:
+                if p == port and k == "lldp":
+                    t = lldp_text(f)
+                    if runs and runs[-1][0] == t:
+                        runs[-1][1] += 1
+                    else:
+                        runs.append([t, 1])
+            for t, n in runs:
+                out.append(f"port {port}: {n} x\n{t}")
+        self.results[self._key("lldp frames")] = "\n".join(out)
+
     def note(self, text):
         self._console()
         self.results[self._key("note")] = text
@@ -273,6 +293,49 @@ def scrub(v):
     for rx, to in IDENTITY:
         v = rx.sub(to, v)
     return v
+
+
+LLDP_TLV = {0: "end", 1: "chassis", 2: "port", 3: "ttl", 4: "port desc", 5: "sys name", 6: "sys desc",
+            7: "caps", 8: "mgmt addr", 127: "org"}
+
+
+def _value(v):
+    return repr(v.decode("latin-1")) if v and all(32 <= c < 127 for c in v) else v.hex()
+
+
+def lldp_text(f):
+    """An LLDPDU's TLVs, one a line, in order: type, length, value (text if
+    printable, else hex; an 802.1 VLAN name decoded). In the system
+    description the build's version string is masked, and the length shows
+    as the rest plus its length, the one thing that legitimately differs
+    between two builds."""
+    lines, p = [], f[14:]
+    if f[12:14] == b"\x81\x00":
+        p = f[18:]
+    while len(p) >= 2:
+        h = int.from_bytes(p[:2], "big")
+        t, n, v = h >> 9, h & 0x1ff, p[2:2 + (h & 0x1ff)]
+        p = p[2 + n:]
+        name = LLDP_TLV.get(t, f"type {t}")
+        ln = str(n)
+        if t == 6:
+            m = IDENTITY[0][0].search(v.decode("latin-1"))
+            if m:
+                ln = f"{n - len(m.group(0))}+len(<version>)"
+        if t == 127 and len(v) >= 4:
+            oui, sub, body = v[:3].hex(), v[3], v[4:]
+            if oui == "0080c2" and sub == 3 and len(body) >= 3:	# 802.1 VLAN name
+                val = f"802.1 vlan name vid {int.from_bytes(body[:2], 'big')} len {body[2]} {_value(body[3:3 + body[2]])}"
+            else:
+                val = f"{oui}/{sub} {body.hex()}"
+        else:
+            val = _value(v)
+        lines.append(f"  {name} len {ln}: {val}")
+        if t == 0:
+            break
+    if p.rstrip(b"\0"):
+        lines.append(f"  after the end: {p.rstrip(bytes(1)).hex()}")
+    return "\n".join(lines)
 
 
 def sha(b):
