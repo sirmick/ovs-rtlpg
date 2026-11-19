@@ -61,6 +61,7 @@ ifneq ($(FW_IMAGE),)
 	python3 tests/fabric/test_flows.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/flash/test_boot0.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/fw/test_control.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
+	python3 tests/fw/test_early_reset.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 else
 	@echo "fw: no firmware image (set FW_IMAGE or build RTLPlayground), skipped"
 endif
@@ -72,6 +73,16 @@ CTL_IMAGE ?= $(FW_IMAGE)
 CTL_BOARD ?=
 test-control: $(BUILD)/rtlsim
 	python3 tests/fw/test_control.py $(CTL_IMAGE) $(if $(CTL_BOARD),--board $(CTL_BOARD)) --rtlsim $(BUILD)/rtlsim
+
+# The early-reset hang (rtlsim --control) on another image and board: ER_EXPECT
+# boot for a firmware that does the switch init before its main loop, hang for
+# one that gets to its prompt without it (^R ^R there hangs the chip):
+#   make test-early-reset ER_IMAGE=... ER_BOARD=boards/keeplink_kp_9000_9xhpml_v1_2.json ER_EXPECT=hang
+ER_IMAGE ?= $(FW_IMAGE)
+ER_BOARD ?=
+ER_EXPECT ?= boot
+test-early-reset: $(BUILD)/rtlsim
+	python3 tests/fw/test_early_reset.py $(ER_IMAGE) $(if $(ER_BOARD),--board $(ER_BOARD)) --expect $(ER_EXPECT) --rtlsim $(BUILD)/rtlsim
 
 # The firmware against Linux's TCP/IP in a network namespace (needs sudo;
 # real time, so a few seconds): ping, the web UI, and what each frame costs.
@@ -127,4 +138,4 @@ clean:
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
-.PHONY: all test test-control test-net test-update test-flash test-powercut vm test-vm check-banks clean
+.PHONY: all test test-control test-early-reset test-net test-update test-flash test-powercut vm test-vm check-banks clean
