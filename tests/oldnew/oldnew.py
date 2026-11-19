@@ -188,10 +188,11 @@ class Run:
         self._now()
         self.b.uncable(a)
 
-    def partner(self, ports):
-        """An LACP partner (lacp_partner.py) on these physical ports."""
+    def partner(self, ports, short=True):
+        """An LACP partner (lacp_partner.py) on these physical ports; short:
+        it asks for the short timeout, else the long one."""
         self._now()
-        self.lacp = LacpPartner(self.b, ports)
+        self.lacp = LacpPartner(self.b, ports, short=short)
         return self.lacp
 
     def partner_view(self):

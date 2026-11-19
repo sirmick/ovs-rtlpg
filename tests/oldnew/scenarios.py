@@ -128,6 +128,35 @@ def lacp(r):
     r.get("/lag.json")
 
 
+def lacp_slow(r):
+    """LACP against a partner that asks for the long timeout (lacp_partner.py,
+    short=False): the switch sends at its slow periodic, every 30 s, while
+    the partner sends every second (the switch asks for the short timeout).
+    Two slow periods, then the partner silent - the switch's own timeout is
+    still the short one - and back."""
+    P, F = r.P, r.F
+    r.boot()
+    for i in (2, 3):
+        r.link(P[i], True)
+    partner = r.partner([P[2], P[3]], short=False)
+    r.cli(f"lag 1 lacp {F[2]} {F[3]}")
+    r.wait(5000)
+    r.cli("lacp show")
+    r.partner_view()
+    r.wait(65000)
+    r.cli("lacp show")
+    r.partner_view()			# the switch's LACPDUs: one every 30 s
+    r._now()
+    partner.stop()
+    r.wait(6000)
+    r.cli("lacp show")
+    r._now()
+    partner.start()
+    r.wait(5000)
+    r.cli("lacp show")
+    r.partner_view()
+
+
 def loop(r):
     """Loop detection (the chip's RLDP engine, sys/rldp.h) with a cable
     between front ports 5 and 6 (3 and 4 on a board with fewer copper
@@ -248,4 +277,4 @@ def flaps(r):
     r.cli("l2")
 
 
-SCENARIOS = {f.__name__: f for f in (boot, cli, web, vlan, stp, lacp, loop, igmp, config, upload, sfp, flaps)}
+SCENARIOS = {f.__name__: f for f in (boot, cli, web, vlan, stp, lacp, lacp_slow, loop, igmp, config, upload, sfp, flaps)}
