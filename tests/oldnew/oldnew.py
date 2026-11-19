@@ -118,7 +118,7 @@ class Run:
         out = self.b.wait_uart(PROMPT, until)
         self.results[self._key("boot")] = out if out is not None else "<timeout>"
         self.b.advance(self.b.now + 10000)	# cmd_editor_init() drops input before it
-        before, ip = self.b.console("ip", until)	# the harness's own question: not a result
+        before, ip = self._type("ip", until)	# the harness's own question: not a result
         self._console(before)
         m = re.search(r"Current IP: ([\d.]+)", ip or "")
         sw = m.group(1) if m else "192.168.10.247"
@@ -127,14 +127,23 @@ class Run:
         self.host.sw_ip = ip_bytes(sw)
         self.host.sw_mac = None
 
-    def cli(self, line, slot=5000):
-        until = self._slot(slot)
+    def _type(self, line, until):
+        """b.console(), and its reply's firmware time, typed to prompt, kept
+        in self.replies as "cli <line>": a measure for the checks (`by
+        cli`), not a result. Every line the console is given goes through
+        here, the harness's own ("ip", "health tasks") too: a reply holds
+        every step its command ran, so each may be the one that saturated
+        a long step, and counting more only makes the bound stricter."""
         start = self.b.now
         before, out = self.b.console(line, until)
-        self._console(before)
-        if out is not None:		# a measure for the checks, not a result
+        if out is not None:
             k = f"cli {line}"
             self.replies[k] = max(self.replies.get(k, 0), self.b.now - start)
+        return before, out
+
+    def cli(self, line, slot=5000):
+        before, out = self._type(line, self._slot(slot))
+        self._console(before)
         self.results[self._key(f"cli {line}")] = out if out is not None else "<timeout>"
 
     def tables(self):
@@ -357,7 +366,7 @@ class Run:
         `limit_ms`, but FL_ERASE (an erase is one step by design). A check per
         state over the limit ("long step <STATE>"), or "long steps" if none
         is; skipped ("long steps") on a build without the command."""
-        _, out = self.b.console("health tasks", self.b.now + slot * 1000)
+        _, out = self._type("health tasks", self.b.now + slot * 1000)
         if out is None or "state\truns\tmax" not in out:
             self.checks.append(("long steps", None, "no `health tasks` in this build: skipped", None, [], None))
             return
@@ -598,8 +607,9 @@ def load_known(path):
     gap check's largest gap over its upper bound. Where that measure
     saturates (a long step's >400ms), `by cli ...` bounds it instead by the
     console replies, in firmware time from typed to prompt (a reply holds
-    every step its command ran): the longest of every command the scenario
-    typed, whichever saturated the step; commands named must have been
+    every step its command ran): the longest of every command the console
+    was given (Run._type(): the harness's own too), whichever saturated the
+    step; commands named must have been
     typed. A line with no ceiling says `unbounded`, else it is malformed.
     [{scenarios, check, ceiling µs|None, by [commands]|None, unbounded, line}]"""
     out = []

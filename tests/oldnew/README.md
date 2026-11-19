@@ -98,8 +98,8 @@ the line. A gap under the lower bound (hello < 1.95 s) FAILs whatever the
 lines say. `health tasks` saturates at >400ms: such a step is bounded only by `by cli
 <commands>|*`: the longest console reply, in firmware time from typed to
 prompt (a reply holds every step its command ran), of every command the
-scenario typed, whichever saturated it; the named commands must have been
-typed. Or the line says `unbounded`, as a line with no ceiling must. `known-failures` is today's (dated in its header): the l2 gap, the
+console was given, the harness's own `ip` and `health tasks` too, whichever
+saturated it; the named commands must have been typed. Or the line says `unbounded`, as a line with no ceiling must. `known-failures` is today's (dated in its header): the l2 gap, the
 hello during the upload, and the CLI_RUN, HOUSE_SEC and RX_STEP long steps,
 each in the scenarios it is seen in. A line that names a scenario that ran
 but matched no failed check is flagged: a fix shows as a stale line.

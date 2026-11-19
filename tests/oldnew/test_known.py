@@ -8,7 +8,7 @@ A check is (name, violations, what, worst µs, hard, saturated): saturated is
 None, or the scenario's console replies {"cli <line>": µs} when the measure
 saturated (`health tasks`' >400ms). Exit 0 when every case gives its verdict.
 """
-import os, subprocess, sys, tempfile
+import inspect, os, subprocess, sys, tempfile
 from types import SimpleNamespace
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -99,6 +99,22 @@ def main():
     ok = worst == 2_800_000 and len(hard) == 1 and "port 5" in hard[0]
     fails += not ok
     print(f"{'PASS' if ok else 'FAIL'}  R: gap_check worst {worst} µs (the long gap), hard {hard}")
+
+    # every line the harness types counts toward `by cli`: Run._type()
+    # records its reply, and Run gives the console nothing but through it
+    class FakeBench:
+        now = 1000
+        def console(self, line, until):
+            self.now += {"ip": 40_000, "health tasks": 250_000}.get(line, 10_000)
+            return "", "reply\n> "
+    r = SimpleNamespace(b=FakeBench(), replies={})
+    for line in ("ip", "health tasks", "ip"):
+        Run._type(r, line, 10_000_000)
+    src = inspect.getsource(Run)
+    ok = r.replies == {"cli ip": 40_000, "cli health tasks": 250_000} and src.count("self.b.console(") == 1
+    fails += not ok
+    print(f"{'PASS' if ok else 'FAIL'}  S: the harness's own lines are measured too ({r.replies}); "
+          f"b.console() called {src.count('self.b.console(')} time(s) in Run, from _type()")
     sys.exit(1 if fails else 0)
 
 
