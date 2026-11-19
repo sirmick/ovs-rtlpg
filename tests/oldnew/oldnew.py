@@ -261,32 +261,16 @@ class Run:
         mac = bytes([0x01, 0x00, 0x5e, d[1] & 0x7f, d[2], d[3]])
         self.b.sim.nic_inject(port, mac + bytes([2, 0, 0, 0, 0x77, port]) + b"\x08\x00" + h + m)
 
-    def learn(self, port, n, every=2, vid=1):
-        """n hosts behind physical `port` in VLAN `vid`, each heard once (a
-        frame from its MAC, 02:00:00:01:hh:ll, to one that isn't there),
-        `every` ms apart: the chip learns them (control mode's learning), the
-        CPU drops them. The MACs are those whose L2 index (rtlsim's hash,
-        sys/tables.cpp l2_hash()) no entry has, nor the host's: the sim gives
-        the entries of one hash bucket one index, and the firmware's table
-        walk (the next higher index) would skip all but one of each."""
-        def h(mac):
-            x = vid
-            for c in mac:
-                x = (x * 31 + c) & 0xffff
-            return x & 0xfff
-        self._now()
-        used = {int(l.split()[0], 16) for l in self.b.table("l2")} | {h(self.host.mac if self.host else b"")}
-        macs, i = [], 0
-        while len(macs) < n:
-            m = bytes([2, 0, 0, 1, i >> 8 & 255, i & 255])
-            i += 1
-            if h(m) not in used:
-                used.add(h(m))
-                macs.append(m)
-        for m in macs:
+    def learn(self, port, n, every=2):
+        """n hosts behind physical `port`, each heard once (a frame from its
+        MAC, 02:00:00:01:hh:ll, i = 0..n-1, to one that isn't there), `every`
+        ms apart: the chip learns them (control mode's learning) as far as
+        their buckets hold, the CPU drops them."""
+        for i in range(n):
             self.wait(every)
             self._now()
-            self.b.sim.nic_inject(port, bytes.fromhex("02000000ffff") + m + b"\x88\xb5" + bytes(46))
+            self.b.sim.nic_inject(port, bytes.fromhex("02000000ffff") + bytes([2, 0, 0, 1, i >> 8, i & 255]) +
+                                  b"\x88\xb5" + bytes(46))
 
     def get_l2_pages(self, pages=40, slot=2000):
         """/l2.json as the UI loads it (app.js l2Load()): from index 0, each

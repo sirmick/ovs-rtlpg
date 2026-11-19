@@ -56,9 +56,9 @@ or a hash. `--new-payload` gives NEW an image of its own to upload (its own
 application, say); the regions then compare equal when each side's flash
 holds what it was sent.
 
-l2_big's MACs are those with an L2 index (rtlsim's hash) of their own: the
-sim gives every entry of a bucket the same index, and the firmware's table
-walk (the next higher index) would show one of each.
+l2_big's MACs are sequential (02:00:00:01:00:00 on); the sim's L2 table is
+the chip's geometry, 1024 buckets of 4 with an index per entry, its hash a
+placeholder: a MAC whose bucket is full is not learned, as on the chip.
 
 ## The new-only checks
 

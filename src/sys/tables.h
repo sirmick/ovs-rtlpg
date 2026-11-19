@@ -9,6 +9,9 @@
 //   table, three words per entry (DATA_IN_A/B/C in, L2_DATA_OUT_A/B/C out),
 //   looked up by MAC+VID or walked by index (method in TBL_DATA_0 bits 15:14,
 //   clear in bit 18; found/index reported in TBL_DATA_0 bits 12:0).
+//   The L2 table is 1024 buckets of 4 ways, an entry's index bucket << 2 |
+//   way (tables.cpp, l2_hash()): every entry has its own; a full bucket
+//   learns nothing more.
 //   Word B: bit 29 valid, bits 31:30 the low two port bits, 27:16 VID, 15:0
 //   MAC octets 0-1. Word A: MAC octets 2-5. Word C: bit 16 static, bits 1:0 the
 //   high port bits (multicast: bits 7:0 the member mask >> 2).
@@ -42,9 +45,9 @@ public:
 
 	// An L3 multicast entry (IPMC_USES_L3MC): same TBL type 4, but valid on
 	// word-B bit 28 (not 29), keyed on (SIP, DIP) with a member mask. See
-	// doc/igmp-multicast.md for the layout. The stored hash index uses a
-	// placeholder hash (l3mc_hash in tables.cpp), not the real RTL8372 one, so
-	// an entry's index differs from silicon; lookups resolve by key and the
+	// doc/igmp-multicast.md for the layout. Its bucket is a placeholder hash
+	// (l3mc_hash in tables.cpp), not the real RTL8372 one, so an entry's
+	// index differs from silicon; lookups resolve by key and the
 	// firmware never depends on a specific index, so this is immaterial.
 	static bool is_l3mc(const l2_entry &e) { return ((e.b >> 28) & 1) && !((e.b >> 29) & 1); }
 	static unsigned l3mc_mask(const l2_entry &e) { return ((e.b >> 30) & 0x3) | ((e.c & 0xff) << 2); }
@@ -76,6 +79,7 @@ private:
 	const l2_entry *l2_find(const u8 mac[6], u16 vid) const { return const_cast<switch_tables *>(this)->l2_find(mac, vid); }
 	l2_entry *l3mc_find(u32 a, u32 b);
 	l2_entry *l2_free();
+	l2_entry *l2_place(u16 bucket);
 	void l2_sort();
 
 	switch_core &m_core;

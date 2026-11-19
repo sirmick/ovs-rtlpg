@@ -20,12 +20,18 @@ void switch_tables::key(const l2_entry &e, u8 mac[6], u16 *vid)
 	*vid = (e.b >> 16) & 0xfff;
 }
 
+// The table's geometry: 4096 entries, 1024 buckets of 4 (the RTL8376
+// datasheet: a 4-way hash; the RTL8373 SDK: 4160 addresses, 4096 hashed and
+// a 64-entry CAM, not modelled), an entry's index its bucket << 2 | its way,
+// as the vendor's other switches have it (OpenWrt's rtl83xx l2.c). So every
+// entry has an index of its own, as the firmware's next-index walk assumes.
+// The bucket hash is a placeholder, not the chip's.
 static u16 l2_hash(const u8 mac[6], u16 vid)
 {
 	u16 h = vid;
 	for (int i = 0; i < 6; i++)
 		h = u16(h * 31 + mac[i]);
-	return h & 0xfff;
+	return h & 0x3ff;
 }
 
 switch_tables::switch_tables(switch_core &core) : m_core(core), m_l2(L2_MAX)
@@ -77,10 +83,10 @@ switch_tables::l2_entry *switch_tables::l3mc_find(u32 a, u32 b)
 	return nullptr;
 }
 
-static u16 l3mc_hash(u32 a, u32 b)
+static u16 l3mc_hash(u32 a, u32 b)		// a bucket, as l2_hash()
 {
 	u32 h = a * 31 + (b & 0x0fffffff);
-	return u16((h ^ h >> 12 ^ h >> 24) & 0xfff);
+	return u16((h ^ h >> 12 ^ h >> 24) & 0x3ff);
 }
 
 int switch_tables::lookup(const u8 mac[6], u16 vid) const
@@ -98,10 +104,9 @@ bool switch_tables::learn(const u8 mac[6], u16 vid, unsigned p)
 	if (e && (is_static(*e) || port(*e) == p))
 		return false;
 	if (!e) {
-		e = l2_free();
+		e = l2_place(l2_hash(mac, vid));
 		if (!e)
-			return false;		// table full: the frame is flooded
-		e->idx = l2_hash(mac, vid);
+			return false;		// its bucket full: the frame is flooded
 	}
 	e->present = true;
 	e->a = (u32(mac[2]) << 24) | (mac[3] << 16) | (mac[4] << 8) | mac[5];
@@ -126,6 +131,28 @@ switch_tables::l2_entry *switch_tables::l2_free()
 	for (auto &e : m_l2)
 		if (!e.present)
 			return &e;
+	return nullptr;
+}
+
+// A free entry in `bucket`, its index set to the first free way; none if
+// the bucket's four are taken (the frame is then flooded, not learned).
+switch_tables::l2_entry *switch_tables::l2_place(u16 bucket)
+{
+	for (u16 way = 0; way < 4; way++) {
+		u16 const idx = u16(bucket << 2 | way);
+		bool taken = false;
+		for (auto &x : m_l2)
+			if (x.present && x.idx == idx) {
+				taken = true;
+				break;
+			}
+		if (!taken) {
+			l2_entry *e = l2_free();
+			if (e)
+				e->idx = idx;
+			return e;
+		}
+	}
 	return nullptr;
 }
 
@@ -192,10 +219,9 @@ void switch_tables::table_exec(u32 ctrl)
 				return;
 			}
 			if (!e) {
-				e = l2_free();
+				e = l2_place(l3mc_hash(a, b));
 				if (!e)
-					return;		// table full
-				e->idx = l3mc_hash(a, b);
+					return;		// its bucket full
 			}
 			e->present = true;
 			e->a = a; e->b = b; e->c = m_core.reg(DATA_IN_C);
@@ -226,10 +252,9 @@ void switch_tables::table_exec(u32 ctrl)
 				return;
 			}
 			if (!e) {
-				e = l2_free();
+				e = l2_place(l2_hash(mac, vid));
 				if (!e)
-					return;		// table full
-				e->idx = l2_hash(mac, vid);
+					return;		// its bucket full
 			}
 			e->present = true;
 			e->a = in.a; e->b = in.b; e->c = in.c;
