@@ -132,6 +132,14 @@ class Run:
         self.results[self._key("vlan table")] = "\n".join(self.b.table("vlan"))
         self.results[self._key("l2 table")] = "\n".join(self.b.table("l2"))
 
+    def frames(self, kind):
+        """The frames of `kind` (bench.kind()) the chip has sent so far, per
+        port: a result, compared exactly."""
+        self._now()
+        self._console()
+        self.results[self._key(f"frames {kind}")] = " ".join(
+            f"{p}:{n}" for (p, k), n in sorted(self.b.frames.items()) if k == kind)
+
     def note(self, text):
         self._console()
         self.results[self._key("note")] = text

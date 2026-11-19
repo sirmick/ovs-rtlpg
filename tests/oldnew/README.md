@@ -35,7 +35,7 @@ rtlsim, and all of them run in parallel. The full set takes about 30 s on the
 | vlan | VLANs and PVIDs from the console and from the web (POST /cmd) |
 | stp | RSTP on, with a loop cable between front 3 and 4: one port blocks, BPDUs flow |
 | lacp | LACP on front 3 and 4 against a partner (`lacp_partner.py`): both ports aggregate, then the partner goes silent and the switch times it out, then it comes back; then a static LAG |
-| lacp_slow | LACP against a partner that asks for the long timeout: the switch sends at its 30 s slow periodic for two periods; then the partner silent (the switch's own timeout is still the short one), and back |
+| lacp_slow | LACP against a partner that asks for the long timeout: the switch sends at its 30 s slow periodic for two periods; then the partner silent for 96 s, past its 90 s long timeout (the switch's own receive timeout is the short one: it defaults the partner in ~4 s and stays defaulted, at its slow periodic), then the rejoin |
 | loop | loop detection, with a cable between front 5 and 6 (3 and 4 on a smaller board): the loop is found, a port blocked, then released when unplugged |
 | igmp | snooping: a query, a report (the group's L3 multicast entry), a leave |
 | config | a setting from the web, the config saved as the UI saves it (POST /config) and read back, then a power cut: the boot applies it |
@@ -64,7 +64,8 @@ These are named and compared one by one:
 - every web response (status, headers and body; the session cookie's value
   is left out);
 - the boot log;
-- table snapshots where a scenario takes them;
+- table snapshots and frame counts (`<n> frames <kind>`, per port, so far)
+  where a scenario takes them;
 - at the end:
   - the switch core's stored registers, SerDes and PHY registers;
   - the VLAN and L2 tables;

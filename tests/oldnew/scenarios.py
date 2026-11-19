@@ -132,8 +132,11 @@ def lacp_slow(r):
     """LACP against a partner that asks for the long timeout (lacp_partner.py,
     short=False): the switch sends at its slow periodic, every 30 s, while
     the partner sends every second (the switch asks for the short timeout).
-    Two slow periods, then the partner silent - the switch's own timeout is
-    still the short one - and back."""
+    Two slow periods; then the partner silent past its long timeout (95 s):
+    the switch's own receive timeout is always the short one, so it defaults
+    the partner after ~4 s and empties the trunk, and stays defaulted,
+    sending at its slow periodic (a defaulted partner asks for no short
+    timeout); then the partner back, and the rejoin."""
     P, F = r.P, r.F
     r.boot()
     for i in (2, 3):
@@ -146,15 +149,20 @@ def lacp_slow(r):
     r.wait(65000)
     r.cli("lacp show")
     r.partner_view()			# the switch's LACPDUs: one every 30 s
+    r.frames("lacp")
     r._now()
     partner.stop()
     r.wait(6000)
-    r.cli("lacp show")
+    r.cli("lacp show")			# defaulted, out of the trunk
+    r.wait(90000)
+    r.cli("lacp show")			# still: 96 s silent, past the long timeout
+    r.frames("lacp")			# what the switch sent meanwhile
     r._now()
     partner.start()
     r.wait(5000)
-    r.cli("lacp show")
+    r.cli("lacp show")			# rejoined
     r.partner_view()
+    r.frames("lacp")
 
 
 def loop(r):
