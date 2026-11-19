@@ -87,11 +87,13 @@ def stp(r):
     r.cable(P[2], P[3])
     r.cli("stp on")
     r.wait(35000)
+    t0 = r.mark()
     for c in ["stp status", "stp"]:
         r.cli(c)
     r.login()
     for p in ["/stp.json", "/stpcnt.json"]:
         r.get(p)
+    r.hello_check(t0, r.mark())
     r.cli("stp off")
     r.wait(2000)
     r.cli("stp status")
@@ -108,20 +110,24 @@ def lacp(r):
     partner = r.partner([P[2], P[3]])
     r.cli(f"lag 1 lacp {F[2]} {F[3]}")
     r.wait(5000)
+    t0 = r.mark()
     r.cli("lacp show")
     r.cli("lag show")
     r.partner_view()
     r.login()
     r.get("/lag.json")
     r._now()
+    r.lacp_check(t0, r.mark(), [P[2], P[3]])
     partner.stop()
     r.wait(6000)
     r.cli("lacp show")
     r._now()
     partner.start()
     r.wait(5000)
+    t0 = r.mark()
     r.cli("lacp show")
     r.partner_view()
+    r.lacp_check(t0, r.mark(), [P[2], P[3]])
     r.cli("lag 1 lacp off")
     r.cli(f"lag 2 {F[1]} {F[2]}")
     r.cli("lag show")
@@ -269,6 +275,71 @@ def upload(r):
     r.post_upload(r.payload, slot=20000)
     r.boot(slot=60000)
     r.cli("version")
+    r.flash_regions()
+
+
+L2_HOSTS = 1000
+
+
+def l2_big(r):
+    """1000 hosts behind front port 2, learned by the chip (rtlsim's
+    learning): `l2` on the console prints them all, /l2.json pages them."""
+    P = r.P
+    r.boot()
+    r.link(P[1], True)
+    r.wait(1000)
+    r.learn(P[1], L2_HOSTS)
+    r.wait(1000)
+    r.tables()
+    r.cli("l2", slot=30000)
+    r.login()
+    r.get_l2_pages()
+
+
+def lacp_l2(r):
+    """lacp and l2_big together: a LAG with LACP up against the partner,
+    1000 hosts learned on another port, then `l2` dumps them and the web
+    pages them. The LACPDUs' spacing on the LAG while it does (lacp gap,
+    < 1.2 s), and whether the partner stays in."""
+    P, F = r.P, r.F
+    r.boot()
+    for i in (1, 2, 3):
+        r.link(P[i], True)
+    partner = r.partner([P[2], P[3]])
+    r.cli(f"lag 1 lacp {F[2]} {F[3]}")
+    r.wait(5000)
+    r.learn(P[1], L2_HOSTS)
+    r.wait(2000)
+    r.cli("lacp show")
+    t0 = r.mark()
+    r.cli("l2", slot=30000)
+    r.login()
+    r.get_l2_pages()
+    r.wait(2000)
+    r.lacp_check(t0, r.mark(), [P[2], P[3]])
+    r.cli("lacp show")
+    r.partner_view()
+
+
+def stp_upload(r):
+    """stp and upload together: RSTP on with the loop cable, converged; then
+    a firmware upload from the web. The hello spacing on every port that
+    sends BPDUs, from before the upload to its answer (stp hello, 2 s
+    +-50 ms); then the reset, the loader, the boot, and the flash."""
+    P = r.P
+    r.boot()
+    r.link(P[1], True)
+    r.cable(P[2], P[3])
+    r.cli("stp on")
+    r.wait(35000)
+    r.login()
+    t0 = r.mark()
+    r.wait(4000)
+    r.post_upload(r.payload, slot=20000)	# as upload's: the reset's boot is the next step's
+    r.hello_check(t0, r.b.now)	# up to the answer: the reset follows it
+    r.boot(slot=60000)
+    r.cli("version")
+    r.flash_regions()
 
 
 def sfp(r):
@@ -313,4 +384,5 @@ def flaps(r):
     r.cli("l2")
 
 
-SCENARIOS = {f.__name__: f for f in (boot, cli, web, vlan, stp, lacp, lacp_slow, lldp, loop, igmp, config, upload, sfp, flaps)}
+SCENARIOS = {f.__name__: f for f in (boot, cli, web, vlan, stp, lacp, lacp_slow, lldp, loop, igmp, config, upload, sfp,
+                                     flaps, l2_big, lacp_l2, stp_upload)}

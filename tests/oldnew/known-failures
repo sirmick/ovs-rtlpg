@@ -1,0 +1,9 @@
+# The new-only checks' failures on record (checks.py --known, oldnew.py --known):
+# <scenario glob> <check glob>  # why. Measured on fork main b635486 and on M2
+# f621897 (the 8x and the SWGT024, rtlsim --control); a line that matches no
+# failed check is flagged, so a fix shows as a stale line here.
+lacp_l2 lacp gap		# `l2` prints 1000 entries in one go (3.86 s): no LACPDU meanwhile
+stp_upload stp hello		# the upload's flash writes hold the loop: no BPDU for ~2.8 s before the answer
+* long step CLI_RUN		# a command's reply printed in one step (silicon.md: 86 ms; `l2` > 400 ms)
+* long step HOUSE_SEC		# 40 ms in the sim; silicon.md 40.8 ms, unexplained
+* long step RX_STEP		# ~34.7 ms in the sim (web, vlan, lldp: the web's replies); silicon.md 21.0 ms

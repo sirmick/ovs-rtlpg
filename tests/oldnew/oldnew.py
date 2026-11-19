@@ -35,9 +35,14 @@ don't fail the run; a line that matched no difference is flagged (it may be
 stale), without failing it. Exit 0 when every scenario matches, 1 otherwise. --save
 DIR writes each side's results, as JSON, for a look.
 
---payload is the image the upload scenario uploads (default: the
-application image next to --old). The run is the same every time: old
-against old must match on every scenario (make oldnew-self).
+--payload is the image the upload scenarios upload (default: the
+application image next to --old); --new-payload, NEW's (its own application,
+say). The run is the same every time: old against old must match on every
+scenario.
+
+The new-only checks (checks.py) are measured on each side and printed under
+each scenario, not compared; --checks makes NEW's failures fail the run,
+--known FILE lists today's (as --expect's format: <scenario glob> <check glob>).
 """
 import argparse, difflib, fnmatch, glob, hashlib, json, os, re, struct, sys, time
 from concurrent.futures import ProcessPoolExecutor
@@ -63,6 +68,7 @@ class Run:
     def __init__(self, image, board, rtlsim, payload):
         self.b = Bench(image, board=board, rtlsim=rtlsim)
         self.payload = open(payload, "rb").read() if payload else b""
+        self.checks = []		# (name, [violations], what was measured): not results
         # the front ports, as the board has them (rtlsim's default: the SWTG024AS)
         ports = json.load(open(board or DEFAULT_BOARD))["ports"]
         copper = [p for p in ports if "sfp" not in p]
@@ -255,8 +261,151 @@ class Run:
         mac = bytes([0x01, 0x00, 0x5e, d[1] & 0x7f, d[2], d[3]])
         self.b.sim.nic_inject(port, mac + bytes([2, 0, 0, 0, 0x77, port]) + b"\x08\x00" + h + m)
 
+    def learn(self, port, n, every=2, vid=1):
+        """n hosts behind physical `port` in VLAN `vid`, each heard once (a
+        frame from its MAC, 02:00:00:01:hh:ll, to one that isn't there),
+        `every` ms apart: the chip learns them (control mode's learning), the
+        CPU drops them. The MACs are those whose L2 index (rtlsim's hash,
+        sys/tables.cpp l2_hash()) no entry has, nor the host's: the sim gives
+        the entries of one hash bucket one index, and the firmware's table
+        walk (the next higher index) would skip all but one of each."""
+        def h(mac):
+            x = vid
+            for c in mac:
+                x = (x * 31 + c) & 0xffff
+            return x & 0xfff
+        self._now()
+        used = {int(l.split()[0], 16) for l in self.b.table("l2")} | {h(self.host.mac if self.host else b"")}
+        macs, i = [], 0
+        while len(macs) < n:
+            m = bytes([2, 0, 0, 1, i >> 8 & 255, i & 255])
+            i += 1
+            if h(m) not in used:
+                used.add(h(m))
+                macs.append(m)
+        for m in macs:
+            self.wait(every)
+            self._now()
+            self.b.sim.nic_inject(port, bytes.fromhex("02000000ffff") + m + b"\x88\xb5" + bytes(46))
+
+    def get_l2_pages(self, pages=40, slot=2000):
+        """/l2.json as the UI loads it (app.js l2Load()): from index 0, each
+        page from the index after the last entry of the one before, until a
+        page is empty or comes round to an entry already seen."""
+        idx, seen = 0, set()
+        for _ in range(pages):
+            self.get(f"/l2.json?idx={idx}", slot=slot)
+            body = self.results[f"{self.n - 1:03d} web GET /l2.json?idx={idx}"].partition("\n\n")[2]
+            got = [int(x, 16) for x in re.findall(r'"idx": *"([0-9a-fA-F]+)"', body)]
+            if not got or seen & set(got):
+                return
+            seen |= set(got)
+            idx = got[-1] + 1
+
+    # --- the new-only checks (checks.py): measured on each image, not compared
+    def mark(self):
+        """Firmware time now (µs), to bound a check's window."""
+        self._now()
+        return self.b.now
+
+    def gap_check(self, name, kind, t0, t1, lo=None, hi=None, ports=None):
+        """The gaps between the frames of `kind` the chip sent per port, every
+        gap that overlaps [t0, t1] (so the one across t0 too, and the silence
+        from the last frame to t1), each within [lo, hi] s. Ports: those
+        given, else every port that sent two or more in the window."""
+        ts = {p: v for (p, k), v in self.b.times.items() if k == kind}
+        if ports is None:
+            ports = sorted(p for p, v in ts.items() if sum(t0 <= t <= t1 for t in v) >= 2)
+        bad, what = [], []
+        for p in ports:
+            v = ts.get(p, [])
+            gaps = [(a, b) for a, b in zip(v, v[1:]) if b >= t0 and a <= t1]
+            last = max([t for t in v if t <= t1], default=None)
+            tail = t1 - last if last is not None and last >= t0 else None
+            if not gaps and last is None:
+                bad.append(f"port {p}: none sent in {t0 / 1e6:.3f}..{t1 / 1e6:.3f} s")
+                continue
+            g = [b - a for a, b in gaps]
+            what.append(f"port {p}: {len(g)} gaps" + (f", min {min(g) / 1e6:.3f} s max {max(g) / 1e6:.3f} s" if g else ""))
+            for a, b in gaps:
+                if (lo is not None and b - a < lo * 1e6) or (hi is not None and b - a > hi * 1e6):
+                    bad.append(f"port {p}: {(b - a) / 1e6:.3f} s from {a / 1e6:.3f} s")
+            if hi is not None and tail is not None and tail > hi * 1e6:
+                bad.append(f"port {p}: none for {tail / 1e6:.3f} s up to {t1 / 1e6:.3f} s")
+        if not ports:
+            bad.append(f"no port sent two in {t0 / 1e6:.3f}..{t1 / 1e6:.3f} s")
+        bounds = (f"{lo}" if lo is not None else "") + ".." + (f"{hi}" if hi is not None else "") + " s"
+        self.checks.append((name, bad, f"{kind} {bounds}, {t0 / 1e6:.3f}..{t1 / 1e6:.3f} s: " + "; ".join(what)))
+
+    def lacp_check(self, t0, t1, ports):
+        """lacp gap: the switch's LACPDUs on the LAG, < 1.2 s apart (its fast
+        periodic is 1 s; the partner's short timeout is 3)."""
+        self.gap_check("lacp gap", "lacp", t0, t1, hi=1.2, ports=ports)
+
+    def hello_check(self, t0, t1):
+        """stp hello: the BPDUs on every port that sends them, 2 s +-50 ms
+        apart (the hello time)."""
+        self.gap_check("stp hello", "stp", t0, t1, lo=1.95, hi=2.05)
+
+    def long_steps(self, limit_ms=20, slot=8000):
+        """`health tasks` at the end: every state's longest step within
+        `limit_ms`, but FL_ERASE (an erase is one step by design). A check per
+        state over the limit ("long step <STATE>"), or "long steps" if none
+        is; skipped ("long steps") on a build without the command."""
+        _, out = self.b.console("health tasks", self.b.now + slot * 1000)
+        if out is None or "state\truns\tmax" not in out:
+            self.checks.append(("long steps", None, "no `health tasks` in this build: skipped"))
+            return
+        bad, longest = [], (0, "")
+        for l in out.split("state\truns\tmax", 1)[1].splitlines():
+            m = re.match(r"(\w+)\t(\d+)\t(>?)(\d+)(us|ms)$", l)
+            if not m:
+                continue
+            st, runs, over, v, unit = m.groups()
+            us = int(v) * (1000 if unit == "ms" else 1) + (1 if over else 0)
+            if us > longest[0] and st != "FL_ERASE":
+                longest = (us, st)
+            if us > limit_ms * 1000 and st != "FL_ERASE":
+                self.checks.append((f"long step {st}", [f"{over}{v}{unit}, {runs} runs"], f"over {limit_ms} ms"))
+                bad.append(st)
+        if not bad:
+            m = re.search(r"passes .*", out)
+            self.checks.append(("long steps", [], f"none over {limit_ms} ms but FL_ERASE; longest {longest[1]} "
+                                f"{longest[0] / 1000:.3f} ms; {m.group(0) if m else ''}"))
+
+    def flash_regions(self):
+        """The flash after an upload, region by region, as results: the
+        application (0x4000..0x3a000), its home bank in the slot (0x3c000,
+        LDR_HOME_LEN bytes: the image's 0x2..0x4000), the staged upload
+        (0x40000) and the config sector. Each is said against the image
+        uploaded (r.payload), in runs of 4 KiB sectors (the upload's own
+        bytes, blank, or other: their hash), so two images that each uploaded
+        their own compare equal when each holds what it was sent."""
+        self._now()
+        self._console()
+        for name, a, n, src in [("app", 0x4000, 0x3a000 - 0x4000, 0x4000), ("slot", 0x3c000, 0x3ffe, 2),
+                                ("staged", 0x40000, 0x3a000, 0), ("config", CONFIG_START, CONFIG_LEN - 2, None)]:
+            self.results[self._key(f"flash {name} {a:#x}")] = self._flash_text(a, self.b.flash(a, n), src)
+
+    def _flash_text(self, a, f, src):
+        P, runs = self.payload, []
+        for i in range(0, len(f), 0x1000):
+            c = f[i:i + 0x1000]
+            what = ("blank" if c == b"\xff" * len(c) else
+                    "upload" if src is not None and c == P[src + i:src + i + len(c)] else "other")
+            if runs and runs[-1][0] == what:
+                runs[-1][2] = i + len(c)
+            else:
+                runs.append([what, i, i + len(c)])
+        out = []
+        for what, i, j in runs:
+            out.append(f"{a + i:#x}..{a + j:#x} " + (
+                "blank" if what == "blank" else
+                f"the upload's {src + i:#x}..{src + j:#x}" if what == "upload" else f"sha256 {sha(f[i:j])}"))
+        return ", ".join(out)
+
     # --- the end
-    def finish(self):
+    def finish(self, checks=True):
         self._now()
         self._console()
         res = dict(self.results)
@@ -279,6 +428,8 @@ class Run:
             "" if cfg[end:].count(cfg[end:end + 1]) == len(cfg) - end else f"\n<then not blank: sha256 {sha(cfg[end:])}>")
         for (p, k), n in sorted(self.b.frames.items()):
             res[f"frames {p} {k}"] = str(n)
+        if checks:
+            self.long_steps()		# after the results: its reply is not one
         self.b.close()
         return {k: scrub(v) for k, v in res.items()}
 
@@ -361,17 +512,39 @@ def norm(r):
 def run_one(job):
     name, side, image, a = job
     t0 = time.time()
-    r = Run(image, a["board"], a["rtlsim"], a["payload"])
+    r = Run(image, a["board"], a["rtlsim"], a["payload_" + side] if "payload_" + side in a else a["payload"])
     try:
         SCENARIOS[name](r)
         res = r.finish()
+        checks = r.checks
     except Exception as e:
         try:
             r.b.close()
         except Exception:
             pass
         res = {"<error>": f"{type(e).__name__}: {e}"}
-    return name, side, res, time.time() - t0
+        checks = [("<error>", [res["<error>"]], "the scenario didn't finish")]
+    return name, side, res, checks, time.time() - t0
+
+
+def verdicts(name, checks, known, used=None):
+    """[(PASS|FAIL|KNOWN|SKIP, check, text)]: a check with no violations
+    passes; one whose violations a known line (load_expect's format:
+    <scenario glob> <check glob>) lists is KNOWN, a failure of today's
+    build that is on record; the known lines that matched go into `used`."""
+    out = []
+    for c, bad, what in checks:
+        if bad is None:
+            out.append(("SKIP", c, what))
+            continue
+        if not bad:
+            out.append(("PASS", c, what))
+            continue
+        hits = [n for s, g, n in known if fnmatch.fnmatch(name, s) and fnmatch.fnmatch(c, g)]
+        if used is not None:
+            used.update(hits)
+        out.append(("KNOWN" if hits else "FAIL", c, "; ".join(bad) + (f" [{what}]" if what else "")))
+    return out
 
 
 def load_expect(path):
@@ -421,6 +594,9 @@ def main():
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--expect")
     ap.add_argument("--payload")
+    ap.add_argument("--new-payload", help="what NEW's upload scenarios upload (default: --payload)")
+    ap.add_argument("--checks", action="store_true", help="NEW's new-only checks (checks.py) count too")
+    ap.add_argument("--known", help="the checks' known failures, as --expect's format (default: none)")
     ap.add_argument("--save")
     ap.add_argument("-j", type=int, default=os.cpu_count())
     ap.add_argument("--rtlsim", default=os.path.join(HERE, "../../build/rtlsim"))
@@ -430,13 +606,17 @@ def main():
         if n not in SCENARIOS:
             sys.exit(f"oldnew: no scenario {n} (have: {' '.join(SCENARIOS)})")
     opts = {"board": a.board, "rtlsim": a.rtlsim, "payload": a.payload or default_payload(a.old)}
+    if a.new_payload:
+        opts["payload_new"] = a.new_payload
     expect = load_expect(a.expect)
+    known = load_expect(a.known)
     t0 = time.time()
     jobs = [(n, side, img, opts) for n in names for side, img in (("old", a.old), ("new", a.new))]
-    res = {}
+    res, checks = {}, {}
     with ProcessPoolExecutor(max_workers=a.j) as ex:
-        for name, side, r, wall in ex.map(run_one, jobs):
+        for name, side, r, ch, wall in ex.map(run_one, jobs):
             res[(name, side)] = (r, wall)
+            checks[(name, side)] = ch
     if a.save:
         os.makedirs(a.save, exist_ok=True)
         for (name, side), (r, _) in res.items():
@@ -444,12 +624,14 @@ def main():
                 json.dump(r, f, indent=1)
     print(f"old: {a.old}\nnew: {a.new}" + (f"\nexpected differences: {a.expect}" if a.expect else ""))
     failed = 0
-    used = set()
+    used, kused = set(), set()
     for n in names:
         (o, wo), (w, wn) = res[(n, "old")], res[(n, "new")]
         bad, ok = compare(n, o, w, expect, used)
         err = "<error>" in o or "<error>" in w
-        status = "FAIL" if bad or err else "PASS"
+        vs = {side: verdicts(n, checks[(n, side)], known, kused) for side in ("old", "new")}
+        cfail = a.checks and any(v == "FAIL" for v, _, _ in vs["new"])
+        status = "FAIL" if bad or err or cfail else "PASS"
         failed += status == "FAIL"
         print(f"{status}  {n}: {len(o)} results, {len(bad)} differences"
               + (f", {len(ok)} expected" if ok else "") + f" ({max(wo, wn):.1f} s)")
@@ -459,10 +641,16 @@ def main():
             print("  expected:")
             for x in ok:
                 print("  " + x)
+        for side in ("old", "new"):
+            for v, c, text in vs[side]:
+                print(f"  check {side} {v} {c}: {text}")
     for s, g, line in expect:
         if line not in used:
             print(f"expect: {a.expect}:{line}: '{s} {g}' matched no difference" +
                   (" (in the scenarios run)" if a.only else ""))
+    for s, g, line in known:
+        if line not in kused:
+            print(f"known: {a.known}:{line}: '{s} {g}' matched no failed check")
     print(f"oldnew: {len(names) - failed} of {len(names)} scenarios match, {time.time() - t0:.0f} s wall")
     sys.exit(1 if failed else 0)
 

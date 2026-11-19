@@ -96,6 +96,8 @@ class Bench:
         self.frames = Counter()		# (port, kind) -> frames sent
         self.keep = {"lldp"}		# kinds whose frames are kept too, in order
         self.kept = []			# (port, kind, frame)
+        self.timed = {"lacp", "stp"}	# kinds whose send times are kept too
+        self.times = {}			# (port, kind) -> firmware times (µs) sent, in order
         self.cables = {}		# port -> the port at the other end
         self.devices = []		# on the ports: take(port, frame), tick(now)
         self.uart = ""			# console output not yet given out: every byte is
@@ -105,9 +107,11 @@ class Bench:
 
     # --- time
     def _look(self):
-        for _, p, f in self.sim.nic_read():
+        for t, p, f in self.sim.nic_read():
             k = kind(f)
             self.frames[(p, k)] += 1
+            if k in self.timed:
+                self.times.setdefault((p, k), []).append(t)
             if k in self.keep:
                 self.kept.append((p, k, f))
             if p in self.cables:
@@ -194,7 +198,9 @@ class Bench:
         return self.sim.block(f"table dump {which}")
 
     def flash(self, addr, n):
-        return bytes.fromhex(self.sim.cmd(f"flash read {addr:#x} {n}"))
+        """n bytes of flash from addr, in reads of 64 KiB (control mode's most)."""
+        return b"".join(bytes.fromhex(self.sim.cmd(f"flash read {a:#x} {min(0x10000, addr + n - a)}"))
+                        for a in range(addr, addr + n, 0x10000))
 
 
 class Host:

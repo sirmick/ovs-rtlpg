@@ -102,7 +102,18 @@ NEW ?= $(OLD)
 BOARD ?= $(if $(findstring KEEPLINK_KP_9000_9XHPML,$(OLD)),boards/keeplink_kp_9000_9xhpml_v1_2.json)
 oldnew: $(BUILD)/rtlsim
 	python3 tests/oldnew/oldnew.py --old $(OLD) --new $(NEW) $(if $(BOARD),--board $(BOARD)) \
-		$(if $(EXPECT),--expect $(EXPECT)) $(if $(ONLY),--only $(ONLY)) --rtlsim $(BUILD)/rtlsim
+		$(if $(EXPECT),--expect $(EXPECT)) $(if $(ONLY),--only $(ONLY)) \
+		$(if $(NEW_PAYLOAD),--new-payload $(NEW_PAYLOAD)) $(if $(CHECKS),--checks) \
+		$(if $(KNOWN),--known $(KNOWN)) --rtlsim $(BUILD)/rtlsim
+
+# The new-only acceptance checks (tests/oldnew/checks.py) on one image, IMAGE
+# (default NEW): LACPDU gaps, BPDU hello spacing, long steps (`health tasks`),
+# the flash after an upload. KNOWN=tests/oldnew/known-failures marks today's.
+IMAGE ?= $(NEW)
+CHECKS_BOARD = $(if $(filter command line environment,$(origin BOARD)),$(BOARD),$(if $(findstring KEEPLINK_KP_9000_9XHPML,$(IMAGE)),boards/keeplink_kp_9000_9xhpml_v1_2.json))
+oldnew-checks: $(BUILD)/rtlsim
+	python3 tests/oldnew/checks.py --image $(IMAGE) $(if $(CHECKS_BOARD),--board $(CHECKS_BOARD)) \
+		$(if $(ONLY),--only $(ONLY)) $(if $(KNOWN),--known $(KNOWN)) --rtlsim $(BUILD)/rtlsim
 
 # The firmware against Linux's TCP/IP in a network namespace (needs sudo;
 # real time, so a few seconds): ping, the web UI, and what each frame costs.
@@ -158,4 +169,4 @@ clean:
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
-.PHONY: all test test-control test-early-reset oldnew test-net test-update test-flash test-powercut vm test-vm check-banks clean
+.PHONY: all test test-control test-early-reset oldnew oldnew-checks test-net test-update test-flash test-powercut vm test-vm check-banks clean

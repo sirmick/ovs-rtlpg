@@ -12,7 +12,7 @@ the order and timing of register writes.
 Both images are boot images, the loader and the application
 (`rtlplayground-boot-*.bin`). Each scenario runs once on each image in its own
 rtlsim, and all of them run in parallel. The full set takes about 30 s on the
-8x and 20 s on the SWGT024. It exits with 0 when every scenario matches.
+8x and 20 s on the SWGT024 (fork main; a scheduler build is slower to simulate). It exits with 0 when every scenario matches.
 
 ## Files
 
@@ -24,6 +24,8 @@ rtlsim, and all of them run in parallel. The full set takes about 30 s on the
 - `oldnew.py`: the run, the results, and the comparison.
 - `lacp_partner.py`: an LACP partner (802.1AX), deterministic, on the bench.
 - `mutation.expect`: the expected differences of the check build (below).
+- `checks.py`: the new-only checks on one image (below); `known-failures`,
+  today's.
 
 ## Scenarios
 
@@ -43,6 +45,51 @@ rtlsim, and all of them run in parallel. The full set takes about 30 s on the
 | upload | a firmware upload (the reference's application image): checked, reset, installed by the loader, booted |
 | sfp | an SFP+ module into cage 1 and out again |
 | flaps | links up and down at several speeds, then a fast flap |
+| l2_big | 1000 hosts learned behind front 2 (rtlsim's learning); `l2` prints them all, /l2.json paged as the UI does |
+| lacp_l2 | lacp and l2_big together: the LAG up, then the 1000-entry `l2` and /l2.json while the LACPDUs are timed |
+| stp_upload | stp and upload together: RSTP converged on the loop cable, then a firmware upload while the BPDUs are timed |
+
+The upload scenarios end with the flash, region by region (`flash app`,
+`flash slot`, `flash staged`, `flash config`), each said against the image
+uploaded in 4 KiB runs: the upload's own bytes (`the upload's a..b`), blank,
+or a hash. `--new-payload` gives NEW an image of its own to upload (its own
+application, say); the regions then compare equal when each side's flash
+holds what it was sent.
+
+l2_big's MACs are those with an L2 index (rtlsim's hash) of their own: the
+sim gives every entry of a bucket the same index, and the firmware's table
+walk (the next higher index) would show one of each.
+
+## The new-only checks
+
+`testing.md`'s new-only acceptance checks are measured on each image, not
+compared: they are what the scheduler must do better than fork main.
+
+    make oldnew-checks IMAGE=<boot image> [BOARD=...] [KNOWN=tests/oldnew/known-failures] [ONLY=...]
+    tests/oldnew/checks.py --image ... [--board ...] [--known ...] [--only ...] [--payload ...]
+
+`checks.py` runs the scenarios with a check (lacp stp upload l2_big lacp_l2
+stp_upload) on one image and prints a verdict per check; the upload
+scenarios upload the image's own application. `oldnew.py` prints them too,
+for both sides, under each scenario (`check old|new ...`); they fail its run
+only with `--checks` (`CHECKS=1`), and then NEW's.
+
+| check | where | bound |
+|---|---|---|
+| lacp gap | lacp (aggregated, before the silence and after the rejoin), lacp_l2 (the `l2` dump and /l2.json) | the switch's LACPDUs on each LAG port < 1.2 s apart |
+| stp hello | stp (converged), stp_upload (from 4 s before the upload to its answer) | the BPDUs on every port sending them 2 s +-50 ms apart |
+| long step \<STATE\> | every scenario, at its end | `health tasks`: no state's longest step over 20 ms but FL_ERASE; skipped (`SKIP long steps`) on a build without the command (fork main) |
+
+A gap is measured between the frames' firmware send times (rtlsim's
+capture: what the partner or the cable's far end gets); every gap that
+overlaps the window counts, and so does the silence from the last frame to
+its end. Each verdict says the window and the min/max gap per port.
+
+Verdicts: PASS, FAIL, SKIP, and KNOWN: a failure that `--known FILE` lists
+(`<scenario glob> <check glob>  # why`, as `--expect`). `known-failures` is
+today's: the l2 gap, the hello during the upload, the CLI_RUN and HOUSE_SEC
+long steps. A line no failed check matched is flagged: a fix shows as a stale
+line. `checks.py` exits with 1 if any check FAILs.
 
 Each step of a scenario owns a slot of firmware time:
 - Its input goes in at the slot's start.
