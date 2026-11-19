@@ -94,9 +94,11 @@
 // operation with PC, PSBANK and SP.
 //
 // --early-reset-hang (always on with --control, unless --no-early-reset-hang)
-// models a silicon finding: a chip reset before the firmware has done the
-// switch init (its last step, MAC access in 0x632c, since power-on; a proxy,
-// see sys/system.h) hangs the chip until a power cycle. The reset
+// models what the 8x was seen to do (doc/sched/silicon.md in rtlpg-sched): a
+// chip reset made by the application, started by the loader, before it has
+// done the switch init (its last step, MAC access in 0x632c, since power-on:
+// a proxy trigger, see sys/system.h) hangs the chip until a power cycle; a
+// reset by the loader itself boots, unconfirmed on silicon. The reset
 // happens, then the CPU is held; it is reported ("early reset", with PC,
 // PSBANK and the firmware time) and rtlsim exits with 7. Off in plain mode,
 // where every reset boots, as it always has: the existing plain-mode runs and

@@ -422,14 +422,16 @@ void rtl837x_system::chip_reset()
 {
 	u16 const pc = m_cpu.pc();
 	u8 const bank = m_cpu.psbank();
+	bool const app = m_cpu.cov_region == 1;	// the loader has started the application
 	resets++;
 	reset(true);
-	if (!early_reset_hang || m_switch_init || m_held)
+	if (!early_reset_hang || !app || m_switch_init || m_held)
 		return;
 	m_held = true;
 	u64 const us = m_flash->now() * 4 / 125;	// firmware time, 31.25 cycles a µs
-	report("early-reset", "early reset: chip reset at pc=%04x psbank=%02x, t=%llu.%03llu ms, before the switch init "
-		"(MAC access, 0x632c bits 16-20) since power-on: the chip hangs until a power cycle",
+	report("early-reset", "early reset: chip reset by the application at pc=%04x psbank=%02x, t=%llu.%03llu ms, "
+		"before the switch init since power-on (proxy: MAC access, 0x632c bits 16-20): the chip hangs until "
+		"a power cycle, as the 8x's did (doc/sched/silicon.md)",
 		pc, bank, (unsigned long long)(us / 1000), (unsigned long long)(us % 1000));
 }
 

@@ -43,6 +43,9 @@ $(BUILD)/src/sys/switch_core.o: $(BUILD)/regnames.inc
 # A firmware image for tests/fw: the newest RTLPlayground build for the bench board
 FW_IMAGE ?= $(firstword $(shell ls -t $(RTLPG)/output/SWGT024_V2_0_UNMANAGED-compact/rtlplayground-v*-compact.bin 2>/dev/null))
 
+# ... and its boot image (the loader and the application), for test_early_reset
+FW_BOOT_IMAGE ?= $(firstword $(shell ls -t $(RTLPG)/output/SWGT024_V2_0_UNMANAGED-compact/rtlplayground-boot-v*-compact.bin 2>/dev/null))
+
 # the flash model's own test, on the host
 $(BUILD)/test_flash_dev: tests/flash/test_flash_dev.c src/sys/flash_dev.c src/sys/flash_dev.h
 	@mkdir -p $(dir $@)
@@ -61,7 +64,9 @@ ifneq ($(FW_IMAGE),)
 	python3 tests/fabric/test_flows.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/flash/test_boot0.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/fw/test_control.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
-	python3 tests/fw/test_early_reset.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
+ifneq ($(FW_BOOT_IMAGE),)
+	python3 tests/fw/test_early_reset.py $(FW_BOOT_IMAGE) --rtlsim $(BUILD)/rtlsim
+endif
 else
 	@echo "fw: no firmware image (set FW_IMAGE or build RTLPlayground), skipped"
 endif
@@ -74,11 +79,11 @@ CTL_BOARD ?=
 test-control: $(BUILD)/rtlsim
 	python3 tests/fw/test_control.py $(CTL_IMAGE) $(if $(CTL_BOARD),--board $(CTL_BOARD)) --rtlsim $(BUILD)/rtlsim
 
-# The early-reset hang (rtlsim --control) on another image and board: ER_EXPECT
+# The early-reset hang (rtlsim --control) on another boot image and board: ER_EXPECT
 # boot for a firmware that does the switch init before its main loop, hang for
 # one that gets to its prompt without it (^R ^R there hangs the chip):
 #   make test-early-reset ER_IMAGE=... ER_BOARD=boards/keeplink_kp_9000_9xhpml_v1_2.json ER_EXPECT=hang
-ER_IMAGE ?= $(FW_IMAGE)
+ER_IMAGE ?= $(FW_BOOT_IMAGE)
 ER_BOARD ?=
 ER_EXPECT ?= boot
 test-early-reset: $(BUILD)/rtlsim

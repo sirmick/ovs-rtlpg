@@ -85,8 +85,9 @@ public:
 	int break_pc = -1, break_bank = -1;
 	// Coverage (sys/coverage.h): each instruction run marks its address in
 	// region cov_region; cov_load_pending switches to region 1 when PC next
-	// reaches 0 (software loaded the common code and jumps to it). Unset,
-	// one compare per instruction.
+	// reaches 0 (software loaded the common code and jumps to it), with or
+	// without cov: region 1 is the application on a loader image (the
+	// early-reset hang asks). Unset, one compare per instruction.
 	coverage *cov = nullptr;
 	int cov_region = 0;
 	bool cov_load_pending = false;

@@ -23,10 +23,11 @@ whole thing behaves as a real managed switch with an IP. See
 Not modelled: analog PHY/SerDes behaviour, line-rate throughput or latency,
 the exact L2 hash/capacity, and the boot ROM. A chip reset reloads the code
 and restarts the CPU. Why some resets hang real hardware is not known; under
-`--control` (or with `--early-reset-hang`) a reset before the firmware's
-switch init hangs the chip until a power cut, as silicon's have, with the end
-of RTLPlayground's switch init as a proxy for the real condition
-(`sys/system.h`; `--no-early-reset-hang` turns it off).
+`--control` (or with `--early-reset-hang`) a reset made by the application
+before its switch init hangs the chip until a power cut, as the 8x's did on
+the bench, with the end of RTLPlayground's switch init as a proxy trigger
+(`sys/system.h`; a reset by the loader boots; `--no-early-reset-hang` turns
+it off).
 Registers nobody has modelled are plain storage, and the first access to each
 is logged (`unmodelled reg ...`).
 

@@ -4,24 +4,29 @@
     tests/fw/test_early_reset.py IMAGE [--board FILE] [--expect boot|hang]
                                  [--rtlsim build/rtlsim] [--transcript OUT]
 
-The silicon finding (the 8x, RTL8373, and a SWTG024AS): a reset made before
-the firmware has done the switch init resets the chip, then the CPU never runs
-again - no loader banner, no UART - until the power is cycled. rtlsim --control
-models it (sys/system.h has the proxy for "the switch init"); with
---no-early-reset-hang every reset boots, as before.
+What the 8x (RTL8373) was seen to do (rtlpg-sched doc/sched/silicon.md): a
+reset made by the application, started by RTLPlayground's loader, before it
+has done the switch init resets the chip, then the CPU never runs again - no
+loader banner, no UART - until the power is cycled. rtlsim --control models
+it, for the application's resets only (sys/system.h has the proxy for "the
+switch init"); a reset by the loader itself boots, unconfirmed on silicon.
+With --no-early-reset-hang every reset boots, as before. IMAGE is a boot
+image (loader and application).
 
---expect boot (the default): IMAGE is a firmware that does the switch init
+--expect boot (the default): IMAGE's application does the switch init
 before its main loop (RTLPlayground's own).
 - Booted to the prompt, ^R ^R and the reset request both boot it again, with
   no finding.
-- A reset request 1 ms after a power cut, before the init: the chip hangs. One
-  early-reset finding names the PC, PSBANK and firmware time; no UART for 2 s;
-  a frame in is dropped; a power cut boots it to the prompt again; rtlsim
-  exits with 7.
+- After a power cut, a reset in the loader (just after its banner) boots it
+  to the prompt again, with no finding.
+- After another, a reset once the application runs ("Initializing Flash
+  controller"), before the init: the chip hangs. One early-reset finding
+  names the PC, PSBANK and firmware time; no UART for 2 s; a frame in is
+  dropped; a power cut boots it to the prompt again; rtlsim exits with 7.
 - The same with --no-early-reset-hang boots, no finding, exit 0.
 
---expect hang: IMAGE gets to its prompt without the switch init (schedtest
-before its switch-init change).
+--expect hang: IMAGE's application gets to its prompt without the switch
+init (schedtest before its switch-init change).
 - ^R ^R at the prompt hangs the chip: the finding, no UART for 2 s (no loader
   banner), a power cut boots it to the prompt again, exit 7.
 - The same with --no-early-reset-hang: ^R ^R boots it again, exit 0.
@@ -33,7 +38,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from rtlsim_ctl import Sim, fmt_us
 
 PROMPT_RE = r"\n> $"
-FINDING_RE = r"early reset: chip reset at pc=[0-9a-f]{4} psbank=[0-9a-f]{2}, t=\d+\.\d{3} ms, before the switch init"
+FINDING_RE = (r"early reset: chip reset by the application at pc=[0-9a-f]{4} psbank=[0-9a-f]{2}, t=\d+\.\d{3} ms, "
+              r"before the switch init since power-on \(proxy: .*\): the chip hangs until a power cycle, as the 8x's did")
 failures = 0
 
 
@@ -79,9 +85,15 @@ def session(a, model, script):
             boot(sim, "ctrl_r")
             log(f"reset {fmt_us(sim.reset())}")
             boot(sim, "reset")
+            log(f"powercut {fmt_us(sim.powercut())}")
+            sim.run_until_uart(r"RTLPlayground loader\n", max_ms=1000)
+            sim.run(10)
+            log(f"loader reset {fmt_us(sim.reset())}")
+            boot(sim, "loader")
             facts["late"] = findings(sim)
             log(f"powercut {fmt_us(sim.powercut())}")
-            sim.run(1)
+            t = sim.run_until_uart(r"Initializing Flash controller\n", max_ms=5000)
+            log(f"application starts: {fmt_us(t) if t is not None else 'timeout'}")
             log(f"early reset {fmt_us(sim.reset())}")
         else:
             sim.uart_write(b"\x12\x12")
@@ -110,8 +122,10 @@ def main():
     out, f, rc = session(a, True, a.expect)
     check(f["boot"] is not None, f"it boots to the prompt ({a.expect} image)")
     if a.expect == "boot":
-        check(f["ctrl_r"] is not None and f["reset"] is not None and not f["late"],
-              "after the init, ^R ^R and the reset request boot it again, no finding")
+        check(f["ctrl_r"] is not None and f["reset"] is not None,
+              "after the init, ^R ^R and the reset request boot it again")
+        check(f["loader"] is not None and not f["late"],
+              "a reset by the loader, before any application ran, boots it again; no finding so far")
     early = f["early"]
     check(len(early) == 1 and re.match(FINDING_RE, early[0][2]) is not None,
           "the early reset is one early-reset finding with PC, PSBANK and firmware time: "

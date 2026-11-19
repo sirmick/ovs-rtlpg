@@ -87,9 +87,10 @@
 // to the time it had (an erase erased its first bytes, a program wrote its
 // first ones).
 //
-// A chip reset before the switch init hangs the chip, as on silicon (the
-// 8x, and a SWTG024AS; sys/system.h has the proxy for "the switch init",
-// the exact silicon condition being unknown): the chip resets, then the CPU
+// A chip reset made by the application (started by the loader) before the
+// switch init hangs the chip, as the 8x's did (sys/system.h: the bench
+// result, and the proxy for "the switch init", the exact silicon condition
+// being unknown; a reset by the loader itself boots): the chip resets, then the CPU
 // never runs again - no UART, frames in dropped (nic inject: ok dropped),
 // runs time out - until a powercut. checks lists it once as early-reset,
 // with PC, PSBANK and the firmware time of the reset; rtlsim exits with 7.

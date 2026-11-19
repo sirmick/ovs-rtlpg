@@ -51,5 +51,6 @@ rtlsim boots every reset. On silicon, resets issued before the switch init
 have hung until a power cycle (every boot0 install, the old mid-boot ^R^R,
 the 8x schedtest's ^R^R before it ran the init), so a green run doesn't
 show an early reset is safe on a real switch. `--early-reset-hang` (on
-under `--control`) models it with a proxy for the condition: the end of
-RTLPlayground's switch init (`src/sys/system.h`).
+under `--control`) models what the 8x did, for resets by the application
+only, with a proxy for the condition: the end of RTLPlayground's switch
+init (`src/sys/system.h`).

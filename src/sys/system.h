@@ -106,11 +106,19 @@ public:
 	u64 resets = 0;
 	bool trace_reset = false;		// log each chip reset to stderr
 	u64 uart_lines = 0;			// sent so far, to place a reset in the console
-	// The early-reset hang (silicon: the 8x, RTL8373, and a SWTG024AS): a
-	// chip reset before the firmware has done the switch init hangs the chip
-	// until its power is cycled - the reset happens, then the CPU never runs
-	// again. What exactly the init must have done is unknown (a bench bisect
-	// may refine it); the proxy here is the last step of RTLPlayground's
+	// The early-reset hang, a model of what the 8x (RTL8373) was seen to do
+	// (rtlpg-sched doc/sched/silicon.md, c1f9c37): with RTLPlayground's
+	// loader, a chip reset made by the application before it had done the
+	// switch init hung the chip until its power was cycled - the reset
+	// happened, then the CPU never ran again, not even the loader's banner;
+	// with the init done, every reset booted. rtlsim models no hang on a
+	// guess (f849c0c took one out): this one rests on that bench result,
+	// and goes no further than it. So only a reset made while the
+	// application runs (the loader has loaded the common code RAM and jumped
+	// to it: cov_region 1) hangs; a reset by the loader itself, or on an
+	// image without one, boots as before, unconfirmed on silicon. What
+	// exactly the init must have done is unknown (a bench bisect may refine
+	// it); the trigger here is a proxy, the last step of RTLPlayground's
 	// rtl8373_init() and rtl8372_init(), after the PHY and SerDes set-up:
 	// a write to 0x632c (MAC access) with bits 16-20 all set, since
 	// power-on. The loader's own network set-up sets only bits 16-19 there,
@@ -120,6 +128,7 @@ public:
 	// dropped, firmware time still passes; only a new system (a power cut)
 	// gets out of it. It is reported once ("early-reset", with the firmware
 	// time, PC and PSBANK at the reset). Off: every reset boots, as before.
+	// (A SWTG024AS has hung on a reset mid-boot too, rtl837x_sfr.h says.)
 	bool early_reset_hang = false;
 	bool switch_init_done() const { return m_switch_init; }
 	bool held() const { return m_held; }
