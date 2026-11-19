@@ -91,6 +91,25 @@
 //   table dump l2                     ok <n>, then "<idx> <a> <b> <c>" per entry
 //       present (hex; L3 multicast ones too), by index
 //   flash read <addr> <len>           ok <hex>: the flash chip's bytes (up to 64 KiB)
+//   reg hold <addr> <ormask>          ok: bits held set, to force a poll's timeout
+//       (hex): every firmware read of switch register <addr> (the SFR
+//       register-read path) returns its value | ormask; writes are stored as
+//       usual. The models' own use of the register doesn't see it. E.g. 5cac
+//       1 (TBL_CTRL execute), 0f60 1 (STAT_GET), 53d4 1ffff (L2 flush), 0418 1
+//       (I2C_CTRL). Kept over a power cut, as link is
+//   reg release <addr> | all          ok
+//   phy hold <phy> <dev> <reg> <ormask>   ok: the same for a PHY register read
+//       over SMI (phy and dev decimal, reg and mask hex), e.g. the RTL8224's
+//       SDS_INDACS_CMD busy bit: <phy> 30 3f8 8000 (the firmware tests bit 15,
+//       SFR_DATA_8 & 0x80). A mask on a register that reads 0 sets it: the
+//       sim models no RTL8224, so its ID (MMD 30 reg 5, 0x8224) must be held
+//       too for the firmware to take that path
+//   phy release <phy> <dev> <reg> | all   ok
+//   holds                             ok <n>, then "r <addr> <mask>", "p <phy>.<dev>.<reg>
+//       <mask>" and "flash wp" for what is held
+//   flash wp on|off                   ok: write protect: write enable (0x06) is
+//       ignored, so the status's WEL stays clear and no program or erase
+//       happens (flash_write_enable's WEL wait times out). Kept over a power cut
 //   sfp <slot> <hex> | sfp <slot> empty   ok: a module in SFP cage slot (the
 //       firmware's, 1-based), its EEPROM 256 or 512 bytes as for --sfp; or
 //       pulled. Kept over a power cut, as link is

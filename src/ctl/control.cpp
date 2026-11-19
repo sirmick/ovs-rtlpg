@@ -206,6 +206,9 @@ private:
 	coverage m_cov;				// over power cuts, until cov reset
 	std::map<unsigned, int> m_links;	// link requests, kept over a power cut
 	std::map<unsigned, std::vector<u8>> m_sfps;	// sfp requests, the same
+	std::map<u16, u32> m_holds;		// reg hold, the same
+	std::map<u32, u16> m_phy_holds;		// phy hold, the same
+	bool m_flash_wp = false;		// flash wp, the same
 	bool m_ring_full = false;		// dropping for want of room in the RX ring
 
 	std::vector<uart_line> m_uart;		// since the last uart read
@@ -283,6 +286,9 @@ void controller::attach()
 		s.set_link(p, sp);
 	for (auto &[slot, e] : m_sfps)
 		s.set_sfp(slot, e);
+	s.core().held = m_holds;
+	s.core().phy_held = m_phy_holds;
+	s.flash().write_protect = m_flash_wp;
 	peers();
 }
 
@@ -665,6 +671,50 @@ bool controller::request(const std::string &line, std::string &reply)
 				}
 			}
 			reply = block(l);
+		} else if (c == "reg" && w.size() == 4 && w[1] == "hold") {
+			u16 const a = u16(parse_num("0x" + w[2]));
+			m_holds[a] = u32(parse_num("0x" + w[3]));
+			m_sys->core().held = m_holds;
+			reply = "ok";
+		} else if (c == "reg" && w.size() == 3 && w[1] == "release") {
+			if (w[2] == "all")
+				m_holds.clear();
+			else
+				m_holds.erase(u16(parse_num("0x" + w[2])));
+			m_sys->core().held = m_holds;
+			reply = "ok";
+		} else if (c == "phy" && w.size() == 6 && w[1] == "hold") {
+			m_phy_holds[switch_core::phy_key(u8(parse_num(w[2])), u8(parse_num(w[3])), u16(parse_num("0x" + w[4])))] =
+				u16(parse_num("0x" + w[5]));
+			m_sys->core().phy_held = m_phy_holds;
+			reply = "ok";
+		} else if (c == "phy" && w.size() >= 3 && w[1] == "release") {
+			if (w.size() == 3 && w[2] == "all")
+				m_phy_holds.clear();
+			else if (w.size() == 5)
+				m_phy_holds.erase(switch_core::phy_key(u8(parse_num(w[2])), u8(parse_num(w[3])), u16(parse_num("0x" + w[4]))));
+			else
+				throw ctl_error("phy release <phy> <dev> <reg> | all");
+			m_sys->core().phy_held = m_phy_holds;
+			reply = "ok";
+		} else if (c == "holds" && w.size() == 1) {
+			char b[64];
+			std::vector<std::string> l;
+			for (auto &[a, m] : m_holds) {
+				snprintf(b, sizeof b, "r %04x %08x", a, m);
+				l.push_back(b);
+			}
+			for (auto &[k, m] : m_phy_holds) {
+				snprintf(b, sizeof b, "p %x.%02x.%04x %04x", k >> 24, (k >> 16) & 0xff, k & 0xffff, m);
+				l.push_back(b);
+			}
+			if (m_flash_wp)
+				l.push_back("flash wp");
+			reply = block(l);
+		} else if (c == "flash" && w.size() == 3 && w[1] == "wp" && (w[2] == "on" || w[2] == "off")) {
+			m_flash_wp = w[2] == "on";
+			m_sys->flash().write_protect = m_flash_wp;
+			reply = "ok";
 		} else if (c == "table" && w.size() == 3 && w[1] == "dump" && (w[2] == "vlan" || w[2] == "l2")) {
 			char b[64];
 			std::vector<std::string> l;

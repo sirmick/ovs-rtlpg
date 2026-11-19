@@ -51,6 +51,13 @@ public:
 	// Watches every register write, after its behaviour, without being one
 	// (the register stays "unmodelled" if nothing else models it).
 	std::function<void(u16 addr, u32 v)> written;
+	// Bits held set (control mode's reg hold / phy hold, to force a poll's
+	// timeout): a firmware read of the register returns what it holds |
+	// the mask; writes are stored as usual. Not seen by the models' own
+	// reg() / phy(). PHY keys as phy_regs().
+	std::map<u16, u32> held;
+	std::map<u32, u16> phy_held;
+	static u32 phy_key(u8 phy, u8 mmd, u16 reg) { return key(phy, mmd, reg); }
 	bool trace = false;
 	bool log_unmodelled = true;
 	std::function<u16()> pc;		// for traces

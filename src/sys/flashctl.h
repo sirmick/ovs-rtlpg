@@ -42,6 +42,9 @@ public:
 	u8 byte(u32 addr) const { return m_dev.mem[addr & m_dev.addr_mask]; }
 	u8 cmd_r() const { return m_sfr[0xb1]; }	// the read command (CMD_R)
 	bool trace = false;
+	// Write protect (control mode's flash wp): write enable (0x06) is
+	// ignored, so WEL stays clear and no program or erase happens.
+	bool write_protect = false;
 	FILE *op_log = nullptr;		// each erase (E addr) and program (P addr len) done
 	// The security registers (read command 0x48 at addr reads secreg[addr]),
 	// erased (0xff) past its end. A genuine vendor-programmed chip holds data

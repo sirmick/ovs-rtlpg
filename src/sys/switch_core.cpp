@@ -86,6 +86,8 @@ u32 switch_core::read_reg(u16 addr)
 	u32 v = reg(addr);
 	if (auto it = m_rhook.find(addr); it != m_rhook.end())
 		v = it->second(v);
+	if (auto h = held.find(addr); h != held.end())
+		v |= h->second;
 	note(addr, false, v);
 	return v;
 }
@@ -130,6 +132,8 @@ void switch_core::execute(u8 cmd)
 		u8 p = m_sfr[D16], mmd = m_sfr[SMI_DEV] >> 3;
 		u16 r = (m_sfr[SMI_REG_H] << 8) | m_sfr[SMI_REG_L];
 		u16 v = phy(p, mmd, r);
+		if (auto h = phy_held.find(key(p, mmd, r)); h != phy_held.end())
+			v |= h->second;
 		m_sfr[D8] = v >> 8; m_sfr[D0] = v;
 		if (trace)
 			fprintf(stderr, "PHY R %d.%d.%04x -> %04x\n", p, mmd, r, v);

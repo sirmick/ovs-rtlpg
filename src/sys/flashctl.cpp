@@ -159,7 +159,7 @@ void flash_controller::execute()
 
 	if (write) {
 		switch (cmd) {
-		case 0x06: m_wel = true; break;				// write enable
+		case 0x06: m_wel = !write_protect; break;		// write enable
 		case 0x04: m_wel = false; break;			// write disable
 		case 0x01: m_status = data[0] & 0xfc; m_wel = false; break;	// write status
 		case 0x02:						// page program

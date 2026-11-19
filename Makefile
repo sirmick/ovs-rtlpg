@@ -69,6 +69,7 @@ ifneq ($(FW_IMAGE),)
 	python3 tests/fw/test_lacp.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 ifneq ($(FW_BOOT_IMAGE),)
 	python3 tests/fw/test_early_reset.py $(FW_BOOT_IMAGE) --rtlsim $(BUILD)/rtlsim
+	python3 tests/fw/test_holds.py $(FW_BOOT_IMAGE) --rtlsim $(BUILD)/rtlsim
 endif
 else
 	@echo "fw: no firmware image (set FW_IMAGE or build RTLPlayground), skipped"
