@@ -110,8 +110,14 @@ void rtl837x_system::seed_chip()
 // LINKS_STS 0x63e8 has link-up bits, physical ports 0-7 at bits 16-23 and
 // 8-9 at bits 8-9; LINKS 0x63f0 a 4-bit speed code per port 0-7 (port i at
 // bits 4i+3..4i), LINKS_89 0x63f4 the same for ports 8-9.
+// ISR_INT_PORT_LINK_CHG 0x5f88 latches a link change, bit = physical port,
+// and a 1 written clears its bit. The firmware reads it on each link
+// interrupt, and once a second without one, then writes 0x3ff: as plain
+// storage it read back 0x3ff, every port bounced, each time - which expired
+// every LACP port (lacp_link_change()) once a second.
 void rtl837x_system::model_links()
 {
+	m_core.on_write(0x5f88, [this](u32 v) { return m_core.reg(0x5f88) & ~v; });
 	m_core.on_read(0x63e8, [this](u32 v) {
 		u32 up = 0;
 		for (unsigned i = 0; i < 10; i++)
@@ -198,6 +204,7 @@ void rtl837x_system::set_link(unsigned phys_port, int speed)
 	if (phys_port >= 10 || m_link[phys_port] == speed)
 		return;
 	m_link[phys_port] = speed;
+	m_core.set_reg(0x5f88, m_core.reg(0x5f88) | (1u << phys_port));
 	model_los();
 	m_cpu.set_int0(true);		// the falling edge IT0 waits for; released after a slice
 	m_int0_pulse = true;
