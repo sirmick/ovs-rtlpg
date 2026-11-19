@@ -74,6 +74,8 @@ def vlan(r):
     r.post_cmd(f"vlan 40 {F[2]} {F[3]}t")
     for p in ["/vlanlist.json", "/vlan.json?vid=10", "/vlan.json?vid=40", "/ports.json"]:
         r.get(p)
+    r.cli("l2")				# the host's MAC, learned on front port 1
+    r.get("/l2.json?idx=0")
 
 
 def stp(r):
@@ -243,6 +245,7 @@ def flaps(r):
     r.wait(2000)
     r.cli("stat")
     r.get("/ports.json")
+    r.cli("l2")
 
 
 SCENARIOS = {f.__name__: f for f in (boot, cli, web, vlan, stp, lacp, loop, igmp, config, upload, sfp, flaps)}

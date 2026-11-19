@@ -120,3 +120,6 @@ Control mode (`src/ctl/control.h`) gives the harness what it needs:
 - the NIC RX ring's capacity (10 KiB, `--nic-rx-ring`) and its drops (`nic stats`);
 - the link-change latch (0x5f88) is write-1-to-clear: without it, LACP
   expired every port once a second.
+- MAC learning on `nic inject`, as the fabric's (no ageing): `l2` and
+  `/l2.json` compare a real table, and the switch's unicast goes to the
+  learned port instead of flooding.

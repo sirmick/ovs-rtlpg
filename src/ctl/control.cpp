@@ -192,6 +192,7 @@ private:
 	bool uart_matches();
 	std::string run_until(const std::vector<std::string> &w);
 	void powercut();
+	void learn(unsigned port, const std::vector<u8> &frame);
 	static std::string block(const std::vector<std::string> &lines);
 
 	control_options m_opt;
@@ -468,6 +469,21 @@ std::string controller::run_until(const std::vector<std::string> &w)
 	return answer(advance(target, nullptr, cond));
 }
 
+// Hardware learning, as the fabric does it (fabric.cpp, the learn table): a
+// frame in on a forwarding port (MSTP_STATES 11) teaches the L2 table its
+// unicast source in its VLAN - the frame's tag, else the port's PVID. No
+// ageing here (the fabric ages entries by idle flows): an entry stays until
+// the firmware flushes it.
+void controller::learn(unsigned p, const std::vector<u8> &f)
+{
+	switch_core &c = m_sys->core();
+	if ((c.reg(0x5310) >> (2 * p) & 3) != 3)
+		return;
+	u16 const vid = f[12] == 0x81 && f[13] == 0x00 && f.size() >= 16 ? ((f[14] << 8) | f[15]) & 0xfff
+		: (c.reg(u16(0x4e1c + (p >> 1) * 4)) >> ((p & 1) ? 12 : 0)) & 0xfff;
+	m_sys->tables().learn(&f[6], vid, p);
+}
+
 void controller::powercut()
 {
 	u64 const t = now();
@@ -571,6 +587,8 @@ bool controller::request(const std::string &line, std::string &reply)
 			// the CPU as it came in, with no 802.1Q tag
 			bool const igmp = f.size() >= 24 && f[12] == 0x08 && f[13] == 0x00 && f[23] == 2 &&
 					  (m_sys->core().reg(u16(0x52a0 + 4 * p)) & 0x2a) == 0x2a;
+			if (m_sys->link(p) != rtl837x_system::LINK_DOWN && f.size() >= 14)
+				learn(p, f);
 			if (m_sys->link(p) == rtl837x_system::LINK_DOWN)
 				reply = "ok dropped";			// nothing arrives on a port without a link
 			else if (f.size() >= 15 && f[12] == 0x88 && f[13] == 0x99 && f[14] == 0x23) {

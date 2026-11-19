@@ -54,7 +54,8 @@
 //       starts a new line.
 //       CRs removed; \ and bytes outside 0x20-0x7e but tab as \\ and \xHH
 //   nic inject <port> <hex>           ok taken | ok dropped (a frame on physical port,
-//       dropped if the port has no link;
+//       dropped if the port has no link; on a forwarding port the L2 table
+//       learns its unicast source, as the fabric's does (no ageing);
 //       an untagged IGMP one on a port the firmware set to trap IGMP reaches
 //       the CPU as it came in, with no 802.1Q tag, as the fabric's does; an
 //       RLDP probe (0x8899, protocol 0x23) goes to the chip's loop detection,
