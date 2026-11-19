@@ -265,8 +265,13 @@ u8 rtl837x_system::code_read(u16 addr, bool cpu)
 	return m_flash->byte(f);
 }
 
-// A read of the bank window while the window is off: 0xff and a violation
-// while the flash is busy; once it isn't, the window is back.
+// A read of the bank window while the window is off: 0x00 and a violation
+// while the flash is busy; once it isn't, the window is back. 0x00 is what
+// the 8x reads during a sector erase (64 of 64 spread bytes of a bank, two
+// runs, by movc: doc/sched/silicon.md); the xdata window is taken to read
+// the same, unmeasured.
+static constexpr u8 BUSY_READ = 0x00;
+
 u8 rtl837x_system::busy_read(u32 flash_addr, u16 addr, bool code, bool cpu)
 {
 	if (!m_flash->busy()) {
@@ -275,13 +280,13 @@ u8 rtl837x_system::busy_read(u32 flash_addr, u16 addr, bool code, bool cpu)
 		return m_flash->byte(flash_addr);
 	}
 	if (!cpu)
-		return 0xff;		// a look (a debugger, the halt check): no violation
+		return BUSY_READ;	// a look (a debugger, the halt check): no violation
 	flash_busy_violations++;
 	auto const &op = m_flash->last_op();
 	if (op.start != m_reported_op) {
 		m_reported_op = op.start;
 		u16 const ppc = m_cpu.ppc();
-		u8 const op0 = code_read(ppc);	// a look: 0xff if it is in the window itself
+		u8 const op0 = code_read(ppc);	// a look: 0x00 if it is in the window itself
 		char const *what = !code ? "movx read" : op0 == 0x93 || op0 == 0x83 ? "movc" : "instruction fetch";
 		u64 const now = m_flash->now();
 		auto ms = [](u64 c) {
@@ -295,7 +300,7 @@ u8 rtl837x_system::busy_read(u32 flash_addr, u16 addr, bool code, bool cpu)
 		       kind, op.addr, ms(op.end - now).c_str(), ms(op.end - op.start).c_str(), what, addr, flash_addr, ppc,
 		       m_cpu.psbank(), m_cpu.sp(), ms(now).c_str());
 	}
-	return 0xff;
+	return BUSY_READ;
 }
 
 u8 rtl837x_system::xdata_r(offs_t a, bool cpu)

@@ -7,13 +7,14 @@ With the images the Makefile builds (busy_bad.bin, busy_good.bin):
 
 - busy_bad: checks lists the call into BANK1 during the erase as flash-busy,
   stamped with the firmware time it happened at, with PC and PSBANK; rtlsim
-  exits 6.
+  exits 6. The bank window reads 0x00 during the erase (as the 8x's does),
+  not the code in the flash.
 - busy_good: no finding, exit 0, and the call comes one sector erase (40 ms)
   after the erase started.
-- A page program of n bytes keeps the chip busy tBP1 + (n - 1) tBP2 (30 +
-  2.5 µs): the home bank's status polling (a read every ~8 µs) sees it end
-  37.5 µs after a 4-byte program and 30 µs after a 1-byte one, plus at most
-  a poll; the bytes are written.
+- A page program of n bytes keeps the chip busy 10.5 + (n - 1) µs (fitted
+  to the 8x): the home bank's status polling (a 1 µs command and the loop
+  around it) sees it end 13.5 µs after a 4-byte program and 10.5 µs after a
+  1-byte one, plus at most a poll; the bytes are written.
 - A power cut half way through the erase of a sector full of a pattern
   leaves it erased up to about half, and the rest as it was.
 """
@@ -41,13 +42,17 @@ def main():
     mp = os.path.join(a.out, "busy_good.map")
 
     sim = Sim(bad, rtlsim=a.rtlsim, args=["--quiet"])
-    sim.run(30)
+    sim.run(1)
+    busy, flash = sim.peek("c:0x4000", 4), sim.peek("b1:0x4000", 4)
+    sim.run(29)
     found = [c for c in sim.checks() if c[1] == "flash-busy"]
     sim.close()
     first = found[0] if found else (0, "", "")
     check(found and "instruction fetch of 4000" in first[2] and "psbank=01" in first[2] and first[0] < 1000,
           f"busy_bad: the call into BANK1 during the erase is a flash-busy finding at {fmt_us(first[0])} ms: {first[2]}")
     check(sim.p.returncode == 6, f"busy_bad: rtlsim exits 6 ({sim.p.returncode})")
+    check(busy == bytes(4) and flash != bytes(4),
+          f"the bank window (PSBANK 1) reads 0x00 during the erase ({busy.hex()}), as the 8x's does, not the flash ({flash.hex()})")
 
     sim = Sim(good, map=mp, rtlsim=a.rtlsim, args=["--quiet"])
     try:
@@ -72,8 +77,8 @@ def main():
             win[n] = sim.run_until_pc("mark_idle", max_ms=10) - t0
         written = sim.peek(f"b{(SECTOR - 0x4000) // 0xc000 + 1}:0x4000", 6)
         found = [c for c in sim.checks() if c[1] == "flash-busy"]
-    check(37 <= win[4] < 50 and 30 <= win[1] < 42 and written == bytes.fromhex("5aa53cc35aff") and not found,
-          f"a page program is timed by its bytes: busy seen {win[4]} µs after 4 bytes (37.5), {win[1]} µs after 1 (30); "
+    check(13 <= win[4] < 19 and 10 <= win[1] < 16 and win[4] > win[1] and written == bytes.fromhex("5aa53cc35aff") and not found,
+          f"a page program is timed by its bytes: busy seen {win[4]} µs after 4 bytes (13.5), {win[1]} µs after 1 (10.5); "
           f"written {written.hex()}")
 
     # a flash with the image and a pattern in the sector the program erases

@@ -54,17 +54,24 @@ public:
 	// (datasheet typical), a 64K block ~150 ms; a transfer keeps the
 	// controller's EXEC busy ~8 us (reads ~500 KiB/s). `now` is the clock.
 	//
-	// The 1.9 ms is likely not per command: the controller programs at most 4
+	// The 1.9 ms is not per command: the controller programs at most 4
 	// bytes a command, and RTLPlayground's flash_write_bytes() sends write
-	// enable + page program per 4 bytes, waiting for BUSY each time, so a 256
-	// byte write is 64 commands of ~30 us, ~1.9 ms. A program of n bytes
-	// takes tBP1 + (n - 1) tBP2 (W25Q BV/DV/JV: 30 + 2.5 us typical, 50 + 12
-	// max); tPP (0.4 ms typical, 0.7 max) is for a whole page, which this
-	// firmware never sends. With program_first_ns set, a program is timed so
-	// (capped at page_max_ns); else it takes `program`, whatever its length.
-	// To measure on the 8x (phase C): flash_write_bytes() of 4 and of 256.
+	// enable + page program per 4 bytes, waiting for BUSY each time; the
+	// 1.9 ms was one 256-byte write, 64 commands. A program of n bytes takes
+	// tBP1 + (n - 1) tBP2 (W25Q BV/DV/JV datasheet: 30 + 2.5 us typical, 50
+	// + 12 max); tPP (0.4 ms typical, 0.7 max) is for a whole page, which
+	// this firmware never sends. With program_first_ns set, a program is
+	// timed so (capped at page_max_ns); else it takes `program`, whatever its
+	// length. Measured on the 8x (doc/sched/silicon.md): a 4-byte
+	// flash_write_bytes() 49-55 us, a 256-byte one 1.71 ms, ~27 us a command
+	// all in - faster than the datasheet's tBP1 alone. Control mode fits it
+	// with a 1 us command and a 10.5 + (n - 1) 1 us program: 43 us and
+	// 1.64 ms for schedtest's flashtime (its fixed part is short of the 8x's).
+	// A transfer that reads data (0x03, 0x0b, 0x3b, 0xbb) keeps EXEC busy
+	// `transfer`; every other command (status, write enable, program,
+	// erase, ids) `command`, the same unless set.
 	struct timings {
-		u64 program = 59375, sector_erase = 1406250, block_erase = 4687500, transfer = 250;
+		u64 program = 59375, sector_erase = 1406250, block_erase = 4687500, transfer = 250, command = 250;
 		u64 program_first_ns = 0, program_byte_ns = 0, page_max_ns = 0;
 		u64 program_cycles(unsigned n) const
 		{

@@ -80,7 +80,7 @@ public:
 	// The flash busy rule (doc: no banked code while the flash erases or
 	// programs). With flash_busy_check and the flash's timing, the bank window
 	// (code 0x4000-0xffff, and xdata 0x4000-0xbfff while it maps the flash)
-	// reads 0xff while the chip is busy, as the array can't be read, and every
+	// reads 0x00 while the chip is busy (the 8x does), as the array can't be read, and every
 	// such read is a violation: the first of each operation is reported
 	// ("flash-busy", with the operation, the access, PC, PSBANK, SP and the
 	// firmware time), all are counted.

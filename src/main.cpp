@@ -89,7 +89,7 @@
 //
 // --check-flash-busy (implies --flash-timing; always on with --control, unless
 // --no-flash-timing) enforces the flash busy rule: while the chip erases or
-// programs, the bank window reads 0xff, and reading it (a fetch, movc, or
+// programs, the bank window reads 0x00, and reading it (a fetch, movc, or
 // movx through the flash map) is reported on stderr, the first of each
 // operation with PC, PSBANK and SP.
 //

@@ -223,8 +223,9 @@ void controller::attach()
 	s.cpu().cov = &m_cov;
 	s.flash().timing = m_opt.flash_timing;
 	s.flash().t.sector_erase = 1250000;	// 40 ms
-	s.flash().t.program_first_ns = 30000;	// a program: tBP1 + (n - 1) tBP2,
-	s.flash().t.program_byte_ns = 2500;	// W25Q typical (flashctl.h)
+	s.flash().t.program_first_ns = 10500;	// a program: 10.5 + (n - 1) 1 µs, and
+	s.flash().t.program_byte_ns = 1000;	// a command 1 µs, fitted to the 8x
+	s.flash().t.command = 32;		// (flashctl.h)
 	s.flash().t.page_max_ns = 400000;	// tPP, for a whole page
 	s.flash().t.block_erase = 4687500;	// 150 ms (W25Q16JV, typical)
 	s.flash().keep_before = true;

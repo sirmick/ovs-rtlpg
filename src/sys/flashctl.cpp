@@ -152,8 +152,10 @@ void flash_controller::execute()
 
 	if (trace)
 		fprintf(stderr, "FLASH %s cmd=%02x tconf=%02x addr=%06x\n", write ? "W" : "R", cmd, tconf, addr);
-	if (timing)
-		m_exec_until = now() + t.transfer;
+	if (timing) {
+		bool const data_read = !write && (cmd == 0x03 || cmd == 0x0b || cmd == 0x3b || cmd == 0xbb);
+		m_exec_until = now() + (data_read ? t.transfer : t.command);
+	}
 
 	if (write) {
 		switch (cmd) {
