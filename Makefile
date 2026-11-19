@@ -106,6 +106,11 @@ oldnew: $(BUILD)/rtlsim
 		$(if $(NEW_PAYLOAD),--new-payload $(NEW_PAYLOAD)) $(if $(CHECKS),--checks) \
 		$(if $(KNOWN),--known $(KNOWN)) --rtlsim $(BUILD)/rtlsim
 
+# The bench's HTTP client against a scripted switch (no rtlsim): it honours
+# the switch's TCP window (tests/oldnew/test_bench.py).
+test-bench:
+	python3 tests/oldnew/test_bench.py
+
 # The new-only acceptance checks (tests/oldnew/checks.py) on one image, IMAGE
 # (default NEW): LACPDU gaps, BPDU hello spacing, long steps (`health tasks`),
 # the flash after an upload. KNOWN=tests/oldnew/known-failures marks today's.
@@ -169,4 +174,4 @@ clean:
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
-.PHONY: all test test-control test-early-reset oldnew oldnew-checks test-net test-update test-flash test-powercut vm test-vm check-banks clean
+.PHONY: all test test-control test-early-reset oldnew oldnew-checks test-bench test-net test-update test-flash test-powercut vm test-vm check-banks clean
