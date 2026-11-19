@@ -542,7 +542,8 @@ def verdicts(name, checks, known, used=None):
     failure of today's build that is on record. Over the ceiling it FAILs,
     and so does a hard violation (a gap too short) whatever the lines say.
     A measure that saturated (`health tasks`' >400ms) is bounded only by a
-    line's `by` measure (a console reply) or a line that says `unbounded`.
+    line's `by cli` (the longest console reply of every command the
+    scenario typed) or a line that says `unbounded`.
     The known lines that matched go into `used`."""
     out = []
     for c, bad, what, worst, hard, sat in checks:
@@ -563,16 +564,18 @@ def verdicts(name, checks, known, used=None):
                 if not k["by"]:
                     why.append(f" (saturated: line {k['line']} needs a `by` measure or `unbounded`)")
                     continue
-                if k["by"] not in sat:
-                    why.append(f" (line {k['line']}'s measure `{k['by']}` wasn't taken)")
+                miss = [c for c in k["by"] if c != "*" and f"cli {c}" not in sat]
+                if miss or not sat:
+                    why.append(f" (line {k['line']}'s `cli {','.join(miss) or '*'}` wasn't taken)")
                     continue
-                m = sat[k["by"]]
+                # every command's reply: the saturated step may be any of them
+                cmd, m = max(sat.items(), key=lambda x: x[1])
                 if m <= k["ceiling"]:
                     ok.append(k)
-                    text += f" [by {k['by']}: {_us(m)}]"
+                    text += f" [by the longest reply, {cmd}: {_us(m)}]"
                 else:
-                    why.append(f" (by {k['by']}: {_us(m)}, over line {k['line']}'s ceiling {_us(k['ceiling'])})")
-            elif k["ceiling"] is None or (worst is not None and worst <= k["ceiling"]):
+                    why.append(f" (by the longest reply, {cmd}: {_us(m)}, over line {k['line']}'s ceiling {_us(k['ceiling'])})")
+            elif k["unbounded"] or (worst is not None and worst <= k["ceiling"]):
                 ok.append(k)
             else:
                 why.append(f" (over line {k['line']}'s ceiling {_us(k['ceiling'])})")
@@ -589,14 +592,16 @@ def _us(v):
 def load_known(path):
     """The checks' known failures, one a line:
 
-        <scenario glob>[,<scenario glob>...]: <check glob> [<= <n> ms|s [by <measure>] | unbounded]   # why
+        <scenario glob>[,<scenario glob>...]: <check glob> (<= <n> ms|s [by cli <command>[,...]|*] | unbounded)   # why
 
     The ceiling bounds the check's worst measure: a long step's maximum, a
     gap check's largest gap over its upper bound. Where that measure
-    saturates (a long step's >400ms), `by <measure>` bounds it instead by
-    another: `cli <command>`, the command's reply in firmware time, from
-    typed to its prompt (it holds every step the command ran); or the line
-    says `unbounded`. [{scenarios, check, ceiling µs|None, by, unbounded, line}]"""
+    saturates (a long step's >400ms), `by cli ...` bounds it instead by the
+    console replies, in firmware time from typed to prompt (a reply holds
+    every step its command ran): the longest of every command the scenario
+    typed, whichever saturated the step; commands named must have been
+    typed. A line with no ceiling says `unbounded`, else it is malformed.
+    [{scenarios, check, ceiling µs|None, by [commands]|None, unbounded, line}]"""
     out = []
     if not path:
         return out
@@ -604,12 +609,12 @@ def load_known(path):
         l = l.split("#", 1)[0].strip()
         if not l:
             continue
-        m = re.match(r"([^:\s]+):\s*(.+?)(?:\s*<=\s*([\d.]+)\s*(ms|s)(?:\s+by\s+(.+?))?|\s+(unbounded))?$", l)
+        m = re.match(r"([^:\s]+):\s*(.+?)(?:\s*<=\s*([\d.]+)\s*(ms|s)(?:\s+by\s+cli\s+(\S+))?|\s+(unbounded))$", l)
         if not m:
-            sys.exit(f"{path}:{n}: not '<scenarios>: <check> [<= <n> ms|s [by <measure>] | unbounded]': {l}")
+            sys.exit(f"{path}:{n}: not '<scenarios>: <check> (<= <n> ms|s [by cli <commands>|*] | unbounded)': {l}")
         ceil = float(m.group(3)) * (1000 if m.group(4) == "ms" else 1_000_000) if m.group(3) else None
-        out.append({"scenarios": m.group(1).split(","), "check": m.group(2), "ceiling": ceil, "by": m.group(5),
-                    "unbounded": bool(m.group(6)), "line": n})
+        out.append({"scenarios": m.group(1).split(","), "check": m.group(2), "ceiling": ceil,
+                    "by": m.group(5).split(",") if m.group(5) else None, "unbounded": bool(m.group(6)), "line": n})
     return out
 
 
