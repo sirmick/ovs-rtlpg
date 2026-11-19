@@ -8,7 +8,8 @@
 //          [--print-flows] [--ageing S] [--powercut-after N] [--flash-ops FILE]
 //          [--rtl8238b-e8 N] [--rtl8238b-alt-arm] [--rtl8238b-dump FILE] [--trace-pse]
 //          [--flash-timing] [--trace-reset] [--flash-secreg FILE]
-//          [--control SOCKET [--map FILE] [--no-flash-timing]] [--check-flash-busy] [--cov FILE]
+//          [--control SOCKET [--map FILE] [--no-flash-timing] [--no-early-reset-hang]]
+//          [--check-flash-busy] [--cov FILE] [--early-reset-hang]
 //
 // --flash keeps the chip in a file: created (erased, with --image programmed
 // at 0) when missing, used as it is otherwise, so the saved config and
@@ -92,13 +93,24 @@
 // movx through the flash map) is reported on stderr, the first of each
 // operation with PC, PSBANK and SP.
 //
+// --early-reset-hang (always on with --control, unless --no-early-reset-hang)
+// models a silicon finding: a chip reset before the firmware has done the
+// switch init (its last step, MAC access in 0x632c, since power-on; a proxy,
+// see sys/system.h) hangs the chip until a power cycle. The reset
+// happens, then the CPU is held; it is reported ("early reset", with PC,
+// PSBANK and the firmware time) and rtlsim exits with 7. Off in plain mode,
+// where every reset boots, as it always has: the existing plain-mode runs and
+// harnesses (power-cut sweeps, update rehearsals, the VM) keep their output,
+// and plain mode has no power cycle to get out of the hang with.
+//
 // --cov FILE writes which instructions ran (sys/coverage.h) to FILE when
 // rtlsim ends, for tools/cov_report.py; with --control, cov dump does.
 //
 // Exits 0 when the program halts ("sjmp ."), 2 when the cycle budget runs out
 // (--cycles 0: no budget), 3 when stdin closes after input was given, 4 when
 // the bank check found something, 5 on a power cut (--powercut-after), 6 when
-// the program broke the flash busy rule (--check-flash-busy).
+// the program broke the flash busy rule (--check-flash-busy), 7 when a chip
+// reset hung the chip (--early-reset-hang).
 #include "sys/system.h"
 #include "ctl/control.h"
 #include "net/stream.h"
@@ -186,6 +198,7 @@ int main(int argc, char **argv)
 	const char *flash_secreg = nullptr;
 	control_options control;
 	bool check_flash_busy = false;
+	bool early_reset_hang = false;
 	const char *cov_file = nullptr;
 	coverage cov_bits;
 	std::vector<std::pair<unsigned, std::string>> sfps;
@@ -280,6 +293,10 @@ int main(int argc, char **argv)
 			control.flash_timing = false;
 		else if (!strcmp(argv[i], "--check-flash-busy"))
 			check_flash_busy = true;
+		else if (!strcmp(argv[i], "--early-reset-hang"))
+			early_reset_hang = true;
+		else if (!strcmp(argv[i], "--no-early-reset-hang"))
+			control.early_reset_hang = false;
 		else if (!strcmp(argv[i], "--cov") && i + 1 < argc)
 			cov_file = argv[++i];
 		else {
@@ -289,7 +306,8 @@ int main(int argc, char **argv)
 				"[--ofp PATH] [--trace-of] [--board FILE] [--print-flows] [--ageing S] "
 				"[--powercut-after N] [--flash-ops FILE] [--rtl8238b-e8 N] [--rtl8238b-alt-arm] "
 				"[--rtl8238b-dump FILE] [--trace-pse] [--flash-timing] [--trace-reset] [--flash-secreg FILE] "
-				"[--control SOCKET [--map FILE] [--no-flash-timing]] [--check-flash-busy] [--cov FILE]\n");
+				"[--control SOCKET [--map FILE] [--no-flash-timing] [--no-early-reset-hang]] [--check-flash-busy] [--cov FILE] "
+				"[--early-reset-hang]\n");
 			return 1;
 		}
 	}
@@ -339,6 +357,7 @@ int main(int argc, char **argv)
 		sys.flash().trace = trace_flash;
 		sys.flash().timing = flash_timing || check_flash_busy;
 		sys.flash_busy_check = check_flash_busy;
+		sys.early_reset_hang = early_reset_hang;
 		if (cov_file)
 			sys.cpu().cov = &cov_bits;
 		if (powercut_after >= 0)
@@ -482,6 +501,10 @@ int main(int argc, char **argv)
 			sys.flash().sync();
 			synced = now;
 		}
+		if (sys.held()) {
+			rc = 7;
+			break;
+		}
 		if (sys.flash().power_cut()) {
 			sys.flash().sync();
 			fprintf(stderr, "rtlsim: power cut after %u flash operations\n", sys.flash().ops());
@@ -525,7 +548,7 @@ int main(int argc, char **argv)
 	if (sys.flash_busy_violations) {
 		fprintf(stderr, "rtlsim: %llu reads of the bank window while the flash was busy\n",
 			(unsigned long long)sys.flash_busy_violations);
-		if (rc != 4 && rc != 5)
+		if (rc != 4 && rc != 5 && rc != 7)
 			rc = 6;
 	}
 	double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();

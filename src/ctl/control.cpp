@@ -162,8 +162,9 @@ public:
 
 	// One request; false after quit.
 	bool request(const std::string &line, std::string &reply);
-	// The exit code: 6 if the firmware broke the flash busy rule.
-	int exit_code() const { return m_busy_violations + m_sys->flash_busy_violations ? 6 : 0; }
+	// The exit code: 7 if a reset hung the chip, else 6 if the firmware
+	// broke the flash busy rule.
+	int exit_code() const { return m_early_resets || m_sys->held() ? 7 : m_busy_violations + m_sys->flash_busy_violations ? 6 : 0; }
 
 private:
 	enum class stop { done, hit, halt };
@@ -197,6 +198,7 @@ private:
 	symbol_map m_map;
 	u64 m_base = 0;				// firmware time at the last power-on
 	u64 m_busy_violations = 0;		// in the systems before the last power cut
+	u64 m_early_resets = 0;			// the same, chips an early reset hung
 	coverage m_cov;				// over power cuts, until cov reset
 	std::map<unsigned, int> m_links;	// link requests, kept over a power cut
 
@@ -227,6 +229,7 @@ void controller::attach()
 	s.flash().t.block_erase = 4687500;	// 150 ms (W25Q16JV, typical)
 	s.flash().keep_before = true;
 	s.flash_busy_check = m_opt.flash_timing;
+	s.early_reset_hang = m_opt.early_reset_hang;
 	s.cpu().uart_timing = true;
 	s.cpu().uart_lost = [this](u8 c, bool ri) {
 		report("uart-lost", "uart: received 0x%02x lost, %s", c, ri ? "RI still set (the last byte unread)" : "reception off (REN)");
@@ -448,6 +451,7 @@ void controller::powercut()
 	u64 const t = now();
 	auto bc = std::move(m_sys->bankcheck);
 	m_busy_violations += m_sys->flash_busy_violations;
+	m_early_resets += m_sys->held();
 	auto flash = m_sys->take_flash();
 	m_sys.reset();
 	flash->power_on(t);
@@ -540,7 +544,7 @@ bool controller::request(const std::string &line, std::string &reply)
 			if (p > 9)
 				throw ctl_error("port: 0-9");
 			auto f = parse_hex(w[3]);
-			reply = m_sys->nic().receive(p, f.data(), f.size()) ? "ok taken" : "ok dropped";
+			reply = !m_sys->held() && m_sys->nic().receive(p, f.data(), f.size()) ? "ok taken" : "ok dropped";
 		} else if (c == "nic" && w.size() == 3 && w[1] == "capture" && (w[2] == "on" || w[2] == "off")) {
 			m_capture = w[2] == "on";
 			reply = "ok";
@@ -585,8 +589,7 @@ bool controller::request(const std::string &line, std::string &reply)
 			reply = "ok";
 		} else if (c == "reset" && w.size() == 1) {
 			m_uart_open = false;
-			m_sys->resets++;
-			m_sys->reset(true);
+			m_sys->chip_reset();
 			reply = "ok " + fmt_time(now());
 		} else if (c == "powercut" && w.size() == 1) {
 			m_uart_open = false;

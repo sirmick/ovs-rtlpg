@@ -96,6 +96,8 @@ void switch_core::write_reg(u16 addr, u32 v)
 	if (auto it = m_whook.find(addr); it != m_whook.end())
 		v = it->second(v);
 	m_reg[addr] = v;
+	if (written)
+		written(addr, v);
 }
 
 void switch_core::execute(u8 cmd)

@@ -60,17 +60,19 @@
 //   link <port> up [<speed>] | down   ok (physical port 0-9; speed as --link, 1g)
 //   checks                            ok <n>, then "<t> <kind> <text>": everything
 //       the model found since the start, t when it found it (kinds:
-//       unmodelled, bank-ret, uart-lost, bank; flash-busy and stack are to
-//       come). The
+//       unmodelled, bank-ret, uart-lost, bank, flash-busy, early-reset;
+//       stack is to come). The
 //       bank checker (--check-banks) sums up its findings when asked: its
 //       lines carry the time of the checks request, not of the read.
 //   cov reset | cov dump <file>       ok: which instructions ran since the start
 //       or the last cov reset, over power cuts and resets, written to <file>
 //       for tools/cov_report.py (format and regions: sys/coverage.h)
 //   reset                             ok <t>: a chip reset, as the firmware's
+//                                     (an early one hangs the chip too, below)
 //   powercut                          ok <t>: off and on: a new chip around the same
 //                                     flash; links stay as they are
-//   quit                              ok, and rtlsim exits: 0, or 6 if the firmware
+//   quit                              ok, and rtlsim exits: 0; 7 if a chip reset
+//                                     hung the chip (below); else 6 if the firmware
 //                                     read the bank window while the flash was busy
 //
 // The flash takes its time (unless --no-flash-timing): a sector erase 40 ms,
@@ -82,6 +84,15 @@
 // cut while an operation is in flight leaves it done in part, in proportion
 // to the time it had (an erase erased its first bytes, a program wrote its
 // first ones).
+//
+// A chip reset before the switch init hangs the chip, as on silicon (the
+// 8x, and a SWTG024AS; sys/system.h has the proxy for "the switch init",
+// the exact silicon condition being unknown): the chip resets, then the CPU
+// never runs again - no UART, frames in dropped (nic inject: ok dropped),
+// runs time out - until a powercut. checks lists it once as early-reset,
+// with PC, PSBANK and the firmware time of the reset; rtlsim exits with 7.
+// The firmware's own resets and the reset request both count.
+// --no-early-reset-hang: every reset boots, as before.
 #ifndef RTLSIM_CONTROL_H
 #define RTLSIM_CONTROL_H
 
@@ -95,6 +106,7 @@ struct control_options {
 	const char *map = nullptr;	// --map: the firmware's .map, for symbols
 	bool quiet = false;		// findings only through checks, not on stderr
 	bool flash_timing = true;	// the flash busy model (--no-flash-timing: off)
+	bool early_reset_hang = true;	// --no-early-reset-hang: off
 };
 
 // Builds a system around a flash chip as the command line says (the board,

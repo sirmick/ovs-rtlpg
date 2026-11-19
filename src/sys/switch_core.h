@@ -42,6 +42,9 @@ public:
 	void on_write(u16 addr, std::function<u32(u32 v)> f) { m_whook[addr] = std::move(f); }
 
 	std::function<void()> soc_reset;	// RESET_SOC_BIT written
+	// Watches every register write, after its behaviour, without being one
+	// (the register stays "unmodelled" if nothing else models it).
+	std::function<void(u16 addr, u32 v)> written;
 	bool trace = false;
 	bool log_unmodelled = true;
 	std::function<u16()> pc;		// for traces

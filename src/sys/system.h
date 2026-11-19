@@ -106,6 +106,26 @@ public:
 	u64 resets = 0;
 	bool trace_reset = false;		// log each chip reset to stderr
 	u64 uart_lines = 0;			// sent so far, to place a reset in the console
+	// The early-reset hang (silicon: the 8x, RTL8373, and a SWTG024AS): a
+	// chip reset before the firmware has done the switch init hangs the chip
+	// until its power is cycled - the reset happens, then the CPU never runs
+	// again. What exactly the init must have done is unknown (a bench bisect
+	// may refine it); the proxy here is the last step of RTLPlayground's
+	// rtl8373_init() and rtl8372_init(), after the PHY and SerDes set-up:
+	// a write to 0x632c (MAC access) with bits 16-20 all set, since
+	// power-on. The loader's own network set-up sets only bits 16-19 there,
+	// so it doesn't count; neither does the NIC reset, nor setup_clock().
+	// With early_reset_hang, a reset before that resets the chip as any
+	// other, then holds the CPU: no instructions, no UART, frames in are
+	// dropped, firmware time still passes; only a new system (a power cut)
+	// gets out of it. It is reported once ("early-reset", with the firmware
+	// time, PC and PSBANK at the reset). Off: every reset boots, as before.
+	bool early_reset_hang = false;
+	bool switch_init_done() const { return m_switch_init; }
+	bool held() const { return m_held; }
+	// A chip reset now, as the firmware's write to 0x0024 makes one (the
+	// early-reset hang included); counted in resets.
+	void chip_reset();
 
 private:
 	u8 sfr_r(u8 a);
@@ -142,6 +162,8 @@ private:
 	bool m_halted = false;
 	bool m_reset_pending = false;
 	bool m_clock_set = false;		// HW_CONF written since the last reset: setup_clock() ran
+	bool m_switch_init = false;		// the switch init done since power-on (early_reset_hang)
+	bool m_held = false;			// an early reset hung the chip
 	std::deque<u8> m_rx;
 	std::unique_ptr<util::disasm_interface> m_dasm;
 	chip_identity const &m_id = m_board.id;

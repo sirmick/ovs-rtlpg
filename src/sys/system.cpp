@@ -39,6 +39,10 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 	m_cpu.uart_tx = [this](u8 c) { fputc(c, uart_out); if (c == '\n') { uart_lines++; fflush(uart_out); } };
 	m_core.soc_reset = [this]() { m_reset_pending = true; };
 	m_core.on_write(0x6040, [this](u32 v) { m_clock_set = true; return v; });	// HW_CONF: setup_clock()
+	m_core.written = [this](u16 a, u32 v) {	// early_reset_hang's proxy for the switch init
+		if (a == 0x632c && (v & 0x001f0000) == 0x001f0000)
+			m_switch_init = true;
+	};
 	m_flash->now = [this]() { return m_cpu.cycles_total; };
 	m_flash->on_busy = [this]() {
 		if (!flash_busy_check)
@@ -61,8 +65,8 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 }
 
 // A chip reset (chip_reset) reloads the common code and restarts the CPU;
-// flash and PHY state persist. Every reset boots: why some resets hang a
-// real switch (those before setup_clock(), so far) is not modelled here.
+// flash and PHY state persist. Every reset boots, unless early_reset_hang
+// holds the CPU after it (chip_reset()).
 void rtl837x_system::reset(bool chip_reset)
 {
 	m_clock_set = false;
@@ -409,10 +413,32 @@ bool rtl837x_system::at_halt()
 	return code_read(pc) == 0x80 && code_read(pc + 1) == 0xfe;
 }
 
+void rtl837x_system::chip_reset()
+{
+	u16 const pc = m_cpu.pc();
+	u8 const bank = m_cpu.psbank();
+	resets++;
+	reset(true);
+	if (!early_reset_hang || m_switch_init || m_held)
+		return;
+	m_held = true;
+	u64 const us = m_flash->now() * 4 / 125;	// firmware time, 31.25 cycles a µs
+	report("early-reset", "early reset: chip reset at pc=%04x psbank=%02x, t=%llu.%03llu ms, before the switch init "
+		"(MAC access, 0x632c bits 16-20) since power-on: the chip hangs until a power cycle",
+		pc, bank, (unsigned long long)(us / 1000), (unsigned long long)(us % 1000));
+}
+
 bool rtl837x_system::run(int cycles)
 {
 	if (m_halted)
 		return false;
+	if (m_held) {
+		// the CPU never runs again; firmware time goes on (to the slice's end)
+		m_cpu.cycles_total += cycles;
+		m_cpu.idle_skipped += cycles;
+		this->cycles += cycles;
+		return true;
+	}
 	m_cpu.m_insn_hook = (trace_insn || bankcheck) ? std::function<void(offs_t)>([this](offs_t pc) { on_insn(pc); }) : nullptr;
 	int left = cycles;
 	while (left > 0 && !m_halted && !m_cpu.stopped) {
@@ -430,12 +456,13 @@ bool rtl837x_system::run(int cycles)
 		}
 		if (m_reset_pending) {
 			m_reset_pending = false;
-			resets++;
 			if (trace_reset)
 				fprintf(stderr, "rtlsim: chip reset %llu at pc 0x%04x, after %llu UART lines, %s setup_clock()\n",
-					(unsigned long long)resets, m_cpu.pc(), (unsigned long long)uart_lines,
+					(unsigned long long)resets + 1, m_cpu.pc(), (unsigned long long)uart_lines,
 					m_clock_set ? "after" : "before");
-			reset(true);
+			chip_reset();
+			if (m_held)
+				break;
 		}
 		if (stop_on_halt && at_halt())
 			m_halted = true;
