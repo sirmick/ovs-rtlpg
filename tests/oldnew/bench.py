@@ -21,7 +21,23 @@ from rtlsim_ctl import Sim, SimError
 
 GRID = 500			# µs between looks at the wire
 COARSE = 10000			# ... with no cable and nothing to wait for
-PROMPT = r"\n> "			# not anchored: async lines ("STP: ...") may follow it
+PROMPT = r"\n> "			# a reply ends at the first prompt; what follows is kept
+# Lines the firmware prints on its own, not as a command's reply (link
+# changes, protocol events): taken out of a reply, wherever they fall in it,
+# and kept with what came after the prompt, so a line printed a scheduler
+# pass before or after a prompt lands in the same place. Each its own line.
+# From RTLPlayground's sources (rtlplayground.c, rtl837x_stp.c, sfp.c,
+# rtl837x_rldp.c, rtl837x_igmp.c, rtl837x_port.c); port_lag_members_set is
+# printed in a lag command's reply and on its own when LACP changes a trunk,
+# so it always moves. A blank line just before a moved line moves with it
+# (the firmware starts these with "\n").
+ASYNC = [re.compile(p + "$") for p in (
+    r"<new link: .*>", r"STP: .*", r"Updating Root bridge",
+    r"<(MODULE INSERTED|MODULE REMOVED|SFP-RX LOS|SFP-RX OK)>.*", r"  Rate: .*Module: .*", r"SFP: an I2C read failed.*",
+    r"Loop on port .*", r"Loop: port .*",
+    r"IGMP[-_]Entry FOUND", r"Updating IGMP entry", r"IGMP Entry (already )?deleted", r"igmp_router_port_set: .*",
+    r"port_lag_members_set, .*", r"sds_config sds: .*", r">(3|10)s button detected.*",
+)]
 BCAST = b"\xff" * 6
 
 
@@ -80,7 +96,7 @@ class Bench:
         self.frames = Counter()		# (port, kind) -> frames sent
         self.cables = {}		# port -> the port at the other end
         self.devices = []		# on the ports: take(port, frame), tick(now)
-        self.uart = ""			# console output not yet taken
+        self.uart = ""			# console output not yet given out: every byte is
 
     def close(self):
         self.sim.close()
@@ -113,23 +129,43 @@ class Bench:
         self.uart += self.sim.uart_text()
         return self.uart
 
-    def console(self, line, until, regex=PROMPT):
-        """Type `line` (and Enter); the output up to `regex` (the prompt) or
-        None if it hasn't come by firmware time `until`."""
+    def pending(self):
+        """What the UART said that no reply has taken, and forget it."""
         self.take_uart()
-        self.uart = ""
-        self.sim.uart_write(line + "\r")
+        out, self.uart = self.uart, ""
+        return out
+
+    def _reply(self, regex, until):
+        """The output from now up to the end of `regex`'s first match, less
+        the ASYNC lines in it, or None if it hasn't come by `until`. What
+        follows the match, and the ASYNC lines, stay for pending()."""
         rx = re.compile(regex)
-        if self.advance(until, lambda: rx.search(self.take_uart()) is not None):
-            out, self.uart = self.uart, ""
-            return out
-        return None
+        if not self.advance(until, lambda: rx.search(self.take_uart()) is not None):
+            return None
+        m = rx.search(self.uart)
+        reply, rest = self.uart[:m.end()], self.uart[m.end():]
+        keep, moved = [], []
+        for l in reply.splitlines(keepends=True):
+            if any(a.match(l.rstrip("\n")) for a in ASYNC):
+                if keep and keep[-1] == "\n":
+                    moved.append(keep.pop())
+                moved.append(l)
+            else:
+                keep.append(l)
+        self.uart = "".join(moved) + rest
+        return "".join(keep)
+
+    def console(self, line, until, regex=PROMPT):
+        """Type `line` (and Enter): (what the UART said before, unasked;
+        the reply up to the prompt, or None if it hasn't come by firmware
+        time `until`)."""
+        before = self.pending()
+        self.sim.uart_write(line + "\r")
+        return before, self._reply(regex, until)
 
     def wait_uart(self, regex, until):
-        rx = re.compile(regex)
-        ok = self.advance(until, lambda: rx.search(self.take_uart()) is not None)
-        out, self.uart = self.uart, ""
-        return out if ok else None
+        """The output up to `regex` (as a reply), from what is pending on."""
+        return self._reply(regex, until)
 
     # --- the outside
     def cable(self, a, b):

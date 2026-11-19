@@ -34,7 +34,7 @@ def check(cond, msg):
 
 
 def show(b):
-    out = b.console("lacp show", b.now + 3_000_000) or ""
+    out = b.console("lacp show", b.now + 3_000_000)[1] or ""
     lag = re.search(r"lag 01 ports (\w+) aggregator (\S+) members (\w+)", out)
     ports = {int(m.group(1), 16): (int(m.group(2), 16), int(m.group(3), 16), int(m.group(4), 16))
              for m in re.finditer(r"port (\w+) actor (\w+) partner (\w+) rxst (\w+)", out)}

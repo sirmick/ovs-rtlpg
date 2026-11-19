@@ -56,7 +56,10 @@ answers, at grid points.
 ## Results
 
 These are named and compared one by one:
-- every console command's output;
+- every console command's reply, from the command to the prompt;
+- everything else the console said, between two steps, as `<n> console`
+  (n is the step it came before): link changes, STP, SFP, loop and IGMP
+  events, what followed a prompt. No UART byte is dropped;
 - every web response (status, headers and body; the session cookie's value
   is left out);
 - the boot log;
@@ -72,6 +75,16 @@ and the build dates. So are two things that are the program, not its
 behaviour:
 - the register window the loader loads code through;
 - the image CRC that the default config's copy brings into the config sector.
+
+Lines the firmware prints on its own (`bench.ASYNC`, from its sources: `<new
+link ...>`, `STP: ...`, the SFP module events, loop and IGMP entries, LAG trunk
+changes) are taken out of a reply and kept with what followed its prompt. So a
+line printed a scheduler pass before or after a prompt lands in the same
+`console` result either way. A `console` result is compared as it is, in
+order: two async lines that the scheduler legitimately prints in the other
+order are a difference, to list with `--expect`. The blocks are cut at the
+steps' starts, which are fixed firmware times: only a line printed within a
+pass of a step's start could fall on the other side.
 
 `--save DIR` writes every result as JSON. `--expect FILE` lists the differences
 a change means to make, one per line, as `<scenario glob> <result glob>  #

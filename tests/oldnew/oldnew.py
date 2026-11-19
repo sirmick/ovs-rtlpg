@@ -31,7 +31,8 @@ differences a change is meant to make, one per line:
     <scenario glob> <name glob>   # why
 
 (fnmatch patterns; '#' starts a comment). Those are reported as expected and
-don't fail the run. Exit 0 when every scenario matches, 1 otherwise. --save
+don't fail the run; a line that matched no difference is flagged (it may be
+stale), without failing it. Exit 0 when every scenario matches, 1 otherwise. --save
 DIR writes each side's results, as JSON, for a look.
 
 --payload is the image the upload scenario uploads (default: the
@@ -80,9 +81,19 @@ class Run:
         self.n += 1
         return k
 
+    def _console(self, text=None):
+        """What the UART said between steps, unasked (link changes, protocol
+        events, a reply's trailing lines): a result of its own, "<n> console",
+        n the step it came before. Compared as it is, in order."""
+        text = self.b.pending() if text is None else text
+        if text:
+            k = f"{self.n:03d} console"
+            self.results[k] = self.results.get(k, "") + text
+
     def _slot(self, ms):
         start = self.t
         self.b.advance(start)
+        self._console()
         self.t = start + int(ms * 1000)
         return self.t
 
@@ -100,7 +111,8 @@ class Run:
         out = self.b.wait_uart(PROMPT, until)
         self.results[self._key("boot")] = out if out is not None else "<timeout>"
         self.b.advance(self.b.now + 10000)	# cmd_editor_init() drops input before it
-        ip = self.b.console("ip", until)
+        before, ip = self.b.console("ip", until)	# the harness's own question: not a result
+        self._console(before)
         m = re.search(r"Current IP: ([\d.]+)", ip or "")
         sw = m.group(1) if m else "192.168.10.247"
         if self.host is None:
@@ -109,16 +121,19 @@ class Run:
         self.host.sw_mac = None
 
     def cli(self, line, slot=5000):
-        out = self.b.console(line, self._slot(slot))
+        before, out = self.b.console(line, self._slot(slot))
+        self._console(before)
         self.results[self._key(f"cli {line}")] = out if out is not None else "<timeout>"
 
     def tables(self):
         """The VLAN and L2 tables now, as one result each."""
         self._now()
+        self._console()
         self.results[self._key("vlan table")] = "\n".join(self.b.table("vlan"))
         self.results[self._key("l2 table")] = "\n".join(self.b.table("l2"))
 
     def note(self, text):
+        self._console()
         self.results[self._key("note")] = text
 
     # --- the web
@@ -182,6 +197,7 @@ class Run:
     def partner_view(self):
         """What the partner sees: its own state and the switch's, per port."""
         self._now()
+        self._console()
         p = self.lacp
         self.results[self._key("lacp partner")] = "\n".join(
             f"{x}: actor {p.state(x):02x} partner {p.st[x]['partner']['state'] if p.st[x]['partner'] else 0:02x}"
@@ -213,6 +229,7 @@ class Run:
     # --- the end
     def finish(self):
         self._now()
+        self._console()
         res = dict(self.results)
         for l in self.b.reg_dump():
             k, a, v = l.split()
@@ -286,19 +303,21 @@ def run_one(job):
 
 
 def load_expect(path):
+    """[(scenario glob, result glob, line number)]"""
     out = []
     if not path:
         return out
-    for l in open(path):
+    for n, l in enumerate(open(path), 1):
         l = l.split("#", 1)[0].strip()
         if l:
             s, k = l.split(None, 1)
-            out.append((s, k.strip()))
+            out.append((s, k.strip(), n))
     return out
 
 
-def compare(name, old, new, expect):
-    """(unexpected, expected) differences, each a list of readable blocks."""
+def compare(name, old, new, expect, used=None):
+    """(unexpected, expected) differences, each a list of readable blocks;
+    the expect lines that matched one go into `used`."""
     bad, ok = [], []
     for k in list(old) + [k for k in new if k not in old]:
         a, b = old.get(k, "<absent>"), new.get(k, "<absent>")
@@ -309,8 +328,10 @@ def compare(name, old, new, expect):
             block = f"  {k}:\n" + "\n".join("    " + x for x in d.splitlines())
         else:
             block = f"  {k}: old {a!r}, new {b!r}"
-        exp = any(fnmatch.fnmatch(name, s) and fnmatch.fnmatch(k, g) for s, g in expect)
-        (ok if exp else bad).append(block)
+        hits = [n for s, g, n in expect if fnmatch.fnmatch(name, s) and fnmatch.fnmatch(k, g)]
+        if used is not None:
+            used.update(hits)
+        (ok if hits else bad).append(block)
     return bad, ok
 
 
@@ -351,9 +372,10 @@ def main():
                 json.dump(r, f, indent=1)
     print(f"old: {a.old}\nnew: {a.new}" + (f"\nexpected differences: {a.expect}" if a.expect else ""))
     failed = 0
+    used = set()
     for n in names:
         (o, wo), (w, wn) = res[(n, "old")], res[(n, "new")]
-        bad, ok = compare(n, o, w, expect)
+        bad, ok = compare(n, o, w, expect, used)
         err = "<error>" in o or "<error>" in w
         status = "FAIL" if bad or err else "PASS"
         failed += status == "FAIL"
@@ -365,6 +387,10 @@ def main():
             print("  expected:")
             for x in ok:
                 print("  " + x)
+    for s, g, line in expect:
+        if line not in used:
+            print(f"expect: {a.expect}:{line}: '{s} {g}' matched no difference" +
+                  (" (in the scenarios run)" if a.only else ""))
     print(f"oldnew: {len(names) - failed} of {len(names)} scenarios match, {time.time() - t0:.0f} s wall")
     sys.exit(1 if failed else 0)
 
