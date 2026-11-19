@@ -206,7 +206,9 @@ class Bench:
 class Host:
     """A host with a cable into front port `port`: answers ARP for its
     address, and talks HTTP to the switch over TCP, one connection at a
-    time, sending a segment only once the last was acknowledged."""
+    time, sending a segment only once the last was acknowledged and the
+    switch's window is open (at most the window's size; it never
+    retransmits, so a segment sent into a closed window would be lost)."""
     MSS = 1460
 
     def __init__(self, bench, port, mac="020000000001", ip="192.168.10.1", switch_ip="192.168.10.247"):
@@ -268,7 +270,7 @@ class Host:
             return None
         sport, self.next_port = self.next_port, self.next_port + 1
         iss = 1000 + (sport - 40000) * 100000
-        st = {"snd": iss + 1, "rcv": None, "una": iss, "resp": b"", "fin": False, "rst": False, "mss": 536}
+        st = {"snd": iss + 1, "rcv": None, "una": iss, "wnd": 1, "resp": b"", "fin": False, "rst": False, "mss": 536}
         self.rx = []
 
         def segs():
@@ -276,12 +278,13 @@ class Host:
                 dport, = struct.unpack("!H", s[2:4])
                 if dport != sport:
                     continue
-                seq, ack, off, fl = struct.unpack("!IIBB", s[4:14])
+                seq, ack, off, fl, wnd = struct.unpack("!IIBBH", s[4:16])
                 data = s[(off >> 4) * 4:]
                 if fl & 0x04:
                     st["rst"] = True
                 if fl & 0x10:
                     st["una"] = max(st["una"], ack)
+                    st["wnd"] = wnd		# the last said, a pure window update too
                 if fl & 0x02 and st["rcv"] is None:	# SYN-ACK
                     st["rcv"] = seq + 1
                     o = s[20:(off >> 4) * 4]
@@ -320,7 +323,13 @@ class Host:
         self._tcp(sport, st["snd"], st["rcv"], 0x10)
         off = 0
         while off < len(request):
-            chunk = request[off:off + st["mss"]]
+            # a closed window (uIP's uip_stop()) waits for the update; looked
+            # for only then, as a step always runs to the next grid point
+            if not st["wnd"] and not step(lambda: st["wnd"] > 0 or complete()):
+                return "reset" if st["rst"] else None
+            if complete():
+                break
+            chunk = request[off:off + min(st["mss"], st["wnd"])]
             self._tcp(sport, st["snd"], st["rcv"], 0x18, chunk)
             st["snd"] += len(chunk)		# what our ACKs carry from now on
             if not step(lambda: st["una"] >= st["snd"] or complete()):
