@@ -128,3 +128,15 @@ vlan,lldp frames * tcp/80
 * *web GET /ports.json -/raw\.port\.\d+\.adv none/ +/raw\.port\.\d+\.adv [0-9a-z,]+/
 # and LLDP's 802.3 MAC/PHY TLV says autonegotiation supported and on, with those modes
 lldp *lldp frames -/\s*org len 9: 00120f\/1 010000000a/ +/\s*org len 9: 00120f\/1 036c01000a/
+# lag.L (P4-3, om/lag): the boot writes every trunk empty and every hash the
+# default (lacp_init: the hardware is the config's defaults); the old boot
+# left them (the sim's reset 0: an unused LAG's hash read none)
+* reg 4f3[8c] -/<absent>/ +/[0-9a-f]{8}/
+* reg 4f4[048c] -/<absent>/ +/[0-9a-f]{8}/
+* reg 4f5[04] -/<absent>/ +/[0-9a-f]{8}/
+* *web GET /lag.json -/lag\.[1-4]\.hash none/ +/lag\.[1-4]\.hash dip,dmac,dport,sip,smac,sport/
+# port_lag_members_set() no longer prints; the set lines and apply answer
+# sooner than the old lag command, so the link line lands a result earlier
+lacp* *console -/port_lag_members_set, lag: \d+, members: 0x[0-9a-f]{4}|<new link: [0-9a-f]+, was [0-9a-f]+>|/ +/<absent>|<new link: [0-9a-f]+, was [0-9a-f]+>|/
+# /lag.json read with get: fewer HTTP frames
+lacp frames * tcp/80
