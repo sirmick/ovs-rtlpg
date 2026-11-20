@@ -184,3 +184,9 @@ igmp reg 50bc -/00010007/ +/00000000/
 # and apply walks the 36 storm instances too (119 apply steps for 76): on the SWGT024 the
 # loop scenario's `loop off` lands a period later, so RLDP sends one frame more (98 -> 99)
 loop frames * rldp -/98/ +/99/
+# core7 (om/core-dbgprint): the SerDes debug lines (sds_config, sds_config_mac's
+# RTL837X_REG_SDS_MODES) go through dbg_*: the boot, and the sfp task's SFP_CONFIG on the
+# console, print them no more; <MODULE INSERTED> ends its line, a blank line before the next event
+* *boot -/\n*(RTL837X_REG_SDS_MODES: 0x[0-9a-f]{8}|sds_config sds: [0-9a-f]{2}, mode: [0-9a-f]{2})(\n+(RTL837X_REG_SDS_MODES: 0x[0-9a-f]{8}|sds_config sds: [0-9a-f]{2}, mode: [0-9a-f]{2}))*\n*/
+* *console -/\n*(RTL837X_REG_SDS_MODES: 0x[0-9a-f]{8}|sds_config sds: [0-9a-f]{2}, mode: [0-9a-f]{2})(\n+(RTL837X_REG_SDS_MODES: 0x[0-9a-f]{8}|sds_config sds: [0-9a-f]{2}, mode: [0-9a-f]{2}))*\n*/
+sfp *console +//		# the blank line <MODULE INSERTED>'s newline adds
