@@ -113,3 +113,18 @@ l2_big,lacp_l2 reg 5cd0
 web,vlan *console -/vlan: 0x[0-9a-f]{4}, members: 0x[0-9a-f]{4}, tagged: 0x[0-9a-f]{4}/ +/ok/
 # the pages read with get: fewer HTTP frames (as port's in web)
 vlan,lldp frames * tcp/80
+
+# P3J (om/core-p3j 179eafd): the boot writes every port's settings and the LEDs once, at their
+# defaults too (a soft reset keeps the chip and the PHYs as they were), so the PHYs' autoneg
+# registers and the LED SW_EN registers are written where the old image left them at reset; and
+# the boot's L2 flush takes the static entries and the CPU's too (FLUSH_MODE bit 2)
+* reg 53d4 -/[0-9a-f]{8}/ +/[0-9a-f]{8}/
+* reg 53dc -/00000000/ +/00000004/
+* reg 655[48] -/<absent>/ +/00000000/
+* phy *.07.00[0-2]0 -/<absent>/ +/[0-9a-f]{4}/
+* phy *.1f.a412 -/<absent>/ +/[0-9a-f]{4}/
+# and /ports.json then reads each copper port's advertisement from what the boot wrote (speed
+# auto: every mode the port has), where the old image's untouched PHYs read none in rtlsim
+* *web GET /ports.json -/raw\.port\.\d+\.adv none/ +/raw\.port\.\d+\.adv [0-9a-z,]+/
+# and LLDP's 802.3 MAC/PHY TLV says autonegotiation supported and on, with those modes
+lldp *lldp frames -/\s*org len 9: 00120f\/1 010000000a/ +/\s*org len 9: 00120f\/1 036c01000a/
