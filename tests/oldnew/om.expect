@@ -40,3 +40,6 @@ config *boot +/ok/		# the boot runs them: an ok per set line and the apply
 
 # mgmt (P4-1): the management VLAN is mgmt.vlan, no longer in /vlanlist.json
 * *web GET /vlanlist.json -/\{"mgmt":\d+,"vlan":.*/ +/\{"vlan":.*/
+# a POST /cmd setting of a moved object goes as set lines and an apply by
+# POST /cli (oldnew.py post_cmd): their ok lines on the console too
+config *console -/<absent>/ +/ok/
