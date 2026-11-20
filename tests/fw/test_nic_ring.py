@@ -15,8 +15,11 @@ nic-rx-full.
 - A stream of small frames while the firmware idles at its prompt: every
   one taken.
 - The same stream while the firmware is busy printing `stat` (its main loop
-  doesn't drain the ring meanwhile): the ring fills and frames are dropped,
-  and checks says so; once it is done, frames are taken again.
+  doesn't drain the ring meanwhile): the ring fills and frames are dropped;
+  once it is done, frames are taken again. An object-model image (it answers
+  get port.1.pvid) streams get state instead, a line a step, and its
+  scheduler drains the ring between the steps: nothing is dropped.
+- A second burst: checks lists each run of drops once, as nic-rx-full.
 - Each run twice: the same counts.
 """
 import argparse, json, os, re, sys
@@ -64,7 +67,10 @@ def session(a, ring=None):
         sim.run_until_uart(PROMPT, max_ms=30000)
         sim.run(100)
         sim.uart_read()
-        f = {}
+        sim.uart_write("get port.1.pvid\r")
+        sim.run_until_uart(PROMPT, max_ms=3000)
+        f = {"om": "port.1.pvid " in sim.uart_text()}
+        sim.uart_read()
         s0 = stats(sim)
         f["burst"] = sum(sim.nic_inject(port, frame(1514, i)) for i in range(20))
         s1 = stats(sim)
@@ -75,14 +81,16 @@ def session(a, ring=None):
         f["idle"] = stream(sim, port, 50, 0.2)
         s2 = stats(sim)
         f["idle_drops"] = s2["ring_full"] - s1["ring_full"]
-        sim.uart_write("stat\r")
+        sim.uart_write("get state\r" if f["om"] else "stat\r")
         f["busy"] = stream(sim, port, 300, 0.1)
         s3 = stats(sim)
         f["busy_drops"] = s3["ring_full"] - s2["ring_full"]
-        sim.run_until_uart(PROMPT, max_ms=5000)
+        sim.run_until_uart(PROMPT, max_ms=20000)
         sim.run(50)
         f["after"] = stream(sim, port, 20, 0.2)
         f["after_drops"] = stats(sim)["ring_full"] - s3["ring_full"]
+        f["burst2"] = sum(sim.nic_inject(port, frame(1514, i)) for i in range(20))
+        sim.run(200)
         f["checks"] = [c for c in sim.checks() if c[1] == "nic-rx-full"]
     return f
 
@@ -102,8 +110,14 @@ def main():
           f"ring {f['ring_after_burst']} slots")
     check(f["drained"].startswith("0/"), f"the firmware drains the ring once it runs (ring {f['drained']})")
     check(f["idle"] == 50 and f["idle_drops"] == 0, f"50 small frames 200 µs apart while idle: {f['idle']} taken, {f['idle_drops']} dropped")
-    check(f["busy_drops"] > 0, f"300 small frames 100 µs apart while `stat` prints: {f['busy']} taken, {f['busy_drops']} dropped as ring_full")
-    check(f["after"] == 20 and f["after_drops"] == 0, f"after `stat`: frames are taken again ({f['after']} of 20)")
+    busy = "get state" if f["om"] else "stat"
+    if f["om"]:
+        check(f["busy"] == 300 and f["busy_drops"] == 0, f"300 small frames 100 µs apart while `get state` streams: "
+              f"{f['busy']} taken, {f['busy_drops']} dropped (the scheduler drains the ring between its steps)")
+    else:
+        check(f["busy_drops"] > 0, f"300 small frames 100 µs apart while `stat` prints: {f['busy']} taken, {f['busy_drops']} dropped as ring_full")
+    check(f["after"] == 20 and f["after_drops"] == 0, f"after `{busy}`: frames are taken again ({f['after']} of 20)")
+    check(f["burst2"] == fit, f"a second burst: {f['burst2']} taken ({fit})")
     check(len(f["checks"]) >= 2 and all("RX ring full" in c[2] for c in f["checks"]),
           f"checks lists each run of drops once as nic-rx-full ({len(f['checks'])}): "
           + (f["checks"][0][2] if f["checks"] else "none"))

@@ -4,7 +4,9 @@
     tests/fw/test_lacp.py IMAGE [--board FILE] [--rtlsim build/rtlsim]
 
 The partner (tests/oldnew/lacp_partner.py) is on front ports 2 and 3, and
-`lag 1 lacp 2 3` puts them under LACP:
+`lag 1 lacp 2 3` puts them under LACP (an object-model image, which answers
+get port.1.pvid: lag.1.mode lacp, lag.1.members 2,3, and state.lacp.port
+and state.lag in place of lacp show):
 
 - Within 5 s both ports reach collecting/distributing: the switch's actor
   and partner states are 0x3f in `lacp show`, the aggregator is the
@@ -33,7 +35,49 @@ def check(cond, msg):
     failures += not cond
 
 
-def show(b):
+FLAGS = ("activity", "timeout", "aggregation", "sync", "collecting", "distributing", "defaulted", "expired")
+RXST = ("initialize", "port_disabled", "expired", "defaulted", "current")
+
+
+def ports_of(t):
+    """a ports list (2-3,5) as a mask of front ports"""
+    m = 0
+    for r in t.split(",") if t != "none" else ():
+        a, _, z = r.partition("-")
+        for n in range(int(a), int(z or a) + 1):
+            m |= 1 << n
+    return m
+
+
+class Lag:
+    """lacp show's lag line, as its match: group(1) the ports, 2 the aggregator, 3 the members"""
+    def __init__(self, *g):
+        self.g = g
+
+    def group(self, i):
+        return self.g[i - 1]
+
+    def groups(self):
+        return self.g
+
+
+def show_om(b, fronts):
+    """lacp show's (out, lag, ports), from state.lag.1 and state.lacp.port: the masks of front ports"""
+    out = b.console("get lag.1.members state.lag.1 " + " ".join("state.lacp.port.%s" % f for f in fronts),
+                    b.now + 3_000_000)[1] or ""
+    v = dict(l.split(" ", 1) for l in out.replace("\r", "").split("\n") if l.startswith(("lag.", "state.")) and " " in l)
+    flags = lambda t: sum(1 << FLAGS.index(w) for w in t.split(",") if w in FLAGS)
+    lag = Lag("%02x" % ports_of(v.get("lag.1.members", "none")), v["state.lag.1.aggregator"].replace(":", ""),
+              "%02x" % ports_of(v["state.lag.1.active"])) if "state.lag.1.active" in v else None
+    ports = {int(f): (flags(v.get("state.lacp.port.%s.actor" % f, "")), flags(v.get("state.lacp.port.%s.partner" % f, "")),
+                      RXST.index(v["state.lacp.port.%s.rx_state" % f]) if "state.lacp.port.%s.rx_state" % f in v else 0)
+             for f in fronts if "state.lacp.port.%s.actor" % f in v}
+    return out, lag, ports
+
+
+def show(b, fronts=None):
+    if fronts:
+        return show_om(b, fronts)
     out = b.console("lacp show", b.now + 3_000_000)[1] or ""
     lag = re.search(r"lag 01 ports (\w+) aggregator (\S+) members (\w+)", out)
     ports = {int(m.group(1), 16): (int(m.group(2), 16), int(m.group(3), 16), int(m.group(4), 16))
@@ -53,17 +97,23 @@ def session(a):
         for p in (pa, pb):
             b.link(p, True)
         partner = LacpPartner(b, [pa, pb])
-        b.console(f"lag 1 lacp {fa} {fb}", b.now + 3_000_000)
+        om = (fa, fb) if "port.1.pvid " in (b.console("get port.1.pvid", b.now + 3_000_000)[1] or "") else None
+        show_ = lambda b: show(b, om)
+        if om:
+            for l in ("set lag.1.mode lacp", f"set lag.1.members {fa},{fb}", "apply"):
+                b.console(l, b.now + 3_000_000)
+        else:
+            b.console(f"lag 1 lacp {fa} {fb}", b.now + 3_000_000)
         t0 = b.now
         # converged: both ports collecting and distributing on the switch's side
         f["converged_at"] = None
         while b.now < t0 + 10_000_000:
             b.advance(b.now + 250_000)
-            out, lag, ports = show(b)
+            out, lag, ports = show_(b)
             if lag and int(lag.group(3), 16) and all(ports.get(int(x), (0,))[0] == FULL for x in (fa, fb)):
                 f["converged_at"] = b.now - t0
                 break
-        out, lag, ports = show(b)
+        out, lag, ports = show_(b)
         log.append(out)
         f["lag"] = lag.groups() if lag else None
         f["ports"] = {k: v for k, v in ports.items() if k in (int(fa), int(fb))}
@@ -75,28 +125,28 @@ def session(a):
         f["out_at"] = None
         while b.now < t1 + 8_000_000:
             b.advance(b.now + 250_000)
-            out, lag, ports = show(b)
+            out, lag, ports = show_(b)
             if lag and int(lag.group(3), 16) == 0:
                 f["out_at"] = b.now - t1
                 break
-        out, lag, ports = show(b)
+        out, lag, ports = show_(b)
         log.append(out)
         f["after_stop"] = (lag.groups() if lag else None, {k: v for k, v in ports.items() if k in (int(fa), int(fb))})
         # and comes back
         partner.start()
         b.advance(b.now + 5_000_000)
-        out, lag, ports = show(b)
+        out, lag, ports = show_(b)
         log.append(out)
         f["back"] = lag.groups() if lag else None
         # one member's link goes down, and up again
         b.link(pb, False)
         b.advance(b.now + 2_000_000)
-        out, lag, ports = show(b)
+        out, lag, ports = show_(b)
         log.append(out)
         f["flap_down"] = lag.groups() if lag else None
         b.link(pb, True)
         b.advance(b.now + 3_000_000)
-        out, lag, ports = show(b)
+        out, lag, ports = show_(b)
         log.append(out)
         f["flap_up"] = lag.groups() if lag else None
         f["member_bits"] = (1 << pa, 1 << pb)

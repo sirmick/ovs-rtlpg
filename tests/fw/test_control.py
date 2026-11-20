@@ -40,6 +40,13 @@ is in uart read, not in what run until uart matches.
 
 The prompt comes before cmd_editor_init(), which drops whatever arrived
 before it: input waits 10 ms after the boot's prompt.
+
+An object-model image (it answers get port.1.pvid) has neither version nor
+stat: the command is get state.sys.version and the burst get port (the
+config, from xdata: the UART paces it, not the firmware's steps). Its boot doesn't write a
+default config: its coverage has om_apply_next, the boot's apply. Its
+console RX ring (con_rx_buf, 256 bytes) drops what doesn't fit rather than
+wrap, and is drained between the stream's steps: the whole paste is echoed.
 """
 import argparse, os, sys, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -52,6 +59,28 @@ from console import Console, PROMPT
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROMPT_RE = r"\n(\[confirm [0-9]+\] )?\*?> $"	# with P3A's markers; a POSIX ERE too
 failures = 0
+
+
+CMD, ANSWER, BURST, ROW = "version", "Software version", "stat", r"Port"
+BOOTFN = "flash_default_config"		# the OM's boot leaves a blank config blank: its apply instead
+
+
+def om_image(a):
+    """the object model's CLI: version and stat are get lines (module docstring)"""
+    global CMD, ANSWER, BURST, ROW, BOOTFN
+    c = Console(a.rtlsim, a.image, ["--board", a.board] if a.board else [])
+    try:
+        c.expect(PROMPT, 120)
+        start = len(c.log)
+        c.send("get port.1.pvid")
+        c.expect(PROMPT, 10)
+        om = b"port.1.pvid " in c.log[start:]
+    finally:
+        c.close()
+    if om:
+        CMD, ANSWER, BURST, ROW = "get state.sys.version", "state.sys.version ", "get port", r"port\."
+        BOOTFN = "om_apply_next"
+    return om
 
 
 def check(cond, msg):
@@ -100,7 +129,7 @@ def session(a):
         log(f"until ticks > {t1 + 20}: {fmt_us(hit) if hit is not None else 'timeout'}, ticks {t2}")
         facts["until"] = (hit, t1 + 20, t2)
 
-        sim.uart_write("version\r")
+        sim.uart_write(CMD + "\r")
         hit = sim.run_until_pc("cmd_parser", max_ms=1000)
         log(f"pc cmd_parser: {fmt_us(hit) if hit is not None else 'timeout'} {sim.sym('cmd_parser')}")
         facts["pc"] = hit
@@ -143,7 +172,7 @@ def styles(a):
             sim.uart_read()
             t0 = sim.time()[1]
             c0, tl1_0 = sim.time()[0], sim.peek("s:0x8b", 1)[0]
-            sim.uart_write("version\r")
+            sim.uart_write(CMD + "\r")
             for kind, arg in steps:
                 if kind == "run":
                     sim.run(arg)
@@ -175,14 +204,14 @@ def uart_timing(a):
         sim.run_until_uart(PROMPT_RE, max_ms=30000)
         sim.run(20)
         sim.uart_read()
-        sim.uart_write("stat\r")
-        sim.run_until_uart(r"Port", max_ms=100)
+        sim.uart_write(BURST + "\r")
+        sim.run_until_uart(ROW, max_ms=100)
         paste = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"
         sim.uart_write(paste)
-        sim.run_until_uart(r"\n(\[confirm [0-9]+\] )?\*?> [A-Za-z]*$", max_ms=400)
+        sim.run_until_uart(r"\n(\[confirm [0-9]+\] )?\*?> [A-Za-z]*$", max_ms=20000 if OM else 400)
         sim.run(20)
         lines = sim.uart_read()
-        ring = sim.sym("sbuf")[2]
+        ring = sim.sym("con_rx_buf" if OM else "sbuf")[2]
         lost = [c for c in sim.checks() if c[1] == "uart-lost"]
         # interrupts off: nobody reads SBUF, so the UART itself overruns
         ie = sim.peek("s:0xa8", 1)
@@ -198,10 +227,11 @@ def uart_timing(a):
         for b in (b"A", b"\x00", b"B"):
             sim.poke("s:0x99", b)
         nul = (sim.run_until_uart("AB$", max_ms=1), [x for _, x, _ in sim.uart_read()])
-    rows = [(t, x) for t, x, done in lines if done and x[:1].isdigit() and "\t" in x]
+    rows = [(t, x) for t, x, done in lines if done and (x.startswith("port.") if OM else x[:1].isdigit() and "\t" in x)]
     per = [(rows[i + 1][0] - rows[i][0]) / (len(rows[i][1]) + 2) for i in range(len(rows) - 1)]	# + CR LF
     keep = len(paste) % ring
-    return per, lines[-1][1], "> " + (paste[-keep:] if keep else ""), ring, lost, overrun, nul
+    want = paste[:ring - 1] if OM else paste[-keep:] if keep else ""	# the OM's ring drops, the old one wraps
+    return per, lines[-1][1], "> " + want, ring, lost, overrun, nul
 
 
 def plain_boot(a):
@@ -222,6 +252,8 @@ def main():
     ap.add_argument("--transcript")
     a = ap.parse_args()
     a.map = a.map or os.path.join(os.path.dirname(os.path.abspath(a.image)), "rtlplayground.map")
+    global OM
+    OM = om_image(a)
 
     first, f = session(a)
     if a.transcript:
@@ -234,7 +266,7 @@ def main():
     check(t1 > t0, f"peek of a map symbol: ticks {t0} -> {t1} over 100 ms of firmware time")
     hit, want, t2 = f["until"]
     check(hit is not None and t2 == want + 1, f"run until ticks > {want} stops at ticks {t2}")
-    check(f["pc"] is not None and "Software version" in f["version"],
+    check(f["pc"] is not None and ANSWER in f["version"],
           "a typed command reaches cmd_parser (run until pc, banked) and answers")
     check(f["powercut"] is not None and f["reset"] is not None and f["powercut"] > f["boot"],
           "a power cut and a chip reset boot it again, firmware time running on")
@@ -250,10 +282,10 @@ def main():
                 if r:
                     o.write(f"{r:5d}/{t:<5d} {n}  {mod}\n")
     ran = [n for n, v in boot1.functions.items() if v[0]]
-    check(all(boot1.ran_function(n) for n in ("main", "print_string", "flash_default_config"))
+    check(all(boot1.ran_function(n) for n in ("main", "print_string", BOOTFN))
           and not boot1.ran_function("cmd_parser"),
           f"the boot's coverage: {len(ran)} of {len(boot1.functions)} functions ran (main, print_string, "
-          f"flash_default_config; cmd_parser not yet), region {boot1.region}")
+          f"{BOOTFN}; cmd_parser not yet), region {boot1.region}")
     check(boot1.functions == boot2.functions, "and two boots' coverage is the same, function by function")
     for c in (f["cov"], f2["cov"]):
         os.unlink(c)
@@ -266,7 +298,7 @@ def main():
     check(set(phases) == {0}, f"Timer 1 (baud generator, mode 2) keeps time with the cycles through idle: phase errors {phases}")
     ref = next(iter(st.values()))
     bad = [n for n, v in st.items() if v != ref]
-    check(not bad and any("Software version" in l for l in ref[1]),
+    check(not bad and any(ANSWER in l for l in ref[1]),
           f"a queued command, advanced {len(st)} ways, gives the same stamped output and state ({len(ref[1]) - 1} lines over "
           f"{fmt_us(ref[0])} ms)" + (f": differs: {bad}" if bad else ""))
     if bad:
@@ -276,7 +308,8 @@ def main():
     check(per and all(86 < p < 92 for p in per),
           f"console output costs a character time a character: {', '.join(f'{p:.2f}' for p in per)} µs (87.04 + handshake)")
     check(tail == want and not lost,
-          f"a 40-byte paste while stat prints overruns the {ring}-byte serial ring: {tail!r} echoed, {want!r} expected; "
+          f"a 40-byte paste while {BURST} prints {'fits' if OM else 'overruns'} the {ring}-byte serial ring: "
+          f"{tail!r} echoed, {want!r} expected; "
           f"{len(lost)} lost at the UART itself")
     check(len(overrun) == 2 and "0x79" in overrun[0] and "0x7a" in overrun[1] and "RI still set" in overrun[0],
           f"with interrupts off, bytes after the first are lost at the UART (RI still set): {overrun}")
