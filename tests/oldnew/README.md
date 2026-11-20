@@ -7,7 +7,7 @@ and compares the **results**, not traces: the scheduler deliberately changes
 the order and timing of register writes.
 
     make oldnew OLD=<boot image> NEW=<boot image> [BOARD=boards/<board>.json] [EXPECT=file] [ONLY="boot cli"]
-    tests/oldnew/oldnew.py --old ... --new ... [--board ...] [--expect ...] [--only ...] [--save DIR] [-j N]
+    tests/oldnew/oldnew.py --old ... --new ... [--board ...] [--expect ...] [--only ...] [--save DIR] [--cov DIR] [-j N]
 
 Both images are boot images, the loader and the application
 (`rtlplayground-boot-*.bin`). Each scenario runs once on each image in its own
@@ -99,9 +99,11 @@ lines say. `health tasks` saturates at >400ms: such a step is bounded only by `b
 <commands>|*`: the longest console reply, in firmware time from typed to
 prompt (a reply holds every step its command ran), of every command the
 console was given, the harness's own `ip` and `health tasks` too, whichever
-saturated it; the named commands must have been typed. Or the line says `unbounded`, as a line with no ceiling must. `known-failures` is today's (dated in its header): the l2 gap, the
-hello during the upload, and the CLI_RUN, HOUSE_SEC and RX_STEP long steps,
-each in the scenarios it is seen in. A line that names a scenario that ran
+saturated it; the named commands must have been typed. Or the line says
+`unbounded`, as a line with no ceiling must. `known-failures` is today's
+(dated in its header): at F1 (feat/sched 72cee59) the new build fails no
+check, and the two lines left are fork main's, the l2 gap and the hello
+during the upload, fixed by E1 and E3. A line that names a scenario that ran
 but matched no failed check is flagged: a fix shows as a stale line.
 `checks.py` exits with 1 if any check FAILs.
 
@@ -153,7 +155,10 @@ order are a difference, to list with `--expect`. The blocks are cut at the
 steps' starts, which are fixed firmware times: only a line printed within a
 pass of a step's start could fall on the other side.
 
-`--save DIR` writes every result as JSON. `--expect FILE` lists the differences
+`--save DIR` writes every result as JSON. `--cov DIR` dumps each run's
+coverage at its end (`<scenario>.<side>.cov`); `cov_diff.py DIR --old-map
+OLD.map --new-map NEW.map` lists, by name, the functions one side ran in any
+scenario and the other didn't. `--expect FILE` lists the differences
 a change means to make, one per line, as `<scenario glob> <result glob>  #
 why`. Those are reported as expected and don't fail the run.
 

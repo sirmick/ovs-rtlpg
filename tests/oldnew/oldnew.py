@@ -422,7 +422,7 @@ class Run:
         return ", ".join(out)
 
     # --- the end
-    def finish(self, checks=True):
+    def finish(self, checks=True, cov=None):
         self._now()
         self._console()
         res = dict(self.results)
@@ -447,6 +447,8 @@ class Run:
             res[f"frames {p} {k}"] = str(n)
         if checks:
             self.long_steps()		# after the results: its reply is not one
+        if cov:
+            self.b.sim.cmd(f"cov dump {cov}")	# what ran, since power-on (cov_diff.py)
         self.b.close()
         return {k: scrub(v) for k, v in res.items()}
 
@@ -532,7 +534,7 @@ def run_one(job):
     r = Run(image, a["board"], a["rtlsim"], a["payload_" + side] if "payload_" + side in a else a["payload"])
     try:
         SCENARIOS[name](r)
-        res = r.finish()
+        res = r.finish(cov=os.path.join(a["cov"], f"{name}.{side}.cov") if a.get("cov") else None)
         checks = r.checks
     except Exception as e:
         try:
@@ -685,6 +687,7 @@ def main():
     ap.add_argument("--checks", action="store_true", help="NEW's new-only checks (checks.py) count too")
     ap.add_argument("--known", help="the checks' known failures, as --expect's format (default: none)")
     ap.add_argument("--save")
+    ap.add_argument("--cov", metavar="DIR", help="each run's coverage, <scenario>.<side>.cov (tests/oldnew/cov_diff.py)")
     ap.add_argument("-j", type=int, default=os.cpu_count())
     ap.add_argument("--rtlsim", default=os.path.join(HERE, "../../build/rtlsim"))
     a = ap.parse_args()
@@ -695,6 +698,9 @@ def main():
     opts = {"board": a.board, "rtlsim": a.rtlsim, "payload": a.payload or default_payload(a.old)}
     if a.new_payload:
         opts["payload_new"] = a.new_payload
+    if a.cov:
+        os.makedirs(a.cov, exist_ok=True)
+        opts["cov"] = os.path.abspath(a.cov)
     expect = load_expect(a.expect)
     known = load_known(a.known)
     t0 = time.time()
