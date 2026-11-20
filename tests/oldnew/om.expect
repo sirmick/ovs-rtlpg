@@ -158,3 +158,13 @@ stp* reg 5310 -/000f[0-9a-f]{4}/ +/000fffff/
 cli reg 4ee8 -/[0-9a-f]{8}/ +/<absent>/
 loop frames * tcp/80
 igmp,loop *console -/\n<new link: [0-9a-f]+, was [0-9a-f]+>/ +/\n<new link: [0-9a-f]+, was [0-9a-f]+>/
+# the boot writes igmp, lldp, loop and mirror's defaults (a soft reset kept
+# them): registers the old boot never wrote, at their power-on 0
+* reg 108c -/<absent>/ +/00000000/
+* reg 1094 -/<absent>/ +/00000000/
+* reg 4ee8 -/<absent>/ +/00000000/
+* reg 50bc -/<absent>/ +/00000000/
+* reg 6048 -/<absent>/ +/00000000/
+* reg 604c -/<absent>/ +/00000000/
+# igmp off (igmp_setup) puts IGMP_TRAP_CFG back to 0 too; the old off left it
+igmp reg 50bc -/00010007/ +/00000000/
