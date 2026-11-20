@@ -149,14 +149,21 @@ def main():
     fails += not ok
     B = SimpleNamespace(P=[0, 1], F=["1", "2"], cages={1: (8, "3")})
     dump = ["r 1250 0fffffff", "r 1350 00000000", "r 4e1c 00001001", "r 4e18 00000103", "r 50c0 00000303",
-            "r 50c4 00000303", "r 50e0 00000303", "r 125c 00000003", "r 135c 00000003", "p 1.1f.a610 2858"]
+            "r 50c4 00000303", "r 50e0 00000303", "r 125c 00000003", "r 135c 00000003", "p 1.1f.a610 2858",
+            "r 4c18 00100010", "r 4c8c 00000001", "r 54e4 00000002", "r 5d60 000003e8", "r 5ef0 00000000", "r 5ef4 00000000"]
     run_ = {f"port.{n}.{f}": x for n in (1, 2, 3) for f, x in (("mtu", "16383"), ("pvid", "1"), ("ingress", "all"),
                                                               ("ingress_filter", "on"), ("isolate", "1-3,cpu"),
-                                                              ("eee", "on"), ("enabled", "on"))}
+                                                              ("eee", "on"), ("enabled", "on"), ("bw_in_kbps", "0"),
+                                                              ("bw_in_mode", "drop"), ("bw_out_kbps", "0"))}
+    run_.update({f"port.{n}.storm.{t}.rate": "0" for n in (1, 2, 3) for t in translate.STORMS})
+    # P4-6: port 1 at 256 kbit/s in, fc; port 2's bcast meter at 1000 kbit/s
+    run_.update({"port.1.bw_in_kbps": "256", "port.1.bw_in_mode": "fc", "port.2.storm.bcast.rate": "1000",
+                 "port.2.storm.bcast.unit": "kbps"})
     bad, n = translate.boot_defaults(dump, run_, B, {"port"})
     got = sorted(p for p, _, _ in bad)
-    ok = got == ["port.2.enabled", "port.2.mtu", "port.3.mtu", "port.3.pvid"] and n == 19
-    case("S", ok, f"boot defaults: a register the boot left at 0 against its default, a PHY powered down: {got} of {n}")
+    ok = got == ["port.2.enabled", "port.2.mtu", "port.3.mtu", "port.3.pvid"] and n == 41
+    case("S", ok, f"boot defaults: a register the boot left at 0 against its default, a PHY powered down, the bandwidth "
+         f"and storm meters: {got} of {n}")
     fails += not ok
     m, w = surface("cli stat")
     nc = w.not_compared([set(), {"port"}])
@@ -305,16 +312,16 @@ CONFIG = [
     ("loop on", "loop", "", {"loop.enabled": "on"}, None, None),
     ("mirror 1 2 3r 4t", "mirror", "", {"mirror.enabled": "on", "mirror.port": "1", "mirror.rx": "2,3", "mirror.tx": "2,4"}, None, None),
     ("mirror off", "mirror", "", {"mirror.enabled": "off"}, None, None),
-    ("bw in 2 100", "port.design", "", {"port.2.bw_in_kbps": "256", "port.2.bw_in_mode": "fc"}, None, None),
-    ("bw in 2 1f", "port.design", "", {"port.2.bw_in_kbps": "16", "port.2.bw_in_mode": "fc"}, None, None),
-    ("bw out 3 off", "port.design", "", {"port.3.bw_out_kbps": "0"}, None, None),
-    ("bw in 2 drop", "port.design", "", {"port.2.bw_in_mode": "drop"}, None, None),
-    ("bw out 2 drop", "port.design", E_, "refused", [], None),
-    ("storm 3 bcast 1000 pps", "port.design", "", {"port.3.storm.bcast.rate": "1000", "port.3.storm.bcast.unit": "pps"}, None, None),
-    ("storm 3 bcast 0 pps", "port.design", "usage: storm [...]", "refused", [], None),
-    ("storm 3 umcast off", "port.design", "", {"port.3.storm.umcast.rate": "0"}, None, None),
-    ("sfp 1 10g", "port.design", "", {"port.9.speed": "10g"}, ["set port.9.speed 10g", "apply", "get port.9.speed"], None),
-    ("sfp 2 10g", "port.design", E_, "refused", [], None),
+    ("bw in 2 100", "port", "", {"port.2.bw_in_kbps": "256", "port.2.bw_in_mode": "fc"}, None, None),
+    ("bw in 2 1f", "port", "", {"port.2.bw_in_kbps": "16", "port.2.bw_in_mode": "fc"}, None, None),
+    ("bw out 3 off", "port", "", {"port.3.bw_out_kbps": "0"}, None, None),
+    ("bw in 2 drop", "port", "", {"port.2.bw_in_mode": "drop"}, None, None),
+    ("bw out 2 drop", "port", E_, "refused", [], None),
+    ("storm 3 bcast 1000 pps", "port", "", {"port.3.storm.bcast.rate": "1000", "port.3.storm.bcast.unit": "pps"}, None, None),
+    ("storm 3 bcast 0 pps", "port", "usage: storm [...]", "refused", [], None),
+    ("storm 3 umcast off", "port", "", {"port.3.storm.umcast.rate": "0"}, None, None),
+    ("sfp 1 10g", "port", "", {"port.9.speed": "10g"}, ["set port.9.speed 10g", "apply", "get port.9.speed"], None),
+    ("sfp 2 10g", "port", E_, "refused", [], None),
 ]
 
 
@@ -359,8 +366,7 @@ def config_rows(case):
     # the readbacks: a dump as 53ee574 leaves it, and the running values that match it
     B2 = SimpleNamespace(P=[0, 1], F=["1", "2"], cages={})
     dump = ["r 4f38 00000003", "r 4f48 0000007e", "r 6048 00000003", "r 604c 00010002", "r 5310 000fffff", "r 4ee8 00000010",
-            "r 52a0 00ff7c2a", "r 106c 0000000d", "r 4c18 00100010", "r 4c8c 00000001", "r 54e4 00000002",
-            "r 5d60 000003e8", "r 5ef0 00000000", "r 5ef4 00000000"]
+            "r 52a0 00ff7c2a", "r 106c 0000000d"]
     vlans = ["001 0207ffff", "00a 0207ce0e"]
     l2 = ["118 00b5325d 600106eb 0001001e"]		# rtlsim's, 53ee574's management entry
     running = {"lag.1.members": "1-2", "lag.1.hash": "smac,dmac,sip,dip,sport,dport", "lag.1.mode": "static",
@@ -368,19 +374,15 @@ def config_rows(case):
                "lag.4.members": "none", "lag.4.hash": "none", "mirror.enabled": "on", "mirror.port": "2",
                "mirror.rx": "1", "mirror.tx": "2", "stp.enabled": "off", "lldp.enabled": "on", "igmp.enabled": "on",
                "loop.enabled": "on", "vlan.1.members": "1-2", "vlan.1.tagged": "none", "vlan.10.members": "2",
-               "vlan.10.tagged": "2", "sys.led": "on", "sys.mac": "06:eb:00:b5:32:5d", "mgmt.vlan": "1",
-               "port.1.bw_in_kbps": "256", "port.1.bw_in_mode": "fc", "port.2.bw_in_kbps": "0", "port.2.bw_in_mode": "drop",
-               "port.1.bw_out_kbps": "0", "port.2.bw_out_kbps": "0", "port.2.storm.bcast.rate": "1000",
-               "port.2.storm.bcast.unit": "kbps", **{f"port.{n}.storm.{t}.rate": "0" for n in (1, 2) for t in translate.STORMS
-                                                     if (n, t) != (2, "bcast")}}
-    objs = {"lag", "mirror", "stp", "lldp", "igmp", "loop", "vlan", "sys", "mgmt", "port.design"}
+               "vlan.10.tagged": "2", "sys.led": "on", "sys.mac": "06:eb:00:b5:32:5d", "mgmt.vlan": "1"}
+    objs = {"lag", "mirror", "stp", "lldp", "igmp", "loop", "vlan", "sys", "mgmt"}	# port's (P4-6 too): S
     bad, n = translate.boot_defaults(dump, running, B2, objs, vlans, l2)
     got = sorted(p for p, _, _ in bad)
     want = ["vlan.10.tagged"]		# the running says 2 tagged; the word (the 8x's vlan 10) has it untagged
-    ok = got == want and n > 30
+    ok = got == want and n > 15
     fails += not ok
     case("C3", ok, f"the readbacks of the P4 objects: trunk, hash, mirror, STP, LLDP, IGMP, RLDP, VLAN table, LEDs, the "
-         f"management entry, bandwidth, storm meters: {n} compared, the differences {got}")
+         f"management entry: {n} compared, the differences {got}")
     return fails
 
 

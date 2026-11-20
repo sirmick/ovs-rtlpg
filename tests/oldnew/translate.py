@@ -128,21 +128,20 @@ def ident(s):
 # --- the paths: (template, object, norm)
 
 PORT_CFG = "name enabled speed duplex mtu pvid ingress ingress_filter lldp eee isolate".split()
-PORT_ST = "link speed duplex media ms_role pause_tx pause_rx macs tx_good rx_good tx_bad rx_bad eee_active".split()
+PORT_ST = "link speed duplex media ms_role pause_tx pause_rx macs tx_good rx_good tx_bad rx_bad eee.active".split()
 PATHS = [
-    # port.N, live on feat/om dab5d13 (its schema/port.py names)
+    # port.N (DESIGN 6.5, 7.5; P4-6 the bandwidth, storm and SFP speed, and 7.5's names)
     (r"port.#.(mtu|pvid)", "port", num), (r"port.#.isolate", "port", n_pmask),
     (r"port.#.(%s)" % "|".join(PORT_CFG), "port", ident),
     (r"state.port.#.(macs|tx_good|rx_good|tx_bad|rx_bad)", "port", num),
     (r"state.port.#.(%s)" % "|".join(PORT_ST), "port", ident),
-    (r"state.port.#.cabletest.state", "port", ident), (r"state.port.#.cabletest.[abcd].result", "port", ident),
-    (r"state.port.#.cabletest.[abcd].length_m", "port", n_dec(1)),
-    # DESIGN 7.5 paths dab5d13 hasn't (or names otherwise: eee_active, cabletest.a)
-    (r"state.port.#.eee.active", "port.design", ident), (r"state.port.#.(eee.lp|lp_adv)", "port.design", n_flags),
-    (r"state.port.#.lag", "port.design", num), (r"port.#.eee_speeds", "port.design", n_flags),
-    (r"port.#.(bw_in_kbps|bw_out_kbps)", "port.design", num), (r"port.#.bw_in_mode", "port.design", ident),
-    (r"port.#.storm.(bcast|mcast|ucast|umcast).rate", "port.design", num),
-    (r"port.#.storm.(bcast|mcast|ucast|umcast).unit", "port.design", ident),
+    (r"state.port.#.cabletest.state", "port", ident), (r"state.port.#.cabletest.pair.[abcd].result", "port", ident),
+    (r"state.port.#.cabletest.pair.[abcd].length_m", "port", n_dec(1)),
+    (r"state.port.#.(eee.lp|lp_adv)", "port", n_flags),
+    (r"state.port.#.lag", "port", num), (r"port.#.eee_speeds", "port", n_flags),
+    (r"port.#.(bw_in_kbps|bw_out_kbps)", "port", num), (r"port.#.bw_in_mode", "port", ident),
+    (r"port.#.storm.(bcast|mcast|ucast|umcast).rate", "port", num),
+    (r"port.#.storm.(bcast|mcast|ucast|umcast).unit", "port", ident),
     (r"state.port.#.mib.*", "state.mib", num),
     # config (DESIGN 6)
     (r"sys.mac", "sys", mac), (r"sys.(hostname|led)", "sys", ident),
@@ -191,7 +190,6 @@ PATHS = [
 # Objects whose rows wait for their node; each takes itself out (P4-*, P5-*)
 # sys.mac: P4-1 left it (the MAC type's cost); the mac command stays until it moves
 PENDING = {"sys.mac",
-           "port.design",
            "state.loader"}
 # Fields a moved state object defers (its schema lists them): the new image
 # has no path for them, so while the surface lasts both images read them there
@@ -206,7 +204,7 @@ def deferred(p):
 
 
 # What `get` takes for an object, where that isn't its own name
-GETS = {"port": ["port", "state.port"], "port.design": ["port", "state.port"], "state.sched":
+GETS = {"port": ["port", "state.port"], "state.sched":
         ["state.sched", "state.health", "state.con"], "state.lag": ["state.lag", "state.lacp"],
         "state.mib": ["state.port"]}
 
@@ -700,9 +698,9 @@ def _cabletest_show(text, m, r):
         elif re.fullmatch(r"Cable test port \d+", l):
             v[s + "state"] = "done"
         elif a and a[2] in CT:
-            v[s + a[1].lower() + ".result"] = CT[a[2]]
+            v[s + "pair." + a[1].lower() + ".result"] = CT[a[2]]
             if a[3]:
-                v[s + a[1].lower() + ".length_m"] = a[3]
+                v[s + "pair." + a[1].lower() + ".length_m"] = a[3]
         else:
             rest.append(l)
     return v, rest
@@ -714,14 +712,14 @@ def _cabletest_post(v, m, r):
     s = f"state.port.{m[1]}.cabletest."
     out = {}
     for p, x in v.items():
-        pr = re.fullmatch(re.escape(s) + r"([a-d])\.(result|length_m)", p)
-        if pr and (v.get(s + "state") != "done" or (pr[2] == "length_m" and v.get(s + pr[1] + ".result") in ("ok", "unknown"))):
+        pr = re.fullmatch(re.escape(s) + r"pair\.([a-d])\.(result|length_m)", p)
+        if pr and (v.get(s + "state") != "done" or (pr[2] == "length_m" and v.get(s + "pair." + pr[1] + ".result") in ("ok", "unknown"))):
             continue
         out[p] = x
     return out
 
 
-row(r"port (\d+) cabletest show", Read("port", ["state.port.#.cabletest.state", "state.port.#.cabletest.[abcd].(result|length_m)"], _cabletest_show, post=_cabletest_post))
+row(r"port (\d+) cabletest show", Read("port", ["state.port.#.cabletest.state", "state.port.#.cabletest.pair.[abcd].(result|length_m)"], _cabletest_show, post=_cabletest_post))
 row(r"port|port \S+|pvid|pvid \S+|mtu|isolate|isolate \S+|ingress|eee", Refused("port"))
 
 
@@ -1694,6 +1692,44 @@ def _isolation(d, v, rest, m, r):
 page(r"/isolation\.json", Read("port", ["port.#.isolate"], _json(_isolation), gets=lambda m, r, o: ["get port.*.isolate"]))
 
 
+# --- the pages P4-6 deleted: /bandwidth.json, /storm.json
+
+def _bw_json(d, v, rest, m, r):
+    """/bandwidth.json: per port in and out, limited or not, the register's
+    20-bit rate field (16 kbit/s steps, hex), and the ingress action."""
+    for e in d:
+        n, k = e.get("port"), {"port": 1}
+        for lim, bw, p in (("iLimited", "iBW", f"port.{n}.bw_in_kbps"), ("eLimited", "eBW", f"port.{n}.bw_out_kbps")):
+            if lim in e and bw in e:
+                v[p], k[lim], k[bw] = str(int(e[bw], 16) << 4) if e[lim] else "0", 1, 1
+        if e.get("iAction") in ("fc", "drop"):
+            v[f"port.{n}.bw_in_mode"], k["iAction"] = e["iAction"], 1
+        _left(e, k, rest, f"port {n} ")
+
+
+page(r"/bandwidth\.json", Read("port", ["port.#.(bw_in_kbps|bw_in_mode|bw_out_kbps)"], _json(_bw_json),
+     gets=lambda m, r, o: ["get port.*.bw_in_kbps port.*.bw_in_mode port.*.bw_out_kbps"]))
+
+
+def _storm_json(d, v, rest, m, r):
+    """/storm.json: per port and type enabled, the unit (pps, kbit/s) and
+    the meter's rate (hex)."""
+    for e in d:
+        n, k = e.get("port"), {"port": 1}
+        for t in STORMS:
+            x = e.get(t)
+            if not isinstance(x, dict) or not {"enabled", "unit", "rate"} <= set(x):
+                continue
+            k[t] = 1
+            s = f"port.{n}.storm.{t}."
+            v[s + "rate"] = str(int(x["rate"], 16)) if x["enabled"] else "0"
+            v[s + "unit"] = "kbps" if x["unit"] == "kbit/s" else x["unit"]
+        _left(e, k, rest, f"port {n} ")
+
+
+page(r"/storm\.json", Read("port", ["port.#.storm.(bcast|mcast|ucast|umcast).(rate|unit)"], _json(_storm_json),
+     post=lambda v, m, r: _storm_post(v, m, r), gets=lambda m, r, o: ["get port.*.storm"]))
+
 # --- the pages with side effects (P3C: POST only on the new image; the
 # old takes GET)
 
@@ -1753,13 +1789,13 @@ def _bw(c, a):
     return str((v & 0xfffff) << 4) if v >> 20 & 1 else "0"
 
 
-readback("port.N.bw_in_kbps", "port.design", lambda c, l: _bw(c, 0x4c18 + 4 * l))
-readback("port.N.bw_in_mode", "port.design", lambda c, l: "fc" if _bit(c, 0x4c8c, l) else "drop")
-readback("port.N.bw_out_kbps", "port.design", lambda c, l: _bw(c, 0x1c34 + 1024 * l))
+readback("port.N.bw_in_kbps", "port", lambda c, l: _bw(c, 0x4c18 + 4 * l))
+readback("port.N.bw_in_mode", "port", lambda c, l: "fc" if _bit(c, 0x4c8c, l) else "drop")
+readback("port.N.bw_out_kbps", "port", lambda c, l: _bw(c, 0x1c34 + 1024 * l))
 for _t, _name in enumerate(STORMS):
-    readback(f"port.N.storm.{_name}.rate", "port.design", lambda c, l, t=_t: str(_reg(c, 0x5cf0 + (24 + 4 * l + t << 2)) & 0xffffff)
+    readback(f"port.N.storm.{_name}.rate", "port", lambda c, l, t=_t: str(_reg(c, 0x5cf0 + (24 + 4 * l + t << 2)) & 0xffffff)
              if _bit(c, 0x54e4 + (t << 2), l) else "0")
-    readback(f"port.N.storm.{_name}.unit", "port.design", lambda c, l, t=_t: ("pps" if _bit(c, 0x5ef0 + ((24 + 4 * l + t) >> 5 << 2),
+    readback(f"port.N.storm.{_name}.unit", "port", lambda c, l, t=_t: ("pps" if _bit(c, 0x5ef0 + ((24 + 4 * l + t) >> 5 << 2),
                                                                                     (24 + 4 * l + t) & 31) else "kbps")
              if _bit(c, 0x54e4 + (t << 2), l) else None)
 
@@ -2279,7 +2315,7 @@ row(r"igmp show", Read("igmp", ["igmp.enabled"], _igmp_show))
 row(r"igmp(?! show).*", Refused("igmp"))
 
 
-# --- port.N: bandwidth, storm, SFP speed (P4-6; port.design until then)
+# --- port.N: bandwidth, storm, SFP speed (P4-6)
 
 def _bw_rate(s):
     """bw's hex kbit/s (up to 4 bytes): the register keeps it in 16 kbit
@@ -2288,12 +2324,12 @@ def _bw_rate(s):
 
 
 # bandwidth_ingress_set() turns flow control on: a rate means mode fc
-row(r"bw in (\d) ([0-9a-fA-F]{1,8})", Set("port.design", lambda m, r: {f"port.{m[1]}.bw_in_kbps": _bw_rate(m[2]),
+row(r"bw in (\d) ([0-9a-fA-F]{1,8})", Set("port", lambda m, r: {f"port.{m[1]}.bw_in_kbps": _bw_rate(m[2]),
                                                                         f"port.{m[1]}.bw_in_mode": "fc"}))
-row(r"bw in (\d) off", Set("port.design", lambda m, r: {f"port.{m[1]}.bw_in_kbps": "0"}))
-row(r"bw in (\d) (fc|drop)", Set("port.design", lambda m, r: {f"port.{m[1]}.bw_in_mode": m[2]}))
-row(r"bw out (\d) ([0-9a-fA-F]{1,8})", Set("port.design", lambda m, r: {f"port.{m[1]}.bw_out_kbps": _bw_rate(m[2])}))
-row(r"bw out (\d) off", Set("port.design", lambda m, r: {f"port.{m[1]}.bw_out_kbps": "0"}))
+row(r"bw in (\d) off", Set("port", lambda m, r: {f"port.{m[1]}.bw_in_kbps": "0"}))
+row(r"bw in (\d) (fc|drop)", Set("port", lambda m, r: {f"port.{m[1]}.bw_in_mode": m[2]}))
+row(r"bw out (\d) ([0-9a-fA-F]{1,8})", Set("port", lambda m, r: {f"port.{m[1]}.bw_out_kbps": _bw_rate(m[2])}))
+row(r"bw out (\d) off", Set("port", lambda m, r: {f"port.{m[1]}.bw_out_kbps": "0"}))
 
 
 @_cli
@@ -2306,14 +2342,14 @@ def _bw_status(l, v, m, r):
     return bool(a)
 
 
-row(r"bw status (\d)", Read("port.design", ["port.#.(bw_in_kbps|bw_out_kbps)"], _bw_status,
+row(r"bw status (\d)", Read("port", ["port.#.(bw_in_kbps|bw_out_kbps)"], _bw_status,
                             gets=lambda m, r, o: [f"get port.{m[1]}.bw_in_kbps", f"get port.{m[1]}.bw_out_kbps"]))
-row(r"bw.*", Refused("port.design"))
+row(r"bw.*", Refused("port"))
 STORM_T = r"(bcast|mcast|ucast|umcast)"
 row(r"storm (\d) " + STORM_T + r" (\d+) (pps|kbps)",
-    Set("port.design", lambda m, r: {f"port.{m[1]}.storm.{m[2]}.rate": str(int(m[3])), f"port.{m[1]}.storm.{m[2]}.unit": m[4]}
+    Set("port", lambda m, r: {f"port.{m[1]}.storm.{m[2]}.rate": str(int(m[3])), f"port.{m[1]}.storm.{m[2]}.unit": m[4]}
         if 1 <= int(m[3]) <= (0xfffff if m[4] == "pps" else 10000000) else {}))
-row(r"storm (\d) " + STORM_T + r" off", Set("port.design", lambda m, r: {f"port.{m[1]}.storm.{m[2]}.rate": "0"}))
+row(r"storm (\d) " + STORM_T + r" off", Set("port", lambda m, r: {f"port.{m[1]}.storm.{m[2]}.rate": "0"}))
 
 
 @_cli
@@ -2336,8 +2372,8 @@ def _storm_post(v, m, r):
     return {p: x for p, x in v.items() if not (p.endswith(".unit") and v.get(p[:-4] + "rate") == "0")}
 
 
-row(r"storm", Read("port.design", ["port.#.storm.(bcast|mcast|ucast|umcast).(rate|unit)"], _storm_show, post=_storm_post))
-row(r"storm.*", Refused("port.design"))		# "usage: storm ..."
+row(r"storm", Read("port", ["port.#.storm.(bcast|mcast|ucast|umcast).(rate|unit)"], _storm_show, post=_storm_post))
+row(r"storm.*", Refused("port"))		# "usage: storm ..."
 
 
 def _sfp_speed(m, r):
@@ -2345,8 +2381,7 @@ def _sfp_speed(m, r):
     return {f"port.{r.cages[s][1]}.speed": m[2]} if s in r.cages else {}
 
 
-# sfp S <speed> (DESIGN 20.2: the SFP port's port.N.speed): the module is
-# found again and re-read (sfp.S.reread, an action of state.sfp, waits for
-# port.design; P5-4 ships no action)
-row(r"sfp ([12]) (10g|2g5|1g|100m|auto)", Set("port.design", _sfp_speed))
-row(r"sfp \S+.*", Refused("port.design"))
+# sfp S <speed> (DESIGN 20.2: the SFP port's port.N.speed): apply finds the
+# module again and re-reads it, as the old command did
+row(r"sfp ([12]) (10g|2g5|1g|100m|auto)", Set("port", _sfp_speed))
+row(r"sfp \S+.*", Refused("port"))

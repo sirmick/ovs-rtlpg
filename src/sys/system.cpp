@@ -104,6 +104,16 @@ void rtl837x_system::seed_chip()
 	// 0x3fff (16383) on every port; the 8x (RTL8373) not yet read
 	for (u16 p = 0; p < 10; p++)
 		m_core.set_reg(u16(0x1250 + (p << 8)), 0x0fffffff);
+	// Bandwidth control off (IGBW_PORT_CTRL 0x4c18 + 4p, EGBW_PORT_CTRL 0x1c34 +
+	// 0x400p: the rate field all ones, the enable bit 20 clear, as the old
+	// `bw ... off` wrote) and every meter's burst 0x2000 (0x5df0 + 4m,
+	// doc/storm_control.md): unconfirmed, P8 silicon read (RTLPlayground P4-6)
+	for (u16 p = 0; p < 9; p++) {
+		m_core.set_reg(u16(0x4c18 + (p << 2)), 0x000fffff);
+		m_core.set_reg(u16(0x1c34 + (p << 10)), 0x000fffff);
+	}
+	for (u16 m = 0; m < 64; m++)
+		m_core.set_reg(u16(0x5df0 + (m << 2)), 0x00002000);
 	// LOOP_STATE and LEAVE_LOOP_STATE latch; a 1 written clears its bit
 	for (u16 r : {u16(0x108c), u16(0x1094)})
 		m_core.on_write(r, [this, r](u32 v) { return m_core.reg(r) & ~v; });
