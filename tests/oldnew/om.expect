@@ -12,3 +12,25 @@
 # stat; after one, its last counter differs (get reads the ports in front
 # order, stat in logical order)
 * reg 0f6[048]
+
+# port.N against /ports.json by value: 53ee574 reads the MTU register, 0 in
+# rtlsim (the boot never writes it); feat/om's port.N.mtu is the default,
+# 16383, which its boot doesn't write either (asked: rtlsim's reset value or
+# a feat/om bug)
+* *web GET /ports.json -/port\.\d+\.mtu 0/ +/port\.\d+\.mtu 16383/
+
+# The history holds what was typed: the new image the translated lines
+# (translate.py), and not the old ones they stand for
+* *cli history +/(get|set) \S+( .*)?|apply|discard/ -/(stat|mtu .*|pvid .*|port .*|isolate .*|ingress .*|eee .*)/
+* *web GET /cmd_log +/(get|set) \S+( .*)?|apply|discard/ -/(stat|mtu .*|pvid .*|port .*|isolate .*|ingress .*|eee .*)/
+
+# A page gone on the new image is read there with get, on the console: the
+# HTTP frames to the host are fewer
+* frames * tcp/80
+
+# The config scenario saves the settings as each image takes them: the old
+# command text, or set lines and an apply (Run.convert(), the stand-in for
+# rtlpg_client.py convert) - DESIGN 18: the config region differs by design
+config *web GET /config -/(stat|mtu .*|pvid .*|port .*|isolate .*|ingress .*|eee .*)/ +/set \S+ .*|apply/
+config flash config -/(stat|mtu .*|pvid .*|port .*|isolate .*|ingress .*|eee .*)|<then not blank: sha256 \w+>/ +/set \S+ .*|apply|<then not blank: sha256 \w+>/
+config *boot +/ok/		# the boot runs them: an ok per set line and the apply

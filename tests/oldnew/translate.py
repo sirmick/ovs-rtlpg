@@ -1,76 +1,219 @@
-"""translate.py - the scenarios' old console commands, for an image whose
-objects have moved to the object model (RTLPlayground feat/om, DESIGN.md
-18): what to type instead, and both sides' replies as values by path, so
-an old image and a new one are compared by value.
+"""translate.py - the scenarios' old console commands and web pages, for an
+image whose objects have moved to the object model (RTLPlayground feat/om,
+DESIGN.md 18): what to type instead, and both sides' results as values by
+path, so an old image and a new one are compared by value.
 
-A row is an object (the om object the old command's state lives in, as
-`--new-om` names them), a regex the old line must match in full, and what
-it means:
+Paths and objects. PATHS lists every path a row can produce (DESIGN.md 6
+and 7; research/state.md for the surfaces), each with its object, the name
+`--new-om` takes, and how a `get` of it prints (norm(): the new side's text
+made canonical: decimal numbers, on/off, port lists as "3,4" or "none",
+flags as sorted words or "none", MACs as aa:bb:.., bridge IDs as
+pppp/mmmmmmmmmmmm). An object in PENDING has its rows written but its
+paths not yet on the switch: naming it is refused until the node that moves
+it takes it out (and corrects what its schema named otherwise).
 
-- Set(values): a setting. values(m, r) is {path: value}, in the new
-  syntax. The old image is given the old line; its result is the values,
-  or "refused" if it said "Error:". The new one is given `set` for each,
-  `apply`, then `get` for each: its result is what get printed, or
-  "refused" if any line said err.
-- Get(news, parse, new): a read. The old image is given the old line, and
-  parse(reply, m, r) is its {path: value}; the new one is given news(m, r),
-  get lines, and new(text) is its {path: value} from what they printed
-  (default: every "path value" line). Each side's result is its values'
-  "path value" lines: the two must hold the same paths.
-- Refused(): a line the old image refuses (a usage error): the new one
+A row is a regex an old console line (or an old GET path) must match in
+full, and what it means:
+
+- Set(obj, values): a setting. values(m, r) is {path: value}. The old image
+  is given the old line; its result is the values, or "refused" if it said
+  "Error:". The new one is given `set` for each, `apply`, then `get` for
+  each: its result is what get printed, or "refused" if any line said err.
+- Read(paths, parse, ...): a printer or a JSON page. paths are templates
+  of the paths it shows ("#" a number, "*" a segment, "**" the rest), and
+  so its objects. On a side that hasn't moved all of them, the old line is
+  typed (the page fetched), and parse(text, m, r) gives its
+  ({path: value}, [lines it couldn't place]); a side that has moved some
+  gets those from `get` (gets(m, r, objs) the lines, by default `get <obj>`
+  per object; the values kept are the row's paths, each normalized, then
+  narrow(path, value) to what the old surface shows: a truncation, a unit).
+  post(values, m, r) then evens out the structure on both sides (what the
+  old surface leaves out). The result is the "path value" lines, then the
+  lines no path took, as "~ line", so nothing on either surface goes
+  unseen.
+- Refused(obj): a line the old image refuses (a usage error): the new one
   isn't given anything; both results are "refused" (the old one only if it
   did refuse).
 
-A row applies when its object is in the set the run compares by value
-(Run.canon: the objects either image has moved); the line is translated
-only on an image that has moved that object (Run.om). Anything else is
-typed as it is and compared as text.
-
-Each object migration adds its rows here (and its intended differences to
-om.expect).
+A row applies when one of its objects is in the set the run compares by
+value (Run.canon: the objects either image has moved); anything else is
+typed as it is and compared as text. Each object migration adds or flips
+its rows here (and its intended differences to om.expect).
 """
-import re
+import json, math, re
 
 
-class Set:
-    def __init__(self, values):
-        self.values = values
+# --- canonical values
+
+def onoff(b):
+    return "on" if b else "off"
 
 
-class Get:
-    def __init__(self, news, parse, new=None):
-        self.news, self.parse, self.new = news, parse, new or values
+def plist(ports, cpu=False):
+    """A port list as the canon has it: "3,4", "3,cpu", "none"."""
+    w = [str(p) for p in sorted(set(ports))] + (["cpu"] if cpu else [])
+    return ",".join(w) or "none"
 
 
-class Refused:
-    pass
+def flags(words):
+    return ",".join(sorted(set(words))) or "none"
 
 
-ROWS = []
+def mac(s):
+    h = re.sub(r"[^0-9a-f]", "", s.lower())
+    return ":".join(h[i:i + 2] for i in range(0, 12, 2)) if len(h) == 12 else s
 
 
-def row(obj, rx, what):
-    ROWS.append((obj, re.compile(rx), what))
+def bridge(prio, m):
+    return f"{prio.lower():0>4}/{re.sub(r'[^0-9a-f]', '', m.lower())}"
 
 
-def find(line, canon):
-    """(row's object, match, what) for an old line, or None."""
-    for obj, rx, what in ROWS:
-        m = rx.fullmatch(line)
-        if m and obj in canon:
-            return obj, m, what
+def num(s):
+    try:
+        return str(int(s, 0) if isinstance(s, str) else int(s))
+    except ValueError:
+        return s
+
+
+def bits(v, names):
+    """Flags from a bit field: names[i] is bit i's word."""
+    return flags(n for i, n in enumerate(names) if n and v >> i & 1)
+
+
+# --- the new side's text, made canonical
+
+def n_pmask(s):
+    """om's PortMask text ("1-3,9,cpu", "none", "all") as a port list."""
+    ports, cpu = [], False
+    for w in s.split(","):
+        if w == "cpu":
+            cpu = True
+        elif "-" in w:
+            a, b = w.split("-")
+            ports += range(int(a), int(b) + 1)
+        elif w.isdigit():
+            ports.append(int(w))
+    return plist(ports, cpu)
+
+
+def n_flags(s):
+    return flags(w for w in re.split(r"[ ,]+", s) if w and w != "none")
+
+
+def n_bridge(s):
+    m = re.fullmatch(r"(?:0x)?([0-9a-fA-F]{1,4})[/.:-]?((?:[0-9a-fA-F]{2}[:-]?){6})", s.strip())
+    return bridge(m[1], m[2]) if m else s
+
+
+def n_dec(places):
+    def f(s):
+        try:
+            return f"{float(s):.{places}f}"
+        except ValueError:
+            return s
+    return f
+
+
+def n_bool(s):
+    return {"true": "on", "yes": "on", "1": "on", "false": "off", "no": "off", "0": "off"}.get(s, s)
+
+
+def ident(s):
+    return s
+
+
+# --- the paths: (template, object, norm)
+
+PORT_CFG = "name enabled speed duplex mtu pvid ingress ingress_filter lldp eee isolate".split()
+PORT_ST = "link speed duplex media ms_role pause_tx pause_rx macs tx_good rx_good tx_bad rx_bad eee_active".split()
+PATHS = [
+    # port.N, live on feat/om dab5d13 (its schema/port.py names)
+    (r"port.#.(mtu|pvid)", "port", num), (r"port.#.isolate", "port", n_pmask),
+    (r"port.#.(%s)" % "|".join(PORT_CFG), "port", ident),
+    (r"state.port.#.(macs|tx_good|rx_good|tx_bad|rx_bad)", "port", num),
+    (r"state.port.#.(%s)" % "|".join(PORT_ST), "port", ident),
+    (r"state.port.#.cabletest.state", "port", ident), (r"state.port.#.cabletest.[abcd].result", "port", ident),
+    (r"state.port.#.cabletest.[abcd].length_m", "port", n_dec(1)),
+    # DESIGN 7.5 paths dab5d13 hasn't (or names otherwise: eee_active, cabletest.a)
+    (r"state.port.#.eee.active", "port.design", ident), (r"state.port.#.(eee.lp|lp_adv)", "port.design", n_flags),
+    (r"state.port.#.lag", "port.design", num), (r"port.#.eee_speeds", "port.design", n_flags),
+    (r"state.port.#.mib.*", "state.mib", num),
+    # config (DESIGN 6)
+    (r"sys.mac", "sys", mac), (r"sys.(hostname|led)", "sys", ident),
+    (r"web.session_timeout_s", "web", num), (r"mgmt.vlan", "mgmt", num), (r"mgmt.*", "mgmt", ident),
+    (r"syslog.port", "syslog", num), (r"syslog.*", "syslog", ident), (r"dns.*", "dns", ident),
+    (r"ntp.interval_min", "ntp", num), (r"ntp.*", "ntp", ident),
+    (r"lag.#.members", "lag", n_pmask), (r"lag.#.hash", "lag", n_flags), (r"lag.#.mode", "lag", ident),
+    (r"stp.(priority|hello_s|maxage_s|fwd_delay_s|txhold)", "stp", num),
+    (r"stp.(port|lag).#.(cost|priority)", "stp", num), (r"stp.**", "stp", ident),
+    (r"loop.enabled", "loop", ident), (r"lldp.enabled", "lldp", ident),
+    # state (DESIGN 7)
+    (r"state.sys.mac", "state.sys", mac), (r"state.sys.(uptime_s|image_size|flash.size)", "state.sys", num),
+    (r"state.sys.(temp_c|temp_poweron_c)", "state.sys", n_dec(1)),
+    (r"state.sys.reset.(step_ms|pc|bank)", "state.sys", num), (r"state.sys.**", "state.sys", ident),
+    (r"state.sched.slot.*.mask", "state.sched", n_flags), (r"state.sched.slot.*.*", "state.sched", ident),
+    (r"state.sched.state.*.runs", "state.sched", num), (r"state.sched.state.*.max_us", "state.sched", ident),
+    (r"state.sched.(passes|idle|overruns)", "state.sched", num), (r"state.sched.**", "state.sched", ident),
+    (r"state.health.**", "state.sched", num), (r"state.con.**", "state.sched", num),
+    (r"state.mgmt.dhcp.renew_s", "state.mgmt", num), (r"state.mgmt.**", "state.mgmt", ident),
+    (r"state.ntp.(local_offset_min|last_sync_s|stratum)", "state.ntp", num), (r"state.ntp.**", "state.ntp", ident),
+    (r"state.dns.**", "state.dns", ident),
+    (r"state.loop.(looped|blocked)", "state.loop", n_pmask), (r"state.loop.**", "state.loop", ident),
+    (r"state.loader.**", "state.loader", n_bool),
+    (r"state.sfp.#.(encoding|rate_mbps|options|quirks|ddm.laser)", "state.sfp", num),
+    (r"state.sfp.#.ddm.status", "state.sfp", n_flags), (r"state.sfp.#.ddm.temp_c", "state.sfp", n_dec(1)),
+    (r"state.sfp.#.ddm.vcc_v", "state.sfp", n_dec(2)), (r"state.sfp.#.ddm.tx_bias_ma", "state.sfp", n_dec(1)),
+    (r"state.sfp.#.ddm.(tx|rx)_power_dbm", "state.sfp", n_dec(1)), (r"state.sfp.#.(vendor|part|rev|serial)", "state.sfp", str.strip),
+    (r"state.sfp.**", "state.sfp", ident),
+    (r"state.stp.(bridge|root)", "state.stp", n_bridge), (r"state.stp.(port|lag).#.dbridge", "state.stp", n_bridge),
+    (r"state.stp.(port|lag).#.members", "state.stp", n_pmask),
+    (r"state.stp.(port|lag).#.(state|role|edge|guard_tripped|link|legacy|loop_held)", "state.stp", ident),
+    (r"state.stp.(is_root|root_port)", "state.stp", ident), (r"state.stp.**", "state.stp", num),
+    (r"state.lag.#.active", "state.lag", n_pmask), (r"state.lag.#.aggregator", "state.lag", mac),
+    (r"state.lag.#.agg_valid", "state.lag", ident), (r"state.lacp.running", "state.lag", ident),
+    (r"state.lacp.port.#.(actor|partner)", "state.lag", n_flags), (r"state.lacp.port.#.partner_sys", "state.lag", mac),
+    (r"state.lacp.port.#.rx_state", "state.lag", ident), (r"state.lacp.port.#.*", "state.lag", num),
+    (r"state.l2.#.mac", "state.l2", mac), (r"state.l2.#.(vlan|lag)", "state.l2", num), (r"state.l2.#.*", "state.l2", ident),
+    (r"state.l2.*", "state.l2", ident),	# an entry as the old shows it: by index, or MAC/VLAN
+    # a value with no path in the design: compared from its surface while that lasts
+    (r"raw.**", None, ident),
+]
+# Objects whose rows wait for their node; each takes itself out (P4-*, P5-*)
+PENDING = {"sys", "web", "mgmt", "syslog", "dns", "ntp", "lag", "stp", "loop", "lldp", "port.design",
+           "state.sys", "state.sched", "state.mgmt", "state.ntp", "state.dns", "state.loop", "state.loader",
+           "state.sfp", "state.stp", "state.lag", "state.l2", "state.mib"}
+# What `get` takes for an object, where that isn't its own name
+GETS = {"port": ["port", "state.port"], "port.design": ["port", "state.port"], "state.sched":
+        ["state.sched", "state.health", "state.con"], "state.lag": ["state.lag", "state.lacp"],
+        "state.mib": ["state.port"]}
+
+
+def _rx(t):
+    return re.compile(t.replace(".", r"\.").replace("#", r"\d+").replace(r"\.**", r"\..+")
+                      .replace("**", ".+").replace("*", r"[^.]+"))
+
+
+PATHS = [(_rx(t), o, n) for t, o, n in PATHS]
+
+
+def path_of(p):
+    """(object, norm) of a path, or None if no template has it."""
+    for rx, o, n in PATHS:
+        if rx.fullmatch(p):
+            return o, n
     return None
 
 
-def refused(text):
-    return text is None or any(l.startswith(("Error:", "err ")) for l in text.splitlines())
+def obj_of(p):
+    t = path_of(p)
+    return t[0] if t else None
 
 
 def values(text):
     """A get's "path value" lines, {path: value}; the value may be empty."""
     out = {}
     for l in (text or "").splitlines():
-        m = re.fullmatch(r"((?:state\.)?[a-z_]+\.[\w.*]+) ?(.*)", l)
+        m = re.fullmatch(r"((?:state\.)?[a-z_]+\.[\w.*-]+) ?(.*)", l)
         if m:
             out[m.group(1)] = m.group(2)
     return out
@@ -80,13 +223,182 @@ def _key(p):
     return [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", p)]
 
 
-def canon(v):
-    return "\n".join(f"{p} {v[p]}" for p in sorted(v, key=_key))
+def canon(v, rest=()):
+    return "\n".join([f"{p} {v[p]}" for p in sorted(v, key=_key)] + [f"~ {l}" for l in rest])
 
 
-# --- port.N (feat/om dab5d13: port, mtu, pvid, ingress, isolate, eee, stat)
+def refused(text):
+    return text is None or any(l.startswith(("Error:", "err ")) for l in text.splitlines())
 
-SPEED = {"10M": "10m", "100M": "100m", "1000M": "1g", "10G": "10g", "2.5G": "2g5", "5G": "5g"}
+
+# --- rows
+
+class Set:
+    def __init__(self, obj, values):
+        self.objs, self.values = {obj}, values
+
+
+class Refused:
+    def __init__(self, obj):
+        self.objs = {obj}
+
+
+def _probe(t):
+    """A path a template matches: its first alternative of each group."""
+    t = re.sub(r"\(([^|)]*)[^)]*\)", r"\1", t)
+    t = re.sub(r"\[(.)[^]]*\]", r"\1", t)
+    return t.replace("**", "x").replace("#", "1").replace("*", "x")
+
+
+class Read:
+    def __init__(self, owner, paths, parse, gets=None, narrow=None, post=None):
+        self.owner = set(owner.split())
+        self.paths = [_rx(t) for t in paths]
+        self.objs = {obj_of(_probe(t)) for t in paths}
+        assert all(path_of(_probe(t)) for t in paths), [t for t in paths if not path_of(_probe(t))]
+        self.parse, self._gets, self.narrow, self._post = parse, gets, narrow, post
+
+    def gone(self, om):
+        """Whether the surface is gone on an image that has moved om: its
+        owners (the nodes that delete it) all moved."""
+        return self.owner <= set(om)
+
+    def comparable(self, p, oms):
+        """Whether both images can show p: each has moved its object, or
+        still has the surface."""
+        o = obj_of(p)
+        return all((o is not None and o in om) or not self.gone(om) for om in oms)
+
+    def gets(self, m, r, objs):
+        if self._gets:
+            return self._gets(m, r, objs)
+        return [f"get {g}" for o in sorted(objs) for g in GETS.get(o, [o])]
+
+    def new(self, text, m, r, objs):
+        """({path: value}, [rest]) from the get lines' replies: the row's
+        paths of these objects, normalized and narrowed."""
+        v, rest = {}, []
+        for l in (text or "").splitlines():
+            if l.startswith("err "):
+                rest.append(l)
+        for p, x in values(text).items():
+            t = path_of(p)
+            if not t or t[0] not in objs or not any(rx.fullmatch(p) for rx in self.paths):
+                continue
+            x = t[1](x)
+            if self.narrow:
+                x = self.narrow(p, x, m, r)
+            if x is not None:
+                v[p] = x
+        return v, rest
+
+    def post(self, v, m, r):
+        return self._post(v, m, r) if self._post else v
+
+
+ROWS, PAGES = [], []
+
+
+def row(rx, what):
+    ROWS.append((re.compile(rx), what))
+
+
+def page(rx, what):
+    PAGES.append((re.compile(rx), what))
+
+
+def find(line, canon, rows=None):
+    """(match, what) for an old line (or GET path), or None: a row one of
+    whose objects is compared by value."""
+    for rx, what in ROWS if rows is None else rows:
+        m = rx.fullmatch(line)
+        if m and what.objs & canon:
+            return m, what
+    return None
+
+
+def find_page(path, canon):
+    return find(path, canon, PAGES)
+
+
+def objects():
+    return {o for _, w in ROWS + PAGES for o in w.objs if o}
+
+
+def pending(objs):
+    return sorted(set(objs) & PENDING)
+
+
+# --- the board's ports
+
+def fronts(r):
+    """{logical port: front number}: the copper ports and the cages."""
+    f = {p: int(x) for p, x in zip(r.P, r.F)}
+    f.update({c[0]: int(c[1]) for c in r.cages.values()})
+    return f
+
+
+def lmask(v, r):
+    """A logical port mask (bit 9 the CPU) as a port list."""
+    f = fronts(r)
+    return plist([f[i] for i in f if v >> i & 1], v >> 9 & 1)
+
+
+def slot_of(front, r):
+    for s, (_, f) in r.cages.items():
+        if int(f) == front:
+            return s
+    return None
+
+
+def _lines(text):
+    """A reply's lines less the echo, the prompt and blank lines."""
+    ls = (text or "").replace("\r", "").split("\n")
+    return [l for l in ls[1:] if l.strip() and l.strip() != ">"]
+
+
+def _cli(parse):
+    """A printer's parser from one that takes a line at a time: f(line, v,
+    m, r) is True if the line was placed (into v)."""
+    def p(text, m, r):
+        v, rest = {}, []
+        for l in _lines(text):
+            if not parse(l, v, m, r):
+                rest.append(l)
+        return v, rest
+    return p
+
+
+def _json(parse):
+    """A page's parser: f(doc, v, rest, m, r) places what it knows; a body
+    that isn't JSON, or a status that isn't 200, is a rest line."""
+    def p(text, m, r):
+        v, rest = {}, []
+        head, _, body = (text or "").partition("\n\n")
+        st = head.split("\n", 1)[0]
+        if " 200 " not in st + " ":
+            rest.append(st or "<no response>")
+        try:
+            doc = json.loads(body)
+        except ValueError:
+            if body:
+                rest.append("not JSON: " + body[:200])
+            return v, rest
+        parse(doc, v, rest, m, r)
+        return v, rest
+    return p
+
+
+def _left(d, known, rest, where):
+    """The keys of d a parser didn't place, as rest lines."""
+    for k in d:
+        if k not in known:
+            rest.append(f"{where}{k}: {json.dumps(d[k])}")
+
+
+# --- port.N (live on feat/om dab5d13: port, mtu, pvid, ingress, isolate, eee, stat)
+
+SPEED = {"10M": "10m", "100M": "100m", "1000M": "1g", "500M": "500m", "10G": "10g", "2.5G": "2g5", "5G": "5g"}
 INGRESS = {"u": "untagged", "t": "tagged", "a": "all"}
 
 
@@ -94,68 +406,1199 @@ def _ports(r):
     return [int(f) for f in r.F] + [int(c[1]) for c in r.cages.values()]
 
 
-def _stat(reply, m, r):
+@_cli
+def _stat(l, v, m, r):
     """stat's table: per port, its state (copper: the PHY on or off, i.e.
-    enabled; an SFP cage's module present has no path yet), link and
-    speed, the counters' low 32 bits, the MACs learned."""
-    v = {}
-    for l in (reply or "").splitlines():
-        f = l.split("\t")
-        if len(f) < 8 or not f[0].isdigit():
+    enabled; a cage: the module, state.sfp.S.present), link and speed (a
+    nibble of 3 or 7+ prints "Up": 500m or unknown), the counters' low 32
+    bits, the MACs learned."""
+    f = [x for x in l.split("\t") if x]
+    if l.startswith("Port\tState"):
+        return True
+    if len(f) != 8 or not f[0].isdigit():
+        return False
+    n = f[0]
+    if f[1] in ("On", "Off"):
+        v[f"port.{n}.enabled"] = onoff(f[1] == "On")
+    elif f[1] in ("SFP IN", "NO SFP") and slot_of(int(n), r):
+        v[f"state.sfp.{slot_of(int(n), r)}.present"] = onoff(f[1] == "SFP IN")
+    s = f"state.port.{n}."
+    v[s + "link"] = "down" if f[2] == "Down" else "up"
+    if f[2] != "Down":
+        v[s + "speed"] = SPEED.get(f[2], "500m|unknown")
+    for k, x in zip(("tx_good", "tx_bad", "rx_good", "rx_bad"), f[3:7]):
+        v[s + k] = str(int(x, 16))
+    v[s + "macs"] = f[7]
+    return True
+
+
+def _stat_narrow(p, x, m, r):
+    if p.endswith(("_good", "_bad")):
+        return str(int(x) & 0xffffffff)
+    if p.endswith(".speed") and x in ("500m", "unknown"):
+        return "500m|unknown"
+    return x
+
+
+def _no_speed_down(v, m, r):
+    """No speed without a link: the old surfaces print none."""
+    return {p: x for p, x in v.items() if not (p.endswith(".speed") and p.startswith("state.port.")
+                                              and v.get(p[:-len("speed")] + "link") != "up")}
+
+
+STAT = ["port.#.enabled", "state.port.#.(link|speed|tx_good|tx_bad|rx_good|rx_bad|macs)", "state.sfp.#.present"]
+row(r"stat", Read("port", STAT, _stat, gets=lambda m, r, o: (["get state.port", "get port.*.enabled"] if "port" in o else []) +
+                  (["get state.sfp"] if "state.sfp" in o else []), narrow=_stat_narrow, post=_no_speed_down))
+
+
+@_cli
+def _mtu_show(l, v, m, r):
+    a = re.fullmatch(r"Port (\d+) (0x[0-9a-f]+)", l)	# print_short: hex
+    if a:
+        v[f"port.{a[1]}.mtu"] = num(a[2])
+    return bool(a)
+
+
+row(r"mtu show", Read("port", ["port.#.mtu"], _mtu_show, gets=lambda m, r, o: ["get port.*.mtu"]))
+row(r"pvid (\d+) (\d+)", Set("port", lambda m, r: {f"port.{m[1]}.pvid": m[2]}))
+row(r"mtu (\d+) (\d+)", Set("port", lambda m, r: {f"port.{m[1]}.mtu": m[2]}))
+row(r"port (\d+) name (\S.*)", Set("port", lambda m, r: {f"port.{m[1]}.name": m[2][:31]}))
+row(r"port (\d+) lldp (block|permit)", Set("port", lambda m, r: {f"port.{m[1]}.lldp": m[2]}))
+row(r"port (\d+) (on|off)", Set("port", lambda m, r: {f"port.{m[1]}.enabled": m[2]}))
+row(r"port (\d+) (auto|10m|100m|1g|2g5|5g|10g)(?: (half|full))?",
+    Set("port", lambda m, r: {f"port.{m[1]}.speed": m[2], **({f"port.{m[1]}.duplex": m[3]} if m[3] else {})}))
+row(r"port (\d+) duplex (full|half)", Set("port", lambda m, r: {f"port.{m[1]}.duplex": m[2]}))
+row(r"isolate (\d+) off", Set("port", lambda m, r: {f"port.{m[1]}.isolate": "all,cpu"}))
+row(r"isolate (\d+)((?: (?:\d+|cpu))+)",
+    Set("port", lambda m, r: {f"port.{m[1]}.isolate": ",".join(m[2].split())}))
+row(r"ingress ([uta])", Set("port", lambda m, r: {f"port.{p}.ingress": INGRESS[m[1]] for p in _ports(r)}))
+row(r"ingress((?: \d+[uta])+)",
+    Set("port", lambda m, r: {f"port.{w[:-1]}.ingress": INGRESS[w[-1]] for w in m[1].split()}))
+row(r"eee (on|off)", Set("port", lambda m, r: {f"port.{f}.eee": m[1] for f in r.F}))	# copper only
+row(r"eee (on|off) (\d+)", Set("port", lambda m, r: {f"port.{m[2]}.eee": m[1]}))
+
+
+EEE_W = {"10G": "10g", "5G": "5g", "2.5G": "2g5", "1G": "1g", "100M": "100m"}
+
+
+@_cli
+def _eee_status(l, v, m, r):
+    """eee status [N]: per port the speeds advertised (port.N.eee_speeds),
+    the partner's (state.port.N.eee.lp) and whether EEE is active; a cage
+    says SFP (its media)."""
+    a = re.fullmatch(r"Port: (\d+): (?:SFP|Advertising:(.*)Link Partner:(.*?) (ACTIVE|INACTIVE) *)", l)
+    if not a:
+        return False
+    n = a[1]
+    if a[2] is None:
+        v[f"state.port.{n}.media"] = "sfp"
+        return True
+    v[f"port.{n}.eee_speeds"] = flags(EEE_W[w] for w in a[2].split())
+    v[f"state.port.{n}.eee.lp"] = flags(EEE_W[w] for w in a[3].split())
+    v[f"state.port.{n}.eee.active"] = onoff(a[4] == "ACTIVE")
+    return True
+
+
+def _media_sfp(v, m, r):
+    """eee status names a cage (SFP), not a copper port's media."""
+    return {p: x for p, x in v.items() if not (p.endswith(".media") and x == "copper")}
+
+
+EEE = ["port.#.eee_speeds", "state.port.#.eee.(lp|active)", "state.port.#.media"]
+row(r"eee status(?: (\d+))?", Read("port", EEE, _eee_status, post=lambda v, m, r: _one_port(_media_sfp(v, m, r), m[1])))
+
+
+def _one_port(v, n):
+    """The paths of port n only, when the old command named one."""
+    return v if not n else {p: x for p, x in v.items() if re.match(r"(state\.)?port\.%s\." % n, p)}
+
+
+LP_W = {"10Base-Half": "10h", "10Base-Full": "10f", "100Base-Half": "100h", "100Base-Full": "100f",
+        "1000Base-Half": "1000h", "1000Base-Full": "1000f", "2500Base-Full": "2g5", "5000Base-Full": "5g",
+        "10GBase-Full": "10g"}
+FORCED = {"10M": "10m", "100M": "100m", "1000M": "1g", "2500M": "2g5", "5G": "5g", "10G": "10g"}
+
+
+def _port_show(text, m, r):
+    """port N show: the name, the duplex the PHY reports (its link speed,
+    PHYSR, has no path: the MAC's is state.port.N.speed), auto-negotiation
+    or the forced speed and duplex (port.N.speed, duplex; what AN
+    advertises has no path), the partner's abilities, the link role and the
+    pause negotiated."""
+    n, v, rest, forced = m[1], {}, [], False
+    for l in _lines(text):
+        if l.startswith("Logical Port:"):
             continue
-        f = [x for x in f if x]
-        n = f[0]
-        if f[1] in ("On", "Off"):
-            v[f"port.{n}.enabled"] = "on" if f[1] == "On" else "off"
-        s = f"state.port.{n}."
-        v[s + "link"] = "down" if f[2] == "Down" else "up"
-        if f[2] != "Down":
-            v[s + "speed"] = SPEED.get(f[2], "unknown")
-        for k, x in zip(("tx_good", "tx_bad", "rx_good", "rx_bad"), f[3:7]):
-            v[s + k] = str(int(x, 16))
-        v[s + "macs"] = f[7]
+        a = re.fullmatch(r"Name: ?(.*)", l)
+        if a:
+            v[f"port.{n}.name"] = a[1]
+            continue
+        a = re.fullmatch(r"Link speed: (\w+)(?: (full|half) duplex)?", l)
+        if a:
+            v[f"raw.port.{n}.phy_speed"] = a[1]
+            if a[2]:
+                v[f"state.port.{n}.duplex"] = a[2]
+            continue
+        a = re.fullmatch(r"AN enabled, advertising:(.*)", l)
+        if a:
+            v[f"port.{n}.speed"] = "auto"
+            v[f"raw.port.{n}.adv"] = flags(LP_W.get(w.replace("BaseN", "Base"), w) for w in a[1].split())
+            continue
+        if l.startswith("Forced speed:"):
+            forced = True
+            continue
+        if forced and l in FORCED:
+            v[f"port.{n}.speed"] = FORCED[l]
+            continue
+        a = re.fullmatch(r"Duplex: \S+ enabled: (yes|no)", l)
+        if a:
+            v[f"port.{n}.duplex"] = "full" if a[1] == "yes" else "half"
+            continue
+        a = re.fullmatch(r"Link Partner advertises:(.*)", l)
+        if a:
+            v[f"state.port.{n}.lp_adv"] = flags(LP_W[w] for w in a[1].split())
+            continue
+        a = re.fullmatch(r"Link role: (master|slave)", l)
+        if a:
+            v[f"state.port.{n}.ms_role"] = a[1]
+            continue
+        a = re.fullmatch(r"Pause negotiated:(.*)", l)
+        if a:
+            v[f"state.port.{n}.pause_tx"] = onoff("TX" in a[1].split())
+            v[f"state.port.{n}.pause_rx"] = onoff("RX" in a[1].split())
+            continue
+        rest.append(l)
+    return v, rest
+
+
+def _port_show_post(v, m, r):
+    """The role only with a link (the old shows none without); the duplex
+    of a forced port is the config's, on both."""
+    n = m[1]
+    v = _one_port(v, n)
+    if v.pop(f"state.port.{n}.link", "up") != "up":
+        v.pop(f"state.port.{n}.ms_role", None)
+    if v.get(f"port.{n}.speed") == "auto":
+        v.pop(f"port.{n}.duplex", None)
     return v
 
 
-STAT = ("link", "speed", "tx_good", "tx_bad", "rx_good", "rx_bad", "macs")
+row(r"port (\d+) show", Read("port", ["port.#.(name|speed|duplex)", "state.port.#.(duplex|ms_role|pause_tx|pause_rx|link)",
+                              "state.port.#.lp_adv", "raw.port.#.(phy_speed|adv)"], _port_show, post=_port_show_post))
+
+CT = {"ok": "ok", "open at": "open", "short at": "short", "short to another pair at": "cross_short",
+      "impedance mismatch at": "mismatch", "unknown": "unknown"}
 
 
-def _stat_new(text):
-    """The same from get: those fields, the speed only with a link, the
-    counters' low 32 bits."""
-    v, out = values(text), {}
-    for p, x in v.items():
-        m = re.fullmatch(r"(state\.)?port\.(\d+)\.(\w+)", p)
-        if not m:
+def _cabletest_show(text, m, r):
+    """port N cabletest show: running, no result (idle), timed out, or the
+    four pairs (a length for a fault)."""
+    n, v, rest = m[1], {}, []
+    s = f"state.port.{n}.cabletest."
+    for l in _lines(text):
+        a = re.fullmatch(r"Pair ([A-D]): (ok|unknown|[a-z ]+ at) ?([\d.]+)?(?: m)?", l)
+        if l.startswith("Logical Port:"):
             continue
-        st, n, f = m.groups()
-        if not st and f == "enabled":
-            out[p] = x
-        elif st and f in STAT and not (f == "speed" and v.get(f"state.port.{n}.link") != "up"):
-            out[p] = str(int(x) & 0xffffffff) if f.endswith(("_good", "_bad")) else x
+        elif l == "Cable test running":
+            v[s + "state"] = "running"
+        elif l == "No cable test result":
+            v[s + "state"] = "idle"
+        elif re.fullmatch(r"Cable test port \d+: timed out", l):
+            v[s + "state"] = "timeout"
+        elif re.fullmatch(r"Cable test port \d+", l):
+            v[s + "state"] = "done"
+        elif a and a[2] in CT:
+            v[s + a[1].lower() + ".result"] = CT[a[2]]
+            if a[3]:
+                v[s + a[1].lower() + ".length_m"] = a[3]
+        else:
+            rest.append(l)
+    return v, rest
+
+
+def _cabletest_post(v, m, r):
+    """Pairs only when done; a length only for a fault."""
+    v = _one_port(v, m[1])
+    s = f"state.port.{m[1]}.cabletest."
+    out = {}
+    for p, x in v.items():
+        pr = re.fullmatch(re.escape(s) + r"([a-d])\.(result|length_m)", p)
+        if pr and (v.get(s + "state") != "done" or (pr[2] == "length_m" and v.get(s + pr[1] + ".result") in ("ok", "unknown"))):
+            continue
+        out[p] = x
     return out
 
 
-def _mtu_show(reply, m, r):
-    return {f"port.{a}.mtu": b for a, b in re.findall(r"^Port (\d+) (\d+)$", reply or "", re.M)}
+row(r"port (\d+) cabletest show", Read("port", ["state.port.#.cabletest.state", "state.port.#.cabletest.[abcd].(result|length_m)"], _cabletest_show, post=_cabletest_post))
+row(r"port|port \S+|pvid|pvid \S+|mtu|isolate|isolate \S+|ingress|eee", Refused("port"))
 
 
-row("port", r"stat", Get(lambda m, r: ["get state.port", "get port.*.enabled"], _stat, _stat_new))
-row("port", r"mtu show", Get(lambda m, r: ["get port.*.mtu"], _mtu_show))
-row("port", r"pvid (\d+) (\d+)", Set(lambda m, r: {f"port.{m[1]}.pvid": m[2]}))
-row("port", r"mtu (\d+) (\d+)", Set(lambda m, r: {f"port.{m[1]}.mtu": m[2]}))
-row("port", r"port (\d+) name (\S.*)", Set(lambda m, r: {f"port.{m[1]}.name": m[2][:31]}))
-row("port", r"port (\d+) lldp (block|permit)", Set(lambda m, r: {f"port.{m[1]}.lldp": m[2]}))
-row("port", r"port (\d+) (on|off)", Set(lambda m, r: {f"port.{m[1]}.enabled": m[2]}))
-row("port", r"port (\d+) (auto|10m|100m|1g|2g5|5g|10g)(?: (half|full))?",
-    Set(lambda m, r: {f"port.{m[1]}.speed": m[2], **({f"port.{m[1]}.duplex": m[3]} if m[3] else {})}))
-row("port", r"port (\d+) duplex (full|half)", Set(lambda m, r: {f"port.{m[1]}.duplex": m[2]}))
-row("port", r"isolate (\d+) off", Set(lambda m, r: {f"port.{m[1]}.isolate": "all,cpu"}))
-row("port", r"isolate (\d+)((?: (?:\d+|cpu))+)",
-    Set(lambda m, r: {f"port.{m[1]}.isolate": ",".join(m[2].split())}))
-row("port", r"ingress ([uta])", Set(lambda m, r: {f"port.{p}.ingress": INGRESS[m[1]] for p in _ports(r)}))
-row("port", r"ingress((?: \d+[uta])+)",
-    Set(lambda m, r: {f"port.{w[:-1]}.ingress": INGRESS[w[-1]] for w in m[1].split()}))
-row("port", r"eee (on|off)", Set(lambda m, r: {f"port.{f}.eee": m[1] for f in r.F}))	# copper only
-row("port", r"eee (on|off) (\d+)", Set(lambda m, r: {f"port.{m[2]}.eee": m[1]}))
-row("port", r"port|port \S+|pvid|pvid \S+|mtu|isolate|isolate \S+|ingress|eee", Refused())
+# --- state.sys (P5-1): version, temp
+
+@_cli
+def _version(l, v, m, r):
+    a = re.fullmatch(r"(Software version|Build date|Compiler|Toolchain|Hardware): (.*)", l)
+    if a:
+        k = {"Software version": "version", "Build date": "build_date", "Hardware": "machine"}.get(a[1])
+        if k:
+            v["state.sys." + k] = a[2]
+        else:			# state.sys.toolchain: SDCC_TOOLCHAIN and the compiler, as one
+            v["state.sys.toolchain"] = (v.get("state.sys.toolchain", "") + " " + a[2]).strip()
+    return bool(a)
+
+
+row(r"version", Read("state.sys", ["state.sys.(version|build_date|toolchain|machine)"], _version))
+
+
+@_cli
+def _temp(l, v, m, r):
+    a = re.fullmatch(r"(Chip temperature|At power-on): +(-?[\d.]+) C", l)
+    if a:
+        v["state.sys." + ("temp_c" if a[1] == "Chip temperature" else "temp_poweron_c")] = a[2]
+    return bool(a)
+
+
+row(r"temp", Read("state.sys", ["state.sys.temp_c", "state.sys.temp_poweron_c"], _temp))
+
+
+# --- state.sched (P5-2): health tasks
+
+MASK = ["rx", "link", "con_rx", "con_tx", None, None, None, "forever"]
+CAUSE = {"?": "power", "watchdog": "watchdog", "^R ^R": "ctrl_r", "reset command": "cmd"}
+
+
+def _fine(s):
+    """health tasks' fine time ("24us", "3ms", ">400ms") as it prints."""
+    return s
+
+
+def _max_us(p, x, m, r):
+    """state.sched.state.*.max_us as health tasks prints it: us up to
+    7281 fine units (44.7 ms), else whole ms of 163 units; >400ms
+    saturated."""
+    if not p.endswith(".max_us"):
+        return x
+    if x.startswith(">"):
+        return ">400ms"
+    u = round(int(x) / 6.144)
+    return f"{u * 6 + (u * 9 >> 6)}us" if u <= 7281 else f"{u // 163}ms"
+
+
+@_cli
+def _health_tasks(l, v, m, r):
+    if l in ("slot\ttask\tstate\tmask\twake", "state\truns\tmax"):
+        return True
+    a = re.fullmatch(r"\d+\t(\S+)\t(?:free|(\w+)\t0x([0-9a-f]{4})\t(now|\+\d+))", l)
+    if a:
+        s = f"state.sched.slot.{a[1]}."
+        v[s + "state"] = a[2] or "free"
+        if a[2]:
+            v[s + "mask"] = bits(int(a[3], 16), MASK)
+            v[s + "wake"] = a[4].lstrip("+")
+        return True
+    a = re.fullmatch(r"([A-Z][A-Z0-9_]+)\t(\d+)\t(>?\d+(?:us|ms))", l)
+    if a:
+        v[f"state.sched.state.{a[1]}.runs"] = a[2]
+        v[f"state.sched.state.{a[1]}.max_us"] = a[3]
+        return True
+    a = re.fullmatch(r"passes 0x([0-9a-f]+) idle 0x([0-9a-f]+) longest (\S+)", l)
+    if a:
+        v["state.sched.passes"], v["state.sched.idle"] = str(int(a[1], 16)), str(int(a[2], 16))
+        v["state.sched.pass_max_us"] = a[3]
+        return True
+    a = re.fullmatch(r"overruns (\d+)(?: last (\w+))?, con rx overruns (\d+), hw timeouts (\d+)(?: last 0x([0-9a-f]+))?", l)
+    if a:
+        v["state.sched.overruns"], v["state.con.rx_overruns"], v["state.health.hw_timeouts"] = a[1], a[3], a[4]
+        if a[2]:
+            v["state.sched.overrun_last"] = a[2]
+        if a[5]:
+            v["state.health.hw_timeout_reg"] = str(int(a[5], 16))
+        return True
+    a = re.fullmatch(r"last reset: (.+?) in (\S+)/(\S+) after (\d+) ms(?:, PC 0x([0-9a-f]+))? bank (\d+), states(.*)", l)
+    if a:
+        s = "state.sys.reset."
+        v[s + "cause"], v[s + "slot"], v[s + "state"], v[s + "step_ms"] = CAUSE.get(a[1], a[1]), a[2], a[3], a[4]
+        v[s + "pc"], v[s + "bank"], v[s + "states"] = str(int(a[5] or "0", 16)), a[6], a[7].strip()
+        return True
+    return False
+
+
+def _health_post(v, m, r):
+    """A free slot shows no mask or wake; the reset record only after a
+    reset that left one (the new side's cause power: none)."""
+    free = {p[:-len("state")] for p, x in v.items() if p.startswith("state.sched.slot.") and p.endswith(".state") and x == "free"}
+    out = {p: x for p, x in v.items() if not any(p.startswith(f) and not p.endswith(".state") for f in free)}
+    if out.get("state.sys.reset.cause") == "power":
+        out = {p: x for p, x in out.items() if not p.startswith("state.sys.reset.")}
+    if out.get("state.sched.overruns") == "0":
+        out.pop("state.sched.overrun_last", None)
+    if out.get("state.health.hw_timeouts") == "0":
+        out.pop("state.health.hw_timeout_reg", None)
+    return out
+
+
+row(r"health tasks", Read("state.sched", ["state.sched.slot.*.(state|mask|wake)", "state.sched.state.*.(runs|max_us)",
+                           "state.sched.(passes|idle|pass_max_us|overruns|overrun_last)", "state.con.rx_overruns",
+                           "state.health.(hw_timeouts|hw_timeout_reg)", "state.sys.reset.(cause|slot|state|step_ms|pc|bank|states)"],
+                          _health_tasks, narrow=lambda p, x, m, r: _max_us(p, x, m, r) if not p.endswith("pass_max_us")
+                          else _max_us(".max_us", x, m, r), post=_health_post))
+
+
+# --- state.mgmt (P5-3): ip, gw, netmask
+
+@_cli
+def _ip(l, v, m, r):
+    """ip: the address, and leasing (with the renewal) or not: the old says
+    "static" for every DHCP state but leasing."""
+    a = re.fullmatch(r"Current IP: ([\d.]+) \((?:static|dhcp, renewal in sec: 0x([0-9a-f]+))\)", l)
+    if a:
+        v["state.mgmt.ip"] = a[1]
+        v["state.mgmt.dhcp.state"] = "leasing" if a[2] else "not leasing"
+        if a[2]:
+            v["state.mgmt.dhcp.renew_s"] = str(int(a[2], 16))
+    return bool(a)
+
+
+def _ip_post(v, m, r):
+    if v.get("state.mgmt.dhcp.state") not in ("leasing", "not leasing"):
+        v["state.mgmt.dhcp.state"] = "not leasing"
+    if v["state.mgmt.dhcp.state"] != "leasing":
+        v.pop("state.mgmt.dhcp.renew_s", None)
+    return v
+
+
+row(r"ip", Read("mgmt", ["state.mgmt.ip", "state.mgmt.dhcp.(state|renew_s)"], _ip, post=_ip_post))
+
+
+def _current(name, path):
+    @_cli
+    def p(l, v, m, r):
+        a = re.fullmatch(r"Current %s: ([\d.]+)" % name, l)
+        if a:
+            v[path] = a[1]
+        return bool(a)
+    return p
+
+
+row(r"gw", Read("mgmt", ["state.mgmt.gateway"], _current("gw", "state.mgmt.gateway")))
+row(r"netmask", Read("mgmt", ["state.mgmt.netmask"], _current("netmask", "state.mgmt.netmask")))
+
+
+# --- state.ntp, state.dns, state.loop (P5-3): ntp, time, dns, loop
+
+def _time_line(l, v):
+    """ntp's and time's time line: synchronised or not; the time, which
+    the old prints local, in UTC; the offset with DST; the minutes since
+    the sync (state.ntp.last_sync_s in whole minutes); the stratum."""
+    if l == "Time not synchronised":
+        v["state.ntp.synced"] = "off"
+        return True
+    a = re.fullmatch(r"Time (\d+)-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d) UTC([+-])(\d\d):(\d\d)( DST)?, "
+                     r"synchronised (\d+) min ago, stratum (\d+)", l)
+    if not a:
+        return False
+    import datetime
+    off = (1 if a[7] == "+" else -1) * (int(a[8]) * 60 + int(a[9]))
+    t = datetime.datetime(*map(int, a.groups()[:6])) - datetime.timedelta(minutes=off)
+    v["state.ntp.synced"] = "on"
+    v["state.ntp.time"] = t.strftime("%Y-%m-%d %H:%M:%S")
+    v["state.ntp.local_offset_min"], v["state.ntp.dst_active"] = str(off), onoff(a[10])
+    v["state.ntp.last_sync_s"], v["state.ntp.stratum"] = f"{a[11]} min", a[12]
+    return True
+
+
+def _ntp_narrow(p, x, m, r):
+    if p == "state.ntp.last_sync_s":
+        return f"{int(x) // 60} min"
+    if p == "state.ntp.time":
+        a = re.match(r"(\d+-\d\d-\d\d)[ T](\d\d:\d\d:\d\d)", x)
+        return f"{a[1]} {a[2]}" if a else x
+    return x
+
+
+def _ntp_post(v, m, r):
+    if v.get("state.ntp.synced") == "off":
+        v = {p: x for p, x in v.items() if not p.startswith("state.ntp.") or p == "state.ntp.synced"}
+    return v
+
+
+NTP = ["state.ntp.(synced|time|local_offset_min|dst_active|last_sync_s|stratum)"]
+
+
+@_cli
+def _ntp(l, v, m, r):
+    a = re.fullmatch(r"NTP (on|off), server (\S*), address ([\d.]+), interval (\d+) min, timezone (\S+), dst (\w+)", l)
+    if a:
+        v["ntp.enabled"], v["ntp.server"], v["state.ntp.server_ip"] = a[1], a[2], a[3]
+        v["ntp.interval_min"], v["ntp.timezone"], v["ntp.dst"] = a[4], a[5], a[6]
+        return True
+    return _time_line(l, v)
+
+
+row(r"ntp", Read("ntp state.ntp", ["ntp.(enabled|server|interval_min|timezone|dst)", "state.ntp.server_ip"] + NTP, _ntp,
+                 narrow=_ntp_narrow, post=_ntp_post))
+row(r"time", Read("state.ntp", NTP, _cli(lambda l, v, m, r: _time_line(l, v)), narrow=_ntp_narrow, post=_ntp_post))
+
+
+@_cli
+def _dns(l, v, m, r):
+    a = re.fullmatch(r"DNS servers ([\d.]+) ([\d.]+), from DHCP ([\d.]+)", l)
+    if a:
+        v["dns.server1"], v["dns.server2"], v["state.dns.dhcp_server"] = a[1], a[2], a[3]
+        return True
+    a = re.fullmatch(r"Last lookup (.*): (pending|failed|[\d.]+)", l)
+    if a:
+        v["state.dns.lookup.name"] = a[1]
+        v["state.dns.lookup.status"] = a[2] if a[2] in ("pending", "failed") else "done"
+        if v["state.dns.lookup.status"] == "done":
+            v["state.dns.lookup.ip"] = a[2]
+        return True
+    return False
+
+
+def _dns_post(v, m, r):
+    """No lookup line before the first lookup; an address only when done."""
+    if v.get("state.dns.lookup.status") in (None, "none") or not v.get("state.dns.lookup.name"):
+        return {p: x for p, x in v.items() if not p.startswith("state.dns.lookup.")}
+    if v["state.dns.lookup.status"] != "done":
+        v.pop("state.dns.lookup.ip", None)
+    return v
+
+
+row(r"dns", Read("dns state.dns", ["dns.server[12]", "state.dns.dhcp_server", "state.dns.lookup.(name|status|ip)"], _dns, post=_dns_post))
+
+
+@_cli
+def _loop_show(l, v, m, r):
+    a = re.fullmatch(r"Loop detection: (on|off)|(Looped|Blocked) ports: ([\d ]*)", l)
+    if a and a[1]:
+        v["loop.enabled"] = a[1]
+    elif a:
+        v["state.loop." + a[2].lower()] = plist(int(x) for x in a[3].split())
+    return bool(a)
+
+
+def _loop_post(v, m, r):
+    """The old shows the ports only with detection on."""
+    if v.get("loop.enabled") == "off":
+        v = {p: x for p, x in v.items() if p not in ("state.loop.looped", "state.loop.blocked")}
+    return v
+
+
+def _loop_json_post(v, m, r):
+    """loop.json says none for both when detection is off."""
+    if v.get("loop.enabled") == "off":
+        v.update({p: "none" for p in ("state.loop.looped", "state.loop.blocked") if p in v})
+    return v
+
+
+row(r"loop(?: show)?", Read("state.loop", ["loop.enabled", "state.loop.(looped|blocked)"], _loop_show, post=_loop_post))
+
+
+# --- state.sfp (P5-4): sfp
+
+def _ddm(v, s, raw, cal=None):
+    """The DDM words (SFF-8472 A2 224..235, 238) in the units DESIGN 7.7
+    gives: temp (S16, 1/256 C), Vcc (100 uV), TX bias (2 uA), TX and RX
+    power (0.1 uW, as dBm); external calibration (slope U16 8.8, offset
+    S16) applied to the first four as the getter will, RX power left raw
+    (the coefficients are state.sfp.S.ddm.rx_cal_coef)."""
+    def word(k):
+        return int(raw[k], 16)
+    def c(k, x):
+        if not cal or k not in cal:
+            return x
+        sl, of = int(cal[k][:4], 16), int(cal[k][4:8], 16)
+        return x * sl / 256 + (of - 0x10000 if of & 0x8000 else of)
+    def dbm(x):
+        return "-inf" if x <= 0 else f"{10 * math.log10(x / 10000):.1f}"
+    if "temp" in raw:
+        t = word("temp")
+        v[s + "ddm.temp_c"] = f"{c('temp', t - 0x10000 if t & 0x8000 else t) / 256:.1f}"
+    if "vcc" in raw:
+        v[s + "ddm.vcc_v"] = f"{c('vcc', word('vcc')) / 10000:.2f}"
+    if "txbias" in raw:
+        v[s + "ddm.tx_bias_ma"] = f"{c('txbias', word('txbias')) / 500:.1f}"
+    if "txpower" in raw:
+        v[s + "ddm.tx_power_dbm"] = dbm(c("txpower", word("txpower")))
+    if "rxpower" in raw:
+        v[s + "ddm.rx_power_dbm"] = dbm(word("rxpower"))
+
+
+STATUS = [("not_ready", 0x01), ("rx_los", 0x02), ("tx_fault", 0x04), ("tx_disable", 0x80)]
+
+
+def _status(x):
+    return flags(n for n, b in STATUS if x & b)
+
+
+def _sfp_print(text, m, r):
+    """sfp: per slot empty, unread, or the rate (byte 12, as read: x100
+    Mbit/s), encoding, the vendor/part/rev fields as one string (split at
+    their widths, 16/16/4), the options before the quirks (no path: DESIGN
+    keeps them after, state.sfp.S.options), the DDM words."""
+    v, rest, s, raw = {}, [], None, {}
+    keys = {"Temp": "temp", "Vcc": "vcc", "TX Bias": "txbias", "TX Power": "txpower", "RX Power": "rxpower"}
+    for l in _lines(text):
+        a = re.fullmatch(r"Slot (\d) - (empty|I2C read failed on this slot|Rate: ([0-9a-f]{2})  Encoding: ([0-9a-f]{2}))", l)
+        if a:
+            if s and raw:
+                _ddm(v, s, raw)
+            s, raw = f"state.sfp.{a[1]}.", {}
+            v[s + "present"] = onoff(a[2] != "empty")
+            if a[2] != "empty":
+                v[s + "ready"] = onoff(a[3] is not None)
+            if a[3]:
+                v[s + "rate_mbps"], v[s + "encoding"] = str(int(a[3], 16) * 100), str(int(a[4], 16))
+            continue
+        a = re.fullmatch(r"(Temp|Vcc|TX Bias|TX Power|RX Power|Laser|State|Options): ([0-9a-f]+)", l)
+        if s and a:
+            if a[1] == "Options":
+                v["raw." + s[6:] + "options_read"] = str(int(a[2], 16))
+            elif a[1] == "Laser":
+                v[s + "ddm.laser"] = str(int(a[2], 16))
+            elif a[1] == "State":
+                v[s + "ddm.status"] = _status(int(a[2], 16))
+            else:
+                raw[keys[a[1]]] = a[2]
+            continue
+        if s and s + "rate_mbps" in v and s + "vendor" not in v and l == "I2C read failed on this slot":
+            v[s + "ddm_ok"] = "off"
+            continue
+        if s and s + "rate_mbps" in v and s + "vendor" not in v:
+            v[s + "vendor"], v[s + "part"], v[s + "rev"] = l[:16].strip(), l[16:32].strip(), l[32:36].strip()
+            continue
+        rest.append(l)
+    if s and raw:
+        _ddm(v, s, raw)
+    return v, rest
+
+
+def _sfp_post(v, m, r):
+    """An empty cage shows nothing else; ready only for a module; the DDM
+    and the rest only for one that was read."""
+    out = {}
+    for p, x in v.items():
+        s = re.match(r"state\.sfp\.(\d)\.", p)
+        if s:
+            b = f"state.sfp.{s[1]}."
+            if v.get(b + "present") != "on" and p != b + "present":
+                continue
+            if v.get(b + "ready") == "off" and p not in (b + "present", b + "ready"):
+                continue
+            if p == b + "ddm_ok" and x == "on":
+                continue
+        out[p] = x
+    return out
+
+
+SFP = ["state.sfp.#.(present|ready|ddm_ok|rate_mbps|encoding|vendor|part|rev)",
+       "state.sfp.#.ddm.(temp_c|vcc_v|tx_bias_ma|tx_power_dbm|rx_power_dbm|laser|status)", "raw.sfp.#.options_read"]
+row(r"sfp", Read("state.sfp", SFP, _sfp_print, post=_sfp_post))
+
+
+# --- state.stp (P5-4): stp status
+
+STATE_W = {"off": "off", "block": "block", "learn": "learn", "fwd": "fwd"}
+ROLE_W = {"dis": "disabled", "root": "root", "desg": "designated", "altn": "alternate", "back": "backup"}
+
+
+def _ent(e):
+    """An STP entity as the old prints it ("01", "L1"; JSON 1, 101) as a path."""
+    e = str(e)
+    if e.startswith("L"):
+        return f"stp.lag.{e[1:]}"
+    n = int(e)
+    return f"stp.lag.{n - 100}" if n > 100 else f"stp.port.{n}"
+
+
+def _stp_status(text, m, r):
+    v, rest = {}, []
+    for l in _lines(text):
+        a = re.fullmatch(r"STP (off|on, (RSTP|STP))", l)
+        if a:
+            v["stp.enabled"] = "off" if a[1] == "off" else "on"
+            if a[2]:
+                v["stp.version"] = a[2].lower()
+            continue
+        a = re.fullmatch(r"(bridge|root) +([0-9a-f]{4})/([0-9a-f]{12})(?: \(this switch\)| port (\S+) cost 0x([0-9a-f]+))?", l)
+        if a:
+            v["state.stp." + a[1]] = bridge(a[2], a[3])
+            if a[1] == "root":
+                v["state.stp.is_root"] = onoff(a[4] is None)
+                if a[4]:
+                    v["state.stp.root_port"] = _ent(a[4])[4:].replace("port.", "")
+                    v["state.stp.root_cost"] = str(int(a[5], 16))
+            continue
+        a = re.fullmatch(r"changes 0x([0-9a-f]+)", l)
+        if a:
+            v["state.stp.tc_count"] = str(int(a[1], 16))
+            continue
+        if l == "port state role edge tx age[s]":
+            continue
+        a = re.fullmatch(r" (\d\d|L\d)  (\w+) +(\w+) +(yes|no) +([0-9a-f]{2}) (\d+)", l)
+        if a:
+            s = "state." + _ent(a[1]) + "."
+            v[s + "state"], v[s + "role"] = STATE_W.get(a[2], a[2]), ROLE_W.get(a[3], a[3])
+            v[s + "edge"], v[s + "tx_bpdu"], v[s + "bpdu_age_ms"] = onoff(a[4] == "yes"), str(int(a[5], 16)), a[6]
+            continue
+        rest.append(l)
+    return v, rest
+
+
+def _stp_status_narrow(p, x, m, r):
+    """tx: its low byte; age: whole seconds of the 50 Hz ticks, capped at 255."""
+    if p.endswith(".tx_bpdu"):
+        return str(int(x) & 0xff)
+    if p.endswith(".bpdu_age_ms"):
+        return str(min(int(x) // 1000, 255))
+    return x
+
+
+def _stp_status_post(v, m, r):
+    """With STP off the old prints that alone; the root port and cost only
+    when not root; the root port as the old names it (N or lag.L)."""
+    if v.get("stp.enabled") == "off":
+        return {"stp.enabled": "off"}
+    if v.get("state.stp.is_root") == "on":
+        v = {p: x for p, x in v.items() if p not in ("state.stp.root_port", "state.stp.root_cost")}
+    return v
+
+
+row(r"stp status", Read("state.stp", ["stp.(enabled|version)", "state.stp.(bridge|root|is_root|root_port|root_cost|tc_count)",
+                         "state.stp.(port|lag).#.(state|role|edge|tx_bpdu|bpdu_age_ms)"], _stp_status,
+                        narrow=_stp_status_narrow, post=_stp_status_post))
+
+
+# --- state.lag (P5-4): lacp show, lag show
+
+ACTOR = ["activity", "timeout", "aggregation", "sync", "collecting", "distributing", "defaulted", "expired"]
+RXST = ["initialize", "port_disabled", "expired", "defaulted", "current"]
+HASH = ["spa", "smac", "dmac", "sip", "dip", "sport", "dport"]
+
+
+def _lacp_show(text, m, r):
+    """lacp show: running; per LACP LAG its configured ports (lag.L.members),
+    aggregator (or none: agg_valid off) and active members (logical masks);
+    per port the actor and partner states, the receive state, the LACPDUs
+    received and the partner's system."""
+    v, rest = {}, []
+    for l in _lines(text):
+        a = re.fullmatch(r"LACP (on|off)", l)
+        if a:
+            v["state.lacp.running"] = a[1]
+            continue
+        a = re.fullmatch(r"lag (\d\d) ports 0x([0-9a-f]{4}) aggregator (\(none\)|[0-9a-f]{12}) members 0x([0-9a-f]{4})", l)
+        if a:
+            L = int(a[1])
+            v[f"lag.{L}.members"], v[f"state.lag.{L}.active"] = lmask(int(a[2], 16), r), lmask(int(a[4], 16), r)
+            v[f"state.lag.{L}.agg_valid"] = onoff(a[3] != "(none)")
+            if a[3] != "(none)":
+                v[f"state.lag.{L}.aggregator"] = mac(a[3])
+            continue
+        a = re.fullmatch(r"port (\d\d) actor ([0-9a-f]{2}) partner ([0-9a-f]{2}) rxst ([0-9a-f]{2}) rx 0x([0-9a-f]{4}) psys ([0-9a-f]{12})", l)
+        if a:
+            s = f"state.lacp.port.{int(a[1])}."
+            v[s + "actor"], v[s + "partner"] = bits(int(a[2], 16), ACTOR), bits(int(a[3], 16), ACTOR)
+            v[s + "rx_state"], v[s + "rx_pdus"], v[s + "partner_sys"] = RXST[int(a[4], 16)], str(int(a[5], 16)), mac(a[6])
+            continue
+        rest.append(l)
+    return v, rest
+
+
+def _lacp_post(v, m, r):
+    """The LAG lines only for a LAG in LACP mode (the new side's lag.L.mode
+    says, then goes); no aggregator when not valid."""
+    lacp = {p.split(".")[1] for p, x in v.items() if re.fullmatch(r"lag\.\d\.mode", p) and x == "lacp"}
+    if any(re.fullmatch(r"lag\.\d\.mode", p) for p in v):
+        v = {p: x for p, x in v.items() if not re.fullmatch(r"(state\.)?lag\.\d\..*", p) or p.split(".")[-2] in lacp}
+        v = {p: x for p, x in v.items() if not p.endswith(".mode")}
+    return {p: x for p, x in v.items() if not (p.endswith(".aggregator") and
+                                              v.get(p[:-len("aggregator")] + "agg_valid") == "off")}
+
+
+row(r"lacp show", Read("state.lag", ["state.lacp.running", "lag.#.(members|mode)", "state.lag.#.(active|agg_valid|aggregator)",
+                        "state.lacp.port.#.(actor|partner|rx_state|rx_pdus|partner_sys)"], _lacp_show, post=_lacp_post))
+
+
+@_cli
+def _lag_show(l, v, m, r):
+    """lag show: each LAG's members as the hardware has them (the active
+    set: state.lag.L.active) and, with members, the hash's low byte."""
+    if l == "LAG status:":
+        return True
+    a = re.fullmatch(r" (\d) (?:disabled|member ports: ([\d ]+) \(hash: 0x([0-9a-f]{2})\))", l)
+    if a:
+        L = a[1]
+        v[f"state.lag.{L}.active"] = plist(int(x) for x in (a[2] or "").split())
+        if a[3]:
+            v[f"lag.{L}.hash"] = bits(int(a[3], 16), HASH)
+    return bool(a)
+
+
+def _lag_show_post(v, m, r):
+    return {p: x for p, x in v.items() if not (p.endswith(".hash") and v.get(f"state.lag.{p.split('.')[1]}.active") == "none")}
+
+
+row(r"lag show", Read("lag state.lag", ["state.lag.#.active", "lag.#.hash"], _lag_show, post=_lag_show_post))
+
+
+# --- state.l2 (P5-5): l2
+
+def _l2_entry(v, key, m_, vlan, port, static, lag):
+    v[key] = f"vlan {vlan} " + (f"lag {lag}" if lag != "0" else f"port {port}") + f" static {static}"
+
+
+@_cli
+def _l2(l, v, m, r):
+    """l2: the table, an entry a line (no index): MAC, VLAN, static or
+    learned, the port (CPU) or the LAG; compared as a set keyed by MAC and
+    VLAN."""
+    if l == "\tMAC\t\tVLAN\ttype\tport":
+        return True
+    a = re.fullmatch(r"([0-9a-f:]{17})\t0x([0-9a-f]{4})\t(static|learned)\t(CPU|LAG\d|\d+)", l)
+    if a:
+        lag = a[4][3:] if a[4].startswith("LAG") else "0"
+        _l2_entry(v, f"state.l2.{a[1]}/{int(a[2], 16)}", a[1], int(a[2], 16), a[4].lower(), onoff(a[3] == "static"), lag)
+    return bool(a)
+
+
+def _l2_entries(v):
+    """The new side's state.l2.<idx>.* as {idx: {field: value}}."""
+    e = {}
+    for p, x in v.items():
+        a = re.fullmatch(r"state\.l2\.(\d+)\.(\w+)", p)
+        if a:
+            e.setdefault(int(a[1]), {})[a[2]] = x
+    return e
+
+
+def _l2_post(v, m, r):
+    out = {p: x for p, x in v.items() if not re.fullmatch(r"state\.l2\.\d+\.\w+", p)}
+    for i, f in _l2_entries(v).items():
+        _l2_entry(out, f"state.l2.{f.get('mac')}/{f.get('vlan')}", f.get("mac"), f.get("vlan"), f.get("port"),
+                  f.get("static"), f.get("lag", "0"))
+    return out
+
+
+row(r"l2", Read("state.l2", ["state.l2.#.(mac|vlan|port|lag|static)"], _l2, post=_l2_post))
+
+
+# --- the JSON pages (P5-1, P5-4, P5-5)
+
+POE = {"ok": "ok", "no image": "no_image", "no answer": "no_answer", "no image for this chip": "no_chip_image",
+       "failed": "failed", "no room": "no_room"}
+FLASH = {"MB": 1 << 20, "KB": 1 << 10}
+
+
+def _information(d, v, rest, m, r):
+    """/information.json: the management address (effective: state.mgmt),
+    syslog, session timeout, the address mode, the MAC, hostname, build,
+    uptime (hex), machine, PCB, temperature ("41.5 C"), flash size ("2
+    MB"), image size (hex), loader, PoE, LEDs, and per cage the module's
+    vendor, part and rev as one string."""
+    k = {}
+    for key, p, f in [("ip_address", "state.mgmt.ip", str), ("ip_gateway", "state.mgmt.gateway", str),
+                      ("ip_netmask", "state.mgmt.netmask", str), ("session_timeout", "web.session_timeout_s", str),
+                      ("ip_source", "mgmt.mode", str), ("mac_address", "state.sys.mac", mac),
+                      ("hostname", "sys.hostname", str), ("sw_ver", "state.sys.version", str),
+                      ("build_date", "state.sys.build_date", str), ("uptime", "state.sys.uptime_s", num),
+                      ("hw_ver", "state.sys.machine", str), ("pcb_ver", "state.sys.pcb", str),
+                      ("chip_temp", "state.sys.temp_c", lambda x: x.split()[0]),
+                      ("flash_size", "state.sys.flash.size", lambda x: str(int(x.split()[0]) * FLASH[x.split()[1]])),
+                      ("img_size", "state.sys.image_size", num), ("loader", "state.loader.present", lambda x: onoff(x == "yes")),
+                      ("poe", "state.sys.poe", lambda x: POE.get(x, x)),
+                      ("leds", "sys.led", lambda x: {"ports": "ports_off"}.get(x, x))]:
+        if key in d:
+            v[p], k[key] = f(d[key]), 1
+    if "syslog_server" in d:
+        v["syslog.server"], v["syslog.port"] = d["syslog_server"].rsplit(":", 1)
+        k["syslog_server"] = 1
+    for s in (0, 1):
+        x = d.get(f"sfp_slot_{s}")
+        if x is not None:
+            k[f"sfp_slot_{s}"] = 1
+            b = f"state.sfp.{s + 1}."
+            if x:
+                v[b + "vendor"], v[b + "part"], v[b + "rev"] = x[:16].strip(), x[16:32].strip(), x[32:36].strip()
+            else:
+                v[b + "id_ok"] = "off"
+    _left(d, k, rest, "")
+
+
+def _information_post(v, m, r):
+    """A cage whose module wasn't identified sends "" (id_ok off); the rest
+    of its ID only when identified."""
+    out = {}
+    for p, x in v.items():
+        s = re.match(r"(state\.sfp\.\d\.)", p)
+        if s and p != s[1] + "id_ok" and v.get(s[1] + "id_ok") == "off":
+            continue
+        if s and p == s[1] + "id_ok" and x == "on":
+            continue
+        out[p] = x
+    return out
+
+
+page(r"/information\.json", Read("sys mgmt web syslog state.sys", ["state.mgmt.(ip|gateway|netmask)", "web.session_timeout_s", "mgmt.mode",
+                                  "syslog.(server|port)", "sys.(hostname|led)",
+                                  "state.sys.(mac|version|build_date|uptime_s|machine|pcb|temp_c|flash.size|image_size|poe)",
+                                  "state.loader.present", "state.sfp.#.(vendor|part|rev|id_ok)"],
+                                 _json(_information), post=_information_post))
+
+ADV = {"2.5G": "2g5", "1G": "1000f", "100M-FD": "100f", "100M-HD": "100h", "10M-FD": "10f", "10M-HD": "10h"}
+CAL = {"sfp_temp_cal": "temp", "sfp_vcc_cal": "vcc", "sfp_txbias_cal": "txbias", "sfp_txpower_cal": "txpower"}
+
+
+def _ports_json(d, v, rest, m, r):
+    """/ports.json: per port the name, media, copper: enabled and what AN
+    advertises (no path: implied by port.N.speed), the MTU (hex); a cage:
+    the module present (enabled), its options after the quirks, DDM words
+    (raw hex, calibration blobs when external: applied here), state byte,
+    vendor, model (part), serial, LOS (null without a pin)."""
+    for e in d:
+        n, k = e.get("port"), {"port": 1}
+        p = f"port.{n}."
+        for key, path, f in [("name", p + "name", str), ("isSFP", f"state.port.{n}.media", lambda x: "sfp" if x else "copper"),
+                             ("mtu", p + "mtu", num)]:
+            if key in e:
+                v[path], k[key] = f(e[key]), 1
+        if not e.get("isSFP"):
+            if "enabled" in e:
+                v[p + "enabled"], k["enabled"] = onoff(e["enabled"]), 1
+            if "adv" in e:
+                v[f"raw.port.{n}.adv"], k["adv"] = flags(ADV.get(x, x) for x in e["adv"]), 1
+        else:
+            s = f"state.sfp.{slot_of(n, r)}."
+            if "enabled" in e:
+                v[s + "present"], k["enabled"] = onoff(e["enabled"]), 1
+            for key, path, f in [("sfp_options", s + "options", num), ("sfp_vendor", s + "vendor", str),
+                                 ("sfp_model", s + "part", str), ("sfp_serial", s + "serial", str),
+                                 ("sfp_state", s + "ddm.status", lambda x: _status(int(x, 16)))]:
+                if key in e:
+                    v[path], k[key] = f(e[key]), 1
+            if "sfp_los" in e:
+                v[s + "los"], k["sfp_los"] = "none" if e["sfp_los"] is None else "los" if e["sfp_los"] else "ok", 1
+            raw = {key[4:]: e[key][2:] for key in ("sfp_temp", "sfp_vcc", "sfp_txbias", "sfp_txpower", "sfp_rxpower")
+                   if key in e and len(e[key]) > 2}
+            cal = {CAL[key]: e[key][2:] for key in CAL if key in e}
+            k.update({key: 1 for key in ("sfp_temp", "sfp_vcc", "sfp_txbias", "sfp_txpower", "sfp_rxpower")})
+            k.update({key: 1 for key in CAL})
+            _ddm(v, s, raw, cal)
+            if "sfp_rxpower_cal" in e:
+                v[s + "ddm.rx_cal"], v[s + "ddm.rx_cal_coef"], k["sfp_rxpower_cal"] = "on", e["sfp_rxpower_cal"][2:], 1
+        _left(e, k, rest, f"port {n} ")
+
+
+def _ports_post(v, m, r):
+    """A cage without a module shows only that; the DDM only when the module
+    has it (options 0x40)."""
+    out = {}
+    for p, x in v.items():
+        s = re.match(r"(state\.sfp\.\d\.)", p)
+        if s and v.get(s[1] + "present") != "on" and p != s[1] + "present":
+            continue
+        if s and ".ddm." in p and not int(v.get(s[1] + "options", "0")) & 0x40:
+            continue
+        if s and p.endswith("rx_cal") and x == "off":
+            continue
+        out[p] = x
+    return out
+
+
+page(r"/ports\.json", Read("state.mib", ["port.#.(name|enabled|mtu)", "state.port.#.media", "raw.port.#.adv",
+                            "state.sfp.#.(present|options|vendor|part|serial|los)",
+                            "state.sfp.#.ddm.(status|temp_c|vcc_v|tx_bias_ma|tx_power_dbm|rx_power_dbm|rx_cal|rx_cal_coef)"],
+                           _json(_ports_json), post=_ports_post))
+
+
+def _traffic(d, v, rest, m, r):
+    """/traffic.json: per port the link ("DOWN" or the speed, "" for a
+    nibble of 7+), the good counters (64 bits), the bad ones (32), the MACs
+    learned (the raw register: masked to its 13 bits, as state has it)."""
+    for e in d:
+        n, k = e.get("port"), {"port": 1}
+        s = f"state.port.{n}."
+        if "link" in e:
+            v[s + "link"], k["link"] = "down" if e["link"] == "DOWN" else "up", 1
+            if e["link"] != "DOWN":
+                v[s + "speed"] = SPEED.get(e["link"], "unknown")
+        for key, f in [("txG", "tx_good"), ("txB", "tx_bad"), ("rxG", "rx_good"), ("rxB", "rx_bad")]:
+            if key in e:
+                v[s + f], k[key] = str(int(e[key], 16)), 1
+        if "macs" in e:
+            v[s + "macs"], k["macs"] = str(int(e["macs"], 16) & 0x1fff), 1
+        _left(e, k, rest, f"port {n} ")
+
+
+page(r"/traffic\.json", Read("state.mib", ["state.port.#.(link|speed|tx_good|tx_bad|rx_good|rx_bad|macs)"], _json(_traffic),
+                             post=_no_speed_down))
+
+# DESIGN 7.6: STAT index -> one 64-bit counter, or two 32-bit (hi, lo)
+MIB = (["if_in_octets", "if_out_octets", "if_in_ucast", "if_in_mcast", "if_in_bcast", "if_out_ucast",
+        "if_out_mcast", "if_out_bcast"] +
+       [tuple(x.split("/")) for x in (
+           "if_out_discards/dot1d_tp_port_in_discards dot3_single_collision/dot3_multi_collision "
+           "dot3_deferred_tx/dot3_late_collisions dot3_excessive_collisions/dot3_symbol_errors "
+           "dot3_ctrl_in_unknown_opcodes/dot3_in_pause dot3_out_pause/ether_drop_events tx_bcast/tx_mcast "
+           "tx_crc_align_err/rx_crc_align_err tx_undersize/rx_undersize tx_oversize/rx_oversize "
+           "tx_fragments/rx_fragments tx_jabbers/rx_jabbers tx_collisions/tx_64 rx_64/tx_65_127 "
+           "rx_65_127/tx_128_255 rx_128_255/tx_256_511 rx_256_511/tx_512_1023 rx_512_1023/tx_1024_1518 "
+           "rx_1024_1518/x26_lo rx_undersize_drop/tx_over_1518 rx_over_1518/tx_too_large "
+           "rx_too_large/tx_flex_octets_s1 rx_flex_octets_s1/tx_flex_octets_crc_s1 "
+           "rx_flex_octets_crc_s1/tx_flex_octets_s0 rx_flex_octets_s0/tx_flex_octets_crc_s0 "
+           "rx_flex_octets_crc_s0/length_field_errors false_carriers/undersized_octets framing_errors/x35_lo "
+           "rx_mac_discards/rx_mac_ipg_short_drop x37_hi/dot1d_tp_learned_entry_discards "
+           "egress_q7_drop/egress_q6_drop egress_q5_drop/egress_q4_drop egress_q3_drop/egress_q2_drop "
+           "egress_q1_drop/egress_q0_drop egress_q7_out/egress_q6_out egress_q5_out/egress_q4_out "
+           "egress_q3_out/egress_q2_out egress_q1_out/egress_q0_out").split()] +
+       ["tx_good", "rx_good", ("rx_err", "tx_err"), "tx_good_phy", "rx_good_phy", ("rx_err_phy", "tx_err_phy"),
+        "x52", "x53", "x54"])
+assert len(MIB) == 55
+
+
+def _counters(d, v, rest, m, r):
+    """/counters.json?port=N: the 55 STAT indexes, each "0x" + hex: one
+    64-bit counter, or the high and low halves of two."""
+    n = m[1]
+    if not isinstance(d, list) or len(d) != len(MIB):
+        rest.append(f"{len(d) if isinstance(d, list) else type(d).__name__} counters, not {len(MIB)}")
+        return
+    for name, x in zip(MIB, d):
+        x = int(x, 16)
+        if isinstance(name, tuple):
+            v[f"state.port.{n}.mib.{name[0]}"], v[f"state.port.{n}.mib.{name[1]}"] = str(x >> 32), str(x & 0xffffffff)
+        else:
+            v[f"state.port.{n}.mib.{name}"] = str(x)
+
+
+page(r"/counters\.json\?port=(\d+)", Read("state.mib", ["state.port.#.mib.*"], _json(_counters),
+                                          gets=lambda m, r, o: [f"get state.port.{m[1]}.mib"]))
+
+STP_F = {"enabled": 0x01, "filter": 0x20}
+
+
+def _stp_json(d, v, rest, m, r):
+    """/stp.json: the bridge config (stp.*), the TC age (hex), the root's
+    timers, the root (prio + MAC), our MAC (state.sys.mac), cost, root or
+    not, TC count; per entity (port N, LAG 101..104) its state and role
+    (numbers), flags (config bits 0x01..0x20 to stp.*.enabled/edge/guard/
+    filter, runtime 0x40 edge, 0x80 guard tripped), cost, LAG members,
+    priority, p2p (0 auto, 1 on, 2 off), link, legacy, designated
+    bridge/port/cost."""
+    k = {}
+    for key, p, f in [("on", "stp.enabled", onoff), ("type", "stp.version", str), ("prio", "stp.priority", str),
+                      ("hello", "stp.hello_s", str), ("maxage", "stp.maxage_s", str), ("fwd", "stp.fwd_delay_s", str),
+                      ("txhold", "stp.txhold", str), ("pcs", "stp.pathcost", str), ("bh", "stp.bpdu", str),
+                      ("tcs", "state.stp.tc_age_s", num), ("rMaxage", "state.stp.root_maxage_s", str),
+                      ("rFwd", "state.stp.root_fwd_s", str), ("myMac", "state.sys.mac", mac),
+                      ("cost", "state.stp.root_cost", num), ("weRoot", "state.stp.is_root", onoff),
+                      ("tc", "state.stp.tc_count", num)]:
+        if key in d:
+            v[p], k[key] = f(d[key]), 1
+    if "rootPrio" in d and "rootMac" in d:
+        v["state.stp.root"], k["rootPrio"], k["rootMac"] = bridge(d["rootPrio"], d["rootMac"]), 1, 1
+    for e in d.get("ports", []):
+        c, s, ke = _ent(e.get("p")), "state." + _ent(e.get("p")) + ".", {"p": 1}
+        for key, p, f in [("st", s + "state", lambda x: ["off", "block", "learn", "fwd"][x]),
+                          ("role", s + "role", lambda x: ["disabled", "root", "designated", "alternate", "backup"][x]),
+                          ("pc", c + ".cost", num), ("prio", c + ".priority", str),
+                          ("p2", c + ".p2p", lambda x: ["auto", "on", "off"][x]), ("lk", s + "link", onoff),
+                          ("lg", s + "legacy", onoff), ("db", s + "dbridge", lambda x: bridge(x[:4], x[4:])),
+                          ("dp", s + "dport", lambda x: str(int(x, 16))), ("dc", s + "dcost", num),
+                          ("mbr", s + "members", plist)]:
+            if key in e:
+                v[p], ke[key] = f(e[key]), 1
+        if "f" in e:
+            f, ke["f"] = e["f"], 1
+            v[c + ".enabled"], v[c + ".filter"] = onoff(f & 0x01), onoff(f & 0x20)
+            v[c + ".edge"] = "on" if f & 0x02 else "auto" if f & 0x04 else "off"
+            v[c + ".guard"] = "bpdu" if f & 0x08 else "root" if f & 0x10 else "none"
+            v[s + "edge"], v[s + "guard_tripped"] = onoff(f & 0x40), onoff(f & 0x80)
+        _left(e, ke, rest, f"entity {e.get('p')} ")
+    _left(d, set(k) | {"ports"}, rest, "")
+
+
+def _active_ents(v, m, r):
+    """The entities the old lists are the active ones: a LAG with members,
+    a port in none. The new side lists every one: those of the others go."""
+    lagged = set()
+    for p, x in v.items():
+        a = re.fullmatch(r"state\.stp\.lag\.\d\.members", p)
+        if a and x != "none":
+            lagged |= set(x.split(","))
+    lags = {p.split(".")[3] for p, x in v.items() if re.fullmatch(r"state\.stp\.lag\.\d\.members", p) and x != "none"}
+
+    def keep(p):
+        a = re.match(r"(?:state\.)?stp\.(port|lag)\.(\d+)\.", p)
+        return not a or (a[1] == "port" and a[2] not in lagged) or (a[1] == "lag" and a[2] in lags)
+    return {p: x for p, x in v.items() if keep(p)}
+
+
+STP_ENT = ["stp.(port|lag).#.(enabled|edge|cost|priority|guard|filter|p2p)",
+           "state.stp.(port|lag).#.(state|role|edge|guard_tripped|link|legacy|members|dbridge|dport|dcost)"]
+page(r"/stp\.json", Read("stp state.stp", ["stp.(enabled|version|priority|hello_s|maxage_s|fwd_delay_s|txhold|pathcost|bpdu)",
+                          "state.stp.(tc_age_s|root_maxage_s|root_fwd_s|root|root_cost|is_root|tc_count)",
+                          "state.sys.mac"] + STP_ENT, _json(_stp_json), post=_active_ents))
+
+
+def _stpcnt(d, v, rest, m, r):
+    """/stpcnt.json: on, the tick rate (50 Hz: no path, ages are in ms), the
+    TC count (hex); per entity 4 hex words (BPDUs in, out, TC in, TC out)
+    and the BPDU age in ticks."""
+    k = {"hz": 1}
+    if d.get("hz") != 50:
+        rest.append(f"hz {d.get('hz')}")
+    if "on" in d:
+        v["stp.enabled"], k["on"] = onoff(d["on"]), 1
+    if "tc" in d:
+        v["state.stp.tc_count"], k["tc"] = str(int(d["tc"], 16)), 1
+    for e in d.get("ports", []):
+        s, c = "state." + _ent(e.get("p")) + ".", e.get("c", "")
+        if len(c) == 36:
+            for i, f in enumerate(("rx_bpdu", "tx_bpdu", "rx_tc", "tx_tc")):
+                v[s + f] = str(int(c[8 * i:8 * i + 8], 16))
+            v[s + "bpdu_age_ms"] = str(int(c[32:], 16) * 20)
+        else:
+            rest.append(f"entity {e.get('p')} c {c!r}")
+        _left(e, {"p", "c"}, rest, f"entity {e.get('p')} ")
+    _left(d, set(k) | {"ports"}, rest, "")
+
+
+page(r"/stpcnt\.json", Read("state.stp", ["stp.enabled", "state.stp.tc_count", "state.stp.(port|lag).#.(rx_bpdu|tx_bpdu|rx_tc|tx_tc|bpdu_age_ms)",
+                             "state.stp.lag.#.members"], _json(_stpcnt),
+                            post=lambda v, m, r: {p: x for p, x in _active_ents(v, m, r).items() if not p.endswith(".members")}))
+
+
+def _lag_json(d, v, rest, m, r):
+    """/lag.json: per LAG (0-based) its type (static also for a LAG
+    without members: mode off), members (configured), and for LACP the
+    active members, valid, aggregator; the hash (raw register, hex); per
+    port its LAG (255 none, else 0-based), the actor and partner states,
+    receive state, LACPDUs in, partner system."""
+    for e in d.get("lags", []):
+        L, k = e.get("lagNum", 0) + 1, {"lagNum": 1}
+        mem = plist(e.get("members", []))
+        v[f"lag.{L}.members"], k["members"] = mem, 1
+        v[f"lag.{L}.mode"], k["type"] = "lacp" if e.get("type") == "lacp" else "static" if mem != "none" else "off", 1
+        for key, p, f in [("active_members", f"state.lag.{L}.active", plist), ("valid", f"state.lag.{L}.agg_valid", onoff),
+                          ("aggregator", f"state.lag.{L}.aggregator", mac),
+                          ("hash", f"lag.{L}.hash", lambda x: bits(int(x, 16), HASH))]:
+            if key in e:
+                v[p], k[key] = f(e[key]), 1
+        _left(e, k, rest, f"lag {L} ")
+    for e in d.get("ports", []):
+        s, k = f"state.lacp.port.{e.get('p')}.", {"p": 1}
+        for key, p, f in [("lag", s + "lag", lambda x: "0" if x == 255 else str(x + 1)),
+                          ("a", s + "actor", lambda x: bits(int(x, 16), ACTOR)),
+                          ("pt", s + "partner", lambda x: bits(int(x, 16), ACTOR)),
+                          ("rs", s + "rx_state", lambda x: RXST[x]), ("rx", s + "rx_pdus", lambda x: str(int(x, 16))),
+                          ("psys", s + "partner_sys", mac)]:
+            if key in e:
+                v[p], k[key] = f(e[key]), 1
+        _left(e, k, rest, f"port {e.get('p')} ")
+    _left(d, {"lags", "ports"}, rest, "")
+
+
+def _lag_post(v, m, r):
+    """Active, valid and aggregator only for a LACP LAG."""
+    return {p: x for p, x in v.items() if not (re.fullmatch(r"state\.lag\.\d\.\w+", p) and
+                                              v.get(f"lag.{p.split('.')[2]}.mode") != "lacp")}
+
+
+page(r"/lag\.json", Read("lag state.lag", ["lag.#.(members|mode|hash)", "state.lag.#.(active|agg_valid|aggregator)",
+                          "state.lacp.port.#.(lag|actor|partner|rx_state|rx_pdus|partner_sys)"], _json(_lag_json), post=_lag_post))
+
+
+def _loop_json(d, v, rest, m, r):
+    """/loop.json: on, STP on, the looped and blocked ports (none when off)."""
+    for key, p, f in [("on", "loop.enabled", onoff), ("stp", "stp.enabled", onoff),
+                      ("looped", "state.loop.looped", plist), ("blocked", "state.loop.blocked", plist)]:
+        if key in d:
+            v[p] = f(d[key])
+    _left(d, {"on", "stp", "looped", "blocked"}, rest, "")
+
+
+page(r"/loop\.json", Read("loop state.loop", ["loop.enabled", "stp.enabled", "state.loop.(looped|blocked)"], _json(_loop_json), post=_loop_json_post))
+
+
+def _l2_json(d, v, rest, m, r):
+    """/l2.json?idx=N: up to 30 entries from index N on, wrapping round to
+    the first again: VLAN (hex), MAC, type (s/l), port (0 the CPU), LAG
+    (0 none), index (hex); keyed by index, a repeat by its count."""
+    for e in d:
+        i = int(e.get("idx", "-1"), 16)
+        key = f"state.l2.{i}"
+        while key in v:
+            key += "+"
+        _l2_entry(v, key, e.get("mac"), int(e.get("vlan", "0"), 16), "cpu" if e.get("port") == 0 else e.get("port"),
+                  onoff(e.get("type") == "s"), str(e.get("lag", 0)))
+        _left(e, {"vlan", "mac", "type", "port", "lag", "idx"}, rest, f"entry {e.get('idx')} ")
+
+
+def _l2_page(v, m, r):
+    """The new side's table as the page from idx would show it (send_l2():
+    from the first entry at or after idx, round the table, until it comes
+    back to the first or 30 have gone)."""
+    e = _l2_entries(v)
+    out = {p: x for p, x in v.items() if not re.fullmatch(r"state\.l2\.\d+\.\w+", p)}
+    if not e:
+        return out
+    idx = sorted(e)
+    start = int(m[1]) & 0xfff
+    first, left, entry = None, 30, start
+    while True:
+        left -= 1
+        nxt = next((i for i in idx if i >= entry), idx[0])
+        key = f"state.l2.{nxt}"
+        while key in out:
+            key += "+"
+        f = e[nxt]
+        _l2_entry(out, key, f.get("mac"), f.get("vlan"), f.get("port"), f.get("static"), f.get("lag", "0"))
+        entry = nxt + 1
+        if first is None:
+            first = entry
+        elif first == entry or not left:
+            break
+    return out
+
+
+page(r"/l2\.json\?idx=(\d+)", Read("state.l2", ["state.l2.#.(mac|vlan|port|lag|static)"], _json(_l2_json), post=_l2_page))
+
+
+# --- the pages port.N deleted (P2): /eee.json, /isolation.json
+
+def _eee_json(d, v, rest, m, r):
+    """/eee.json: per port SFP or not; copper: the speeds advertised, the
+    partner's, active (no 5G/10G words: the old page has none)."""
+    for e in d:
+        n, k = e.get("port"), {"port": 1}
+        for key, p, f in [("isSFP", f"state.port.{n}.media", lambda x: "sfp" if x else "copper"),
+                          ("advertised", f"port.{n}.eee_speeds", lambda x: flags(EEE_W[w] for w in x)),
+                          ("linkPartner", f"state.port.{n}.eee.lp", lambda x: flags(EEE_W[w] for w in x)),
+                          ("active", f"state.port.{n}.eee.active", onoff)]:
+            if key in e:
+                v[p], k[key] = f(e[key]), 1
+        _left(e, k, rest, f"port {n} ")
+
+
+def _no_5g(p, x, m, r):
+    """The page knows no 5G or 10G EEE words."""
+    if p.endswith((".eee_speeds", ".eee.lp")):
+        return flags(w for w in x.split(",") if w not in ("5g", "10g", "none"))
+    return x
+
+
+page(r"/eee\.json", Read("port", EEE, _json(_eee_json), narrow=_no_5g, post=_media_sfp))
+
+
+def _isolation(d, v, rest, m, r):
+    """/isolation.json: per port the ports it may send to, 0 the CPU."""
+    for e in d:
+        n = e.get("port")
+        if "allow" in e:
+            v[f"port.{n}.isolate"] = plist([x for x in e["allow"] if x], 0 in e["allow"])
+        _left(e, {"port", "allow"}, rest, f"port {n} ")
+
+
+page(r"/isolation\.json", Read("port", ["port.#.isolate"], _json(_isolation), gets=lambda m, r, o: ["get port.*.isolate"]))

@@ -26,8 +26,8 @@ rtlsim, and all of them run in parallel. The full set takes about 30 s on the
 - `mutation.expect`: the expected differences of the check build (below).
 - `checks.py`: the new-only checks on one image (below); `known-failures`,
   today's.
-- `translate.py`, `om.expect`: an object-model image, compared by value
-  (below).
+- `translate.py`, `om.expect`, `om_samples.json`: an object-model image,
+  compared by value (below).
 
 ## Scenarios
 
@@ -82,10 +82,31 @@ its port table differs in nothing else:
     make oldnew OLD=<53ee574 boot image> NEW=<feat/om boot image> NEW_OM=port EXPECT=tests/oldnew/om.expect \
         ONLY="boot vlan stp lacp lldp loop igmp sfp"
 
-Each object migration adds its rows (and its expect lines); a POST /cmd
-of a moved object raises until the web side is translated too.
-`test_translate.py` (in `make test`) checks the rows and the line items
-without rtlsim.
+The printers and JSON pages are mapped too (`Read` rows and `page()`s):
+every field `stat`, `version`, `temp`, `health tasks`, `ip`, `gw`,
+`netmask`, `ntp`, `time`, `dns`, `loop show`, `sfp`, `stp status`,
+`lacp show`, `lag show`, `l2`, `eee status`, `port N show` and
+`port N cabletest show` print, and every key of /information.json,
+/ports.json, /traffic.json, /counters.json, /stp.json, /stpcnt.json,
+/lag.json, /loop.json, /l2.json, /eee.json and /isolation.json, each to
+its path (DESIGN 6 and 7), with the conversions (hex, speed codes, SFP
+DDM words to C/V/mA/dBm with external calibration, logical masks, STP
+flag bits, local time to UTC, the old surfaces' truncations applied to the
+new side's full value). `PATHS` gives each path its object and how `get`
+prints it; an image that has moved an object reads its values with `get`,
+one that hasn't from the old surface, and a surface gone on one image (its
+owners moved) is compared only on what both can show. Anything on a
+surface no path took shows as `~ line`. Objects not yet on the switch are
+in `PENDING`: naming one is refused until its node takes it out (and
+corrects what its schema named otherwise). A config the config scenario
+saves goes to the new image as set lines and an apply (`Run.convert()`, a
+stand-in for `rtlpg_client.py convert`).
+
+A POST /cmd of a moved object raises until the web side is translated
+too. `test_translate.py` (in `make test`) checks the rows and the line
+items without rtlsim: every old surface's samples (`om_samples.json`, from
+53ee574 in rtlsim) placed on paths, each row's old text against the same
+values as get prints them, and the conversions.
 
 ## The new-only checks
 

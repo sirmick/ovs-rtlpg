@@ -66,10 +66,11 @@ PASSWORD = "1234"
 class Run:
     """What a scenario does to one image, and what came back."""
 
-    def __init__(self, image, board, rtlsim, payload, om=(), canon=()):
+    def __init__(self, image, board, rtlsim, payload, om=(), oms=()):
         self.b = Bench(image, board=board, rtlsim=rtlsim)
         self.om = set(om)		# the objects this image has on the object model (translate.py)
-        self.canon = set(canon)		# those compared by value: either image's
+        self.oms = [set(x) for x in oms] or [self.om]	# both images' (a value both can show is compared)
+        self.canon = set().union(*self.oms)	# those compared by value: either image's
         self.payload = open(payload, "rb").read() if payload else b""
         self.checks = []		# (name, [violations], what was measured, worst µs, hard, saturated): not results
         self.replies = {}		# "cli <line>" -> its longest reply, firmware µs from typed to prompt
@@ -121,9 +122,12 @@ class Run:
         out = self.b.wait_uart(PROMPT, until)
         self.results[self._key("boot")] = out if out is not None else "<timeout>"
         self.b.advance(self.b.now + 10000)	# cmd_editor_init() drops input before it
-        before, ip = self._type("ip", until)	# the harness's own question: not a result
+        if "state.mgmt" in self.om:	# the harness's own question: not a result
+            before, ip = self._type("get state.mgmt.ip", until)
+        else:
+            before, ip = self._type("ip", until)
         self._console(before)
-        m = re.search(r"Current IP: ([\d.]+)", ip or "")
+        m = re.search(r"(?:Current IP:|state\.mgmt\.ip) ([\d.]+)", ip or "")
         sw = m.group(1) if m else "192.168.10.247"
         if self.host is None:
             self.host = Host(self.b, self.P[0], ip=sw.rsplit(".", 1)[0] + ".1", switch_ip=sw)
@@ -155,41 +159,62 @@ class Run:
         self._console(before)
         return out
 
-    def _translated(self, line, until, obj, m, what):
+    def _translated(self, line, until, m, what):
         """An old line whose object is compared by value (translate.py): on
         an image that has it on the object model, what the row types
         instead; on either, the result as values by path."""
-        new = obj in self.om
+        if isinstance(what, translate.Read):
+            return self._read(m, what, lambda: self._typed(line, until), until)
+        new = bool(what.objs & self.om)
         if isinstance(what, translate.Refused):
             if new:
                 return "refused"
             out = self._typed(line, until)
             return "refused" if out is not None and translate.refused(out) else out
-        if isinstance(what, translate.Set):
-            v = what.values(m, self)
-            if not new:
-                out = self._typed(line, until)
-                return None if out is None else "refused" if translate.refused(out) else translate.canon(v)
-            for l in [f"set {p} {x}" for p, x in v.items()] + ["apply"]:
-                out = self._typed(l, until)
-                if out is None:
-                    return None
-                if translate.refused(out):
-                    self._typed("discard", until)	# as the old image: refused, nothing changed
-                    return "refused"
-            news = [f"get {p}" for p in v]
-        else:
-            if not new:
-                out = self._typed(line, until)
-                return None if out is None else translate.canon(what.parse(out, m, self))
-            news = what.news(m, self)
-        text = ""
-        for l in news:
+        v = what.values(m, self)
+        if not new:
+            out = self._typed(line, until)
+            return None if out is None else "refused" if translate.refused(out) else translate.canon(v)
+        for l in [f"set {p} {x}" for p, x in v.items()] + ["apply"]:
             out = self._typed(l, until)
             if out is None:
                 return None
+            if translate.refused(out):
+                self._typed("discard", until)	# as the old image: refused, nothing changed
+                return "refused"
+        text = ""
+        for p in v:
+            out = self._typed(f"get {p}", until)
+            if out is None:
+                return None
             text += out
-        return translate.canon((what.new if isinstance(what, translate.Get) else translate.values)(text))
+        return translate.canon(translate.values(text))
+
+    def _read(self, m, what, fetch, until):
+        """A Read row (a printer or a page) on this image: from the old
+        surface, unless it is gone here (fetch() its text), the values of the
+        objects not moved here; from get, those moved; then only what both
+        images can show."""
+        moved = what.objs & self.om
+        v, rest = {}, []
+        if not what.gone(self.om):
+            text = fetch()
+            if text is None:
+                return None
+            got, rest = what.parse(text, m, self)
+            v.update({p: x for p, x in got.items() if translate.obj_of(p) not in moved})
+        if moved:
+            text = ""
+            for l in what.gets(m, self, moved):
+                out = self._typed(l, until)
+                if out is None:
+                    return None
+                text += out
+            got, more = what.new(text, m, self, moved)
+            v.update(got)
+            rest += more
+        v = what.post(v, m, self)
+        return translate.canon({p: x for p, x in v.items() if what.comparable(p, self.oms)}, rest)
 
     def tables(self):
         """The VLAN and L2 tables now, as one result each."""
@@ -245,7 +270,14 @@ class Run:
 
     def get(self, path, login=True, slot=5000):
         h = b"Cookie: session=" + self.cookie + b"\r\n" if login and self.cookie else b""
-        self._http(f"GET {path}", f"GET {path} HTTP/1.1\r\n".encode() + h + b"\r\n", slot)
+        req = f"GET {path} HTTP/1.1\r\n".encode() + h + b"\r\n"
+        t = translate.find_page(path, self.canon) if login else None
+        if t is None:
+            self._http(f"GET {path}", req, slot)
+            return
+        until = self._slot(slot)		# a page compared by value (translate.py)
+        out = self._read(*t, lambda: norm(self.host.http(req, until)), until)
+        self.results[self._key(f"web GET {path}")] = out if out is not None else "<timeout>"
 
     def _post(self, path, ctype, body, slot):
         req = (f"POST {path} HTTP/1.1\r\nCookie: session=".encode() + self.cookie +
@@ -264,7 +296,21 @@ class Run:
         self._post(path, f"multipart/form-data; boundary={bnd}", body, slot)
 
     def post_config(self, text, slot=5000):
-        self._multipart("/config", "configuration", "config.txt", text.encode(), slot)
+        self._multipart("/config", "configuration", "config.txt", self.convert(text).encode(), slot)
+
+    def convert(self, text):
+        """A saved config for this image: the settings of objects it has moved
+        as set lines (translate.py's Set rows) and an apply; the harness's
+        stand-in for rtlpg_client.py convert (P3B)."""
+        out, sets = [], False
+        for l in text.splitlines():
+            t = translate.find(l, self.om)
+            if t and isinstance(t[1], translate.Set):
+                out += [f"set {p} {x}" for p, x in t[1].values(t[0], self).items()]
+                sets = True
+            else:
+                out.append(l)
+        return "\n".join(out + (["apply"] if sets else [])) + ("\n" if text.endswith("\n") else "")
 
     def post_upload(self, data, slot=60000):
         self._multipart("/upload", "uploadedfile", "rtlplayground.bin", data, slot)
@@ -348,8 +394,11 @@ class Run:
         idx, seen = 0, set()
         for _ in range(pages):
             self.get(f"/l2.json?idx={idx}", slot=slot)
-            body = self.results[f"{self.n - 1:03d} web GET /l2.json?idx={idx}"].partition("\n\n")[2]
-            got = [int(x, 16) for x in re.findall(r'"idx": *"([0-9a-fA-F]+)"', body)]
+            res = self.results[f"{self.n - 1:03d} web GET /l2.json?idx={idx}"]
+            if res.startswith("HTTP/"):
+                got = [int(x, 16) for x in re.findall(r'"idx": *"([0-9a-fA-F]+)"', res.partition("\n\n")[2])]
+            else:			# by value (translate.py): state.l2.<idx>
+                got = [int(x) for x in re.findall(r"^state\.l2\.(\d+)\+* ", res, re.M)]
             if not got or seen & set(got):
                 return
             seen |= set(got)
@@ -584,7 +633,7 @@ def run_one(job):
     name, side, image, a = job
     t0 = time.time()
     r = Run(image, a["board"], a["rtlsim"], a["payload_" + side] if "payload_" + side in a else a["payload"],
-            a["om_" + side], a["om_old"] | a["om_new"])
+            a["om_" + side], (a["om_old"], a["om_new"]))
     try:
         SCENARIOS[name](r)
         res = r.finish(cov=os.path.join(a["cov"], f"{name}.{side}.cov") if a.get("cov") else None)
@@ -778,8 +827,11 @@ def main():
     opts = {"board": a.board, "rtlsim": a.rtlsim, "payload": a.payload or default_payload(a.old),
             "om_old": {x for x in a.old_om.split(",") if x}, "om_new": {x for x in a.new_om.split(",") if x}}
     for x in opts["om_old"] | opts["om_new"]:
-        if not any(o == x for o, _, _ in translate.ROWS):
-            sys.exit(f"oldnew: no rows for object {x} in translate.py")
+        if x not in translate.objects():
+            sys.exit(f"oldnew: no rows for object {x} in translate.py (have: {' '.join(sorted(translate.objects()))})")
+    if translate.pending(opts["om_old"] | opts["om_new"]):
+        sys.exit(f"oldnew: {' '.join(translate.pending(opts['om_old'] | opts['om_new']))}: pending in translate.py "
+                 "(PENDING): take it out when its paths are on the switch")
     if a.new_payload:
         opts["payload_new"] = a.new_payload
     if a.cov:
