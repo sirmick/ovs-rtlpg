@@ -160,7 +160,7 @@ def main():
     fails += not ok
     m, w = surface("cli stat")
     nc = w.not_compared([set(), {"port"}])
-    ok = nc == ["not compared: state.sfp.#.present (state.sfp pending)"] and w.not_compared([set(), set()]) == []
+    ok = nc == ["not compared: state.sfp.#.present (state.sfp not moved)"] and w.not_compared([set(), set()]) == []
     case("T", ok, f"a live row says what it can't compare yet: {nc}")
     fails += not ok
     import bench
@@ -511,10 +511,10 @@ def state_paths(case):
     m, w = surface("cli sfp")
     v, _ = w.parse("sfp\n\nSlot 1 - Rate: 67  Encoding: 06\nRTLSIM          SFP-10G-SR      1.0 \nOptions: 68\nTemp: 2380\n"
                    "Vcc: 80e8\nTX Bias: 0bb8\nTX Power: 178a\nRX Power: 0f8d\nLaser: 0000\nState: 06\n> ", m, BOARD)
-    want = {"state.sfp.1.rate_mbps": "10300", "state.sfp.1.ddm.temp_c": "35.5", "state.sfp.1.ddm.vcc_v": "3.30",
-            "state.sfp.1.ddm.tx_bias_ma": "6.0", "state.sfp.1.ddm.tx_power_dbm": "-2.2", "state.sfp.1.ddm.rx_power_dbm": "-4.0",
+    want = {"state.sfp.1.rate_mbps": "10300", "state.sfp.1.ddm.temp": "9088", "state.sfp.1.ddm.vcc_v": "3.3000",
+            "state.sfp.1.ddm.tx_bias": "3000", "state.sfp.1.ddm.tx_power_mw": "0.6026", "state.sfp.1.ddm.rx_power_mw": "0.3981",
             "state.sfp.1.ddm.status": "rx_los,tx_fault", "state.sfp.1.part": "SFP-10G-SR", "state.sfp.1.rev": "1.0"}
-    c("P6", all(v.get(k) == x for k, x in want.items()), "sfp: the DDM words in C, V, mA and dBm, the status bits, "
+    c("P6", all(v.get(k) == x for k, x in want.items()), "sfp: the DDM words raw, V and mW (P5-4), the status bits, "
       f"the ID split at its widths ({ {k[12:]: v.get(k) for k in want if v.get(k) != want[k]} or 'all as wanted'})")
     m, w = surface("web /ports.json")
     v, _ = w.parse('HTTP/1.1 200 OK\n\n[{"port":9,"name":"","isSFP":true,"enabled":true,"sfp_options":"0x58",'
@@ -522,11 +522,11 @@ def state_paths(case):
                    '"sfp_temp_cal":"0x02000100","sfp_vcc_cal":"0x01000000","sfp_txbias_cal":"0x01000000",'
                    '"sfp_txpower_cal":"0x01000000","sfp_rxpower_cal":"0x' + "00" * 20 + '","sfp_state":"0x00",'
                    '"sfp_vendor":"V","sfp_model":"M","sfp_serial":"S","sfp_los":null,"mtu":"0x3fff"}]', m, BOARD)
-    c("P7", v.get("state.sfp.1.ddm.temp_c") == "72.0" and v.get("state.sfp.1.los") == "none" and
-      v.get("state.sfp.1.ddm.rx_cal") == "on" and len(v.get("state.sfp.1.ddm.rx_cal_coef", "")) == 40 and
-      v.get("port.9.mtu") == "16383",
-      f"ports.json: external calibration applied (slope 2, offset 1/256: {v.get('state.sfp.1.ddm.temp_c')} C), "
-      "the RX coefficients kept, no LOS pin, the MTU in hex")
+    cal = v.get("state.sfp.1.ddm.cal", "")
+    c("P7", v.get("state.sfp.1.ddm.temp") == "9088" and v.get("state.sfp.1.los") == "none" and len(cal) == 72 and
+      cal[40:48] == "01000000" and cal[56:64] == "02000100" and v.get("port.9.mtu") == "16383",
+      f"ports.json: the words raw, the calibration bytes 184..219 in order as ddm.cal ({cal[40:]!r}), "
+      "no LOS pin, the MTU in hex")
     m, w = surface("cli lacp show")
     o = old_side(w, m, "lacp show\nLACP on\nlag 01 ports 0x000c aggregator 02aa00000001 members 0x0004\n"
                  "port 03 actor 3f partner 3d rxst 04 rx 0x000c psys 02aa00000001\n> ")
