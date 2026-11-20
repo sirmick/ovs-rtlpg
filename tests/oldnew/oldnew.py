@@ -336,9 +336,25 @@ class Run:
         self._http(f"POST {path}", req, slot)
 
     def post_cmd(self, cmd, slot=3000):
-        if translate.find(cmd, self.canon):
-            raise NotImplementedError(f"POST /cmd {cmd!r}: its object is on the object model; translate it (translate.py)")
-        self._post("/cmd", "text/plain;charset=UTF-8", cmd.encode(), slot)
+        """POST /cmd. A setting whose object an image has moved: there its
+        set lines and an apply by POST /cli; on both, the result is whether
+        the switch took it (the two replies differ by design)."""
+        t = translate.find(cmd, self.canon)
+        if t is None:
+            self._post("/cmd", "text/plain;charset=UTF-8", cmd.encode(), slot)
+            return
+        m, what = t
+        if not isinstance(what, translate.Set):
+            raise NotImplementedError(f"POST /cmd {cmd!r}: only a setting is translated (translate.py)")
+        if what.objs & self.om:
+            path, body = "/cli", "\n".join([f"set {p} {x}" for p, x in what.vals(m, self).items()] + ["apply"])
+        else:
+            path, body = "/cmd", cmd
+        req = (f"POST {path} HTTP/1.1\r\nCookie: session=".encode() + self.cookie +
+               f"\r\nContent-Type: text/plain;charset=UTF-8\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body.encode())
+        r = self.host.http(req, self._slot(slot))
+        took = isinstance(r, bytes) and r.startswith(b"HTTP/1.1 200") and b"\nerr " not in r and b"Error" not in r
+        self.results[self._key("web POST /cmd")] = "taken" if took else norm(r)
 
     def _multipart(self, path, field, name, data, slot):
         bnd = "----oldnew0123456789"
