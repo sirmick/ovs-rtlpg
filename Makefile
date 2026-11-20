@@ -40,11 +40,16 @@ $(BUILD)/regnames.inc: tools/regnames.py $(wildcard $(RTLPG)/rtl837x_regs.h)
 	python3 tools/regnames.py $(RTLPG)/rtl837x_regs.h > $@
 $(BUILD)/src/sys/switch_core.o: $(BUILD)/regnames.inc
 
-# A firmware image for tests/fw: the newest RTLPlayground build for the bench board
-FW_IMAGE ?= $(firstword $(shell ls -t $(RTLPG)/output/SWGT024_V2_0_UNMANAGED-compact/rtlplayground-v*-compact.bin 2>/dev/null))
+# A firmware image for tests/fw: the newest RTLPlayground build for the bench board,
+# or another machine's with its board file, e.g. the 8x:
+#   make test FW_MACHINE=KEEPLINK_KP_9000_9XHPML_V1_2 FW_BOARD=boards/keeplink_kp_9000_9xhpml_v1_2.json
+FW_MACHINE ?= SWGT024_V2_0_UNMANAGED
+FW_IMAGE ?= $(firstword $(shell ls -t $(RTLPG)/output/$(FW_MACHINE)-compact/rtlplayground-v*-compact.bin 2>/dev/null))
+FW_BOARD ?=
+FWB = $(if $(FW_BOARD),--board $(FW_BOARD))
 
 # ... and its boot image (the loader and the application), for test_early_reset
-FW_BOOT_IMAGE ?= $(firstword $(shell ls -t $(RTLPG)/output/SWGT024_V2_0_UNMANAGED-compact/rtlplayground-boot-v*-compact.bin 2>/dev/null))
+FW_BOOT_IMAGE ?= $(firstword $(shell ls -t $(RTLPG)/output/$(FW_MACHINE)-compact/rtlplayground-boot-v*-compact.bin 2>/dev/null))
 
 # the flash model's own test, on the host
 $(BUILD)/test_flash_dev: tests/flash/test_flash_dev.c src/sys/flash_dev.c src/sys/flash_dev.h
@@ -61,17 +66,17 @@ test: $(BUILD)/rtlsim $(BUILD)/test_flash_dev
 	python3 tests/oldnew/test_known.py
 	python3 tests/oldnew/test_translate.py
 ifneq ($(FW_IMAGE),)
-	python3 tests/fw/test_boot.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
-	python3 tests/net/test_nic.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
-	python3 tests/net/test_l2_age.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
-	python3 tests/fabric/test_flows.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
-	python3 tests/flash/test_boot0.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
-	python3 tests/fw/test_control.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
-	python3 tests/fw/test_nic_ring.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
-	python3 tests/fw/test_lacp.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
+	python3 tests/fw/test_boot.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
+	python3 tests/net/test_nic.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
+	python3 tests/net/test_l2_age.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
+	python3 tests/fabric/test_flows.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
+	python3 tests/flash/test_boot0.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
+	python3 tests/fw/test_control.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
+	python3 tests/fw/test_nic_ring.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
+	python3 tests/fw/test_lacp.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
 ifneq ($(FW_BOOT_IMAGE),)
-	python3 tests/fw/test_early_reset.py $(FW_BOOT_IMAGE) --rtlsim $(BUILD)/rtlsim
-	python3 tests/fw/test_holds.py $(FW_BOOT_IMAGE) --rtlsim $(BUILD)/rtlsim
+	python3 tests/fw/test_early_reset.py $(FW_BOOT_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
+	python3 tests/fw/test_holds.py $(FW_BOOT_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
 endif
 else
 	@echo "fw: no firmware image (set FW_IMAGE or build RTLPlayground), skipped"

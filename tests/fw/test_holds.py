@@ -9,7 +9,8 @@ save), through the firmware's own reads:
 - reg hold 5cac 1: `regget 5cac` reads the bit set, with what the firmware
   wrote still stored (reg dump); reg release: it reads clear again;
 - phy hold 0 30 3f8 8000 (the RTL8224's SDS_INDACS_CMD busy bit): `phyget 0
-  30 03f8` reads 0x8000; released, 0;
+  30 03f8` reads the bit set over what it read before (0 on the SWTG024AS);
+  released, what it read before;
 - holds lists them; they are kept over a power cut;
 - reg busy 5cac 1 2: a table command (regset 5cac, a VLAN read) reads busy
   twice, its output (DATA_OUT_A) stale until then, done at the third read;
@@ -17,7 +18,9 @@ save), through the firmware's own reads:
   gives the same VLAN table as one without (fork main waits);
 - flash wp on: a config save from the web (POST /config) programs nothing,
   the config sector stays as it was; flash wp off (and a power cut: fork
-  main waits for WEL without end): the save goes through.
+  main waits for WEL without end): the save goes through. On an
+  object-model image (it answers get port.1.pvid) the save is set
+  sys.hostname and save by POST /cli (oldnew's post_config).
 """
 import argparse, os, sys
 
@@ -53,6 +56,9 @@ def main():
     sim = r.b.sim
     try:
         r.boot()
+        r.cli("get port.1.pvid")
+        if "port.1.pvid " in (last(r) or ""):
+            r.om = {"cfg", "sys"}		# post_config: set lines and save by /cli
         r.cli("regget 5cac")
         before = val(last(r))
         check(sim.cmd("reg hold 5cac 1") == "", "reg hold 5cac 1")
@@ -63,10 +69,12 @@ def main():
         stored = [l for l in sim.block("reg dump") if l.startswith("r 5cac ")]
         check(stored == [] or int(stored[0].split()[2], 16) & 1 == 0,
               f"what is stored is not changed: {stored or 'nothing stored'}")
+        r.cli("phyget 0 30 03f8")
+        p0 = int(val(last(r)) or "0", 16)		# the PHY's own value (the 8x's model: not 0)
         check(sim.cmd("phy hold 0 30 3f8 8000") == "", "phy hold 0 30 3f8 8000")
         r.cli("phyget 0 30 03f8")
         pv = val(last(r))
-        check(pv is not None and int(pv, 16) == 0x8000, f"the firmware reads the RTL8224's SDS_INDACS_CMD as {pv}")
+        check(pv is not None and int(pv, 16) == p0 | 0x8000, f"the firmware reads the RTL8224's SDS_INDACS_CMD as {pv} ({p0:#06x} unheld)")
         holds = sim.block("holds")
         check(holds == ["r 5cac 00000001", "p 0.1e.03f8 8000"], f"holds: {holds}")
 
@@ -81,10 +89,11 @@ def main():
         check(sim.block("holds") == ["p 0.1e.03f8 8000"], "the phy hold is kept over a power cut")
         r.cli("phyget 0 30 03f8")
         pv = val(last(r))
-        check(pv is not None and int(pv, 16) == 0x8000, f"and read after it: {pv}")
+        check(pv is not None and int(pv, 16) == p0 | 0x8000, f"and read after it: {pv}")
         check(sim.cmd("phy release all") == "", "phy release all")
         r.cli("phyget 0 30 03f8")
-        check(int(val(last(r)) or "1", 16) == 0, "released: SDS_INDACS_CMD reads 0")
+        rv = val(last(r))
+        check(rv is not None and int(rv, 16) == p0, f"released: SDS_INDACS_CMD reads {rv} again ({p0:#06x})")
         check(sim.block("holds") == [], "holds: none")
 
         # a table command that takes time
