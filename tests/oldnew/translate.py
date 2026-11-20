@@ -190,7 +190,7 @@ PATHS = [
 ]
 # Objects whose rows wait for their node; each takes itself out (P4-*, P5-*)
 # sys.mac: P4-1 left it (the MAC type's cost); the mac command stays until it moves
-PENDING = {"sys.mac", "vlan", "lag", "stp", "igmp", "lldp", "loop", "mirror",
+PENDING = {"sys.mac", "lag", "stp", "igmp", "lldp", "loop", "mirror",
            "port.design",
            "state.loader"}
 # Fields a moved state object defers (its schema lists them): the new image
@@ -2072,6 +2072,45 @@ def _vlan_show(l, v, m, r):
 
 row(r"vlan show", Read("vlan", ["port.#.(pvid|ingress|ingress_filter)", "raw.cpu.(pvid|ingress|ingress_filter)"],
                        _vlan_show, gets=lambda m, r, o: ["get port.*.pvid", "get port.*.ingress", "get port.*.ingress_filter"]))
+
+
+def _vlanlist_json(d, v, rest, m, r):
+    """/vlanlist.json: the VLANs that exist, each with its name; before P4-1
+    the management VLAN too."""
+    for e in d.get("vlan", []):
+        v[f"vlan.{e.get('id')}.name"] = e.get("name", "")
+        _left(e, {"id", "name"}, rest, f"vlan {e.get('id')} ")
+    if "mgmt" in d:
+        v["mgmt.vlan"] = str(d["mgmt"])
+    _left(d, {"vlan", "mgmt"}, rest, "")
+
+
+page(r"/vlanlist\.json", Read("vlan", ["vlan.#.name", "mgmt.vlan"], _json(_vlanlist_json),
+                              gets=lambda m, r, o: (["get vlan.*.name"] if "vlan" in o else []) +
+                              (["get mgmt.vlan"] if "mgmt" in o else [])))
+
+
+def _vlan_json(d, v, rest, m, r):
+    """/vlan.json?vid=V: the members (untagged and tagged), the name, the
+    ports whose PVID is V."""
+    V = int(m[1])
+    u, t = d.get("untagged_members", []), d.get("tagged_members", [])
+    v[f"vlan.{V}.members"], v[f"vlan.{V}.tagged"] = plist(u + t), plist(t)
+    v[f"vlan.{V}.name"] = d.get("name", "")
+    for p in d.get("pvid", []):
+        v[f"port.{p}.pvid"] = str(V)
+    _left(d, {"untagged_members", "tagged_members", "name", "pvid"}, rest, "")
+
+
+def _vlan_json_post(v, m, r):
+    """only the ports whose PVID is V: the page lists those"""
+    return {p: x for p, x in v.items() if not re.fullmatch(r"port\.\d+\.pvid", p) or x == str(int(m[1]))}
+
+
+page(r"/vlan\.json\?vid=(\d+)", Read("vlan", ["vlan.#.(members|tagged|name)", "port.#.pvid"], _json(_vlan_json),
+                                    gets=lambda m, r, o: ([f"get vlan.{int(m[1])}"] if "vlan" in o else []) +
+                                    (["get port.*.pvid"] if "port" in o else []),
+                                    post=_vlan_json_post))
 
 
 # --- lag.L (P4-3)
