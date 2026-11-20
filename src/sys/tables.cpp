@@ -283,6 +283,11 @@ void switch_tables::table_exec(u32 ctrl)
 			e->present = true;
 			e->a = in.a; e->b = in.b; e->c = in.c;
 			l2_out(e, e->idx);
+			// A unicast entry written with age 0 and no static bit is a
+			// free slot (l2.delete, the old l2_delete: their delete).
+			// Assumed, not yet measured on silicon (P7 review3, Q3).
+			if (aged_out(*e) && !(mac[0] & 1))
+				e->present = false;
 			return;
 		}
 		l2_out(e, e ? e->idx : 0);
