@@ -190,7 +190,7 @@ PATHS = [
 ]
 # Objects whose rows wait for their node; each takes itself out (P4-*, P5-*)
 # sys.mac: P4-1 left it (the MAC type's cost); the mac command stays until it moves
-PENDING = {"sys.mac", "lag", "stp", "igmp", "lldp", "loop", "mirror",
+PENDING = {"sys.mac", "stp", "igmp", "lldp", "loop", "mirror",
            "port.design",
            "state.loader"}
 # Fields a moved state object defers (its schema lists them): the new image
