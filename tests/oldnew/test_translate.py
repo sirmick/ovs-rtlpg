@@ -101,14 +101,22 @@ def main():
     case("K", t[:3] == ["set port.1.ingress tagged", "set port.2.ingress tagged", "set port.3.ingress tagged"],
          f"ingress for every port, the cage's too ({t[:3]})")
 
-    r = object.__new__(Run)
-    r.canon = {"port"}
-    try:
-        Run.post_cmd(r, "pvid 2 10")
-        ok = False
-    except NotImplementedError:
-        ok = True
-    case("L", ok, "POST /cmd of a translated object raises (no web translation yet)")
+    class Host:
+        def http(self, req, until):
+            self.req = req
+            return b"HTTP/1.1 200 OK\r\n\r\nok\nok\n"
+    sent = []
+    for om in ({"sys"}, set()):
+        r = object.__new__(Run)
+        r.canon, r.om, r.cookie, r.results, r.host = {"sys"}, om, b"c", {}, Host()
+        r._slot = lambda s: 0
+        r._key = lambda k: k
+        Run.post_cmd(r, "hostname lab1")
+        sent.append((r.host.req, r.results.get("web POST /cmd")))
+    case("L", sent[0][0].startswith(b"POST /cli ") and sent[0][0].endswith(b"set sys.hostname lab1\napply")
+         and sent[1][0].startswith(b"POST /cmd ") and sent[1][0].endswith(b"hostname lab1")
+         and sent[0][1] == sent[1][1] == "taken",
+         "POST /cmd of a moved object: set lines and apply by POST /cli there, as it is on the other; both taken")
 
     f = tempfile.NamedTemporaryFile("w", suffix=".expect", delete=False)
     f.write("* *boot -/EEE on for \\d+/ -//   # why\n* reg 0f60\n")
@@ -225,9 +233,9 @@ CONFIG = [
     ("hostname sw-1", "sys", "", {"sys.hostname": "sw-1"}, ["set sys.hostname sw-1", "apply", "get sys.hostname"], None),
     ('hostname a"b\\c', "sys", "", {"sys.hostname": "a.b.c"}, None, None),
     ("hostname a b", "sys", E_, "refused", [], None),
-    ("mac 02-11-22-33-44-55", "sys", "", {"sys.mac": "02:11:22:33:44:55"}, ["set sys.mac 02:11:22:33:44:55", "apply", "get sys.mac"], None),
-    ("mac 01:00:00:00:00:01", "sys", E_, "refused", [], None),
-    ("mac 00:00:00:00:00:01", "sys", E_, "refused", [], None),
+    ("mac 02-11-22-33-44-55", "sys.mac", "", {"sys.mac": "02:11:22:33:44:55"}, ["set sys.mac 02:11:22:33:44:55", "apply", "get sys.mac"], None),
+    ("mac 01:00:00:00:00:01", "sys.mac", E_, "refused", [], None),
+    ("mac 00:00:00:00:00:01", "sys.mac", E_, "refused", [], None),
     ("led off ports", "sys", "", {"sys.led": "ports_off"}, None, None),
     ("led on", "sys", "", {"sys.led": "on"}, None, None),
     ("led blink", "sys", E_, "refused", [], None),

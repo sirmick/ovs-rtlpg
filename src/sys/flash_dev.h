@@ -20,6 +20,8 @@
  *     as the SoC's 24-bit SPI addressing does on a small chip - which is how
  *     a copy/erase that runs off the end silently lands back on the running
  *     image at address 0;
+ *   - a program wraps within its 256 B page, as page program does: bytes
+ *     past the page's end land on (AND into) its start;
  *   - an operation count can be capped to model a power cut mid-update.
  *
  * It is pure: no firmware symbols. A separate shim binds the firmware's
@@ -33,6 +35,7 @@
 #include <stddef.h>
 
 #define FD_SECTOR_SIZE 0x1000u
+#define FD_PAGE_SIZE   0x100u
 
 typedef struct {
 	uint8_t  *mem;		/* size bytes, 0xFF when erased */
@@ -44,6 +47,7 @@ typedef struct {
 	unsigned  writes;	/* write calls performed */
 	unsigned  wrote_without_erase;	/* writes that tried to set a 0 bit */
 	unsigned  wrapped_ops;	/* ops whose address wrapped past size */
+	unsigned  page_wraps;	/* programs that ran past their 256 B page */
 
 	/* fault injection: once >0, each erase/write decrements it; at 0 the
 	 * operation is dropped (power cut) and fd_powercut is set. */
@@ -62,6 +66,11 @@ void     fd_load(flashdev_t *fd, uint32_t addr, const uint8_t *src, uint32_t len
 void     fd_read(flashdev_t *fd, uint32_t addr, uint8_t *dst, uint32_t len);
 void     fd_erase_sector(flashdev_t *fd, uint32_t addr);
 void     fd_write(flashdev_t *fd, uint32_t addr, const uint8_t *src, uint32_t len);
+/* len bytes as the SoC's flash_write_bytes() programs them: one page program
+ * per 4 B; with cut, each to the next 4 B boundary, so none crosses a page
+ * (rtl837x_flash.c since P3B2); without, at addr, addr+4, ... (before).
+ * Stops at a power cut. */
+void     fd_write_ops(flashdev_t *fd, uint32_t addr, const uint8_t *src, uint32_t len, int cut);
 
 /* Arm a power cut after n more erase/write operations (n<0 disarms). */
 void     fd_fail_after(flashdev_t *fd, int n);

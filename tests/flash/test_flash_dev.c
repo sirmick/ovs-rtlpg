@@ -56,6 +56,20 @@ int main(void)
 	CHECK(all_ff && fd.wrapped_ops == 1,
 	      "erase past end wraps onto address 0 and is flagged (wrap-erase bug)");
 
+	/* page program wraps within its 256 B page: 4 B from 0x30fe put the
+	 * last 2 at 0x3000, ANDed into what is there */
+	fd_erase_sector(&fd, 0x3000);
+	fd_load(&fd, 0x3000, (const uint8_t *)"\x0f\xf0", 2);
+	fd_write(&fd, 0x30fe, data, 4);
+	fd_read(&fd, 0x30fe, b, 4);
+	CHECK(b[0] == 0xDE && b[1] == 0xAD && b[2] == 0xFF && b[3] == 0xFF, "a program stops at its page's end");
+	fd_read(&fd, 0x3000, b, 2);
+	CHECK(b[0] == (0xBE & 0x0f) && b[1] == (0xEF & 0xf0) && fd.page_wraps == 1,
+	      "and wraps to the page's start, ANDed in, flagged");
+	fd_write(&fd, 0x3100, data, 4);
+	fd_write(&fd, 0x31fc, data, 4);
+	CHECK(fd.page_wraps == 1, "a program that ends on the page's last byte doesn't wrap");
+
 	fd_free(&fd);
 
 	/* power cut: cap ops, confirm the capped op is dropped */

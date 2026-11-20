@@ -185,7 +185,8 @@ PATHS = [
     (r"raw.**", None, ident),
 ]
 # Objects whose rows wait for their node; each takes itself out (P4-*, P5-*)
-PENDING = {"sys", "web", "mgmt", "syslog", "dns", "ntp", "vlan", "lag", "stp", "igmp", "lldp", "loop", "mirror",
+# sys.mac: P4-1 left it (the MAC type's cost); the mac command stays until it moves
+PENDING = {"sys.mac", "vlan", "lag", "stp", "igmp", "lldp", "loop", "mirror",
            "port.design",
            "state.loader",
            "state.sfp", "state.stp", "state.lag", "state.l2", "state.mib"}
@@ -377,8 +378,13 @@ def by_post(path, om):
     return any(rx.fullmatch(path) and o in om for rx, o in ACTIONS)
 
 
+# cfg: P3B's binary saved config. POST /config's text upload is gone, and
+# the config scenario saves with `save` (oldnew.py post_config)
+MARKERS = {"cfg"}
+
+
 def objects():
-    return {o for _, w in ROWS + PAGES for o in w.objs if o} | {o for _, o in ACTIONS}
+    return {o for _, w in ROWS + PAGES for o in w.objs if o} | {o for _, o in ACTIONS} | MARKERS
 
 
 def pending(objs):
@@ -1904,7 +1910,7 @@ def _prev(prev, p, default=None):
 
 row(r"hostname (\S+)", Set("sys", lambda m, r: {"sys.hostname": "".join(map(name_char, m[1]))[:23]}))
 row(r"hostname \S+ .*", Refused("sys"))		# a name with spaces: refused
-row(r"mac (\S+)", Set("sys", lambda m, r: {"sys.mac": _mac(m[1])} if _mac(m[1]) else {}))
+row(r"mac (\S+)", Set("sys.mac", lambda m, r: {"sys.mac": _mac(m[1])} if _mac(m[1]) else {}))
 row(r"led on", Set("sys", lambda m, r: {"sys.led": "on"}))
 row(r"led off", Set("sys", lambda m, r: {"sys.led": "off"}))
 row(r"led off ports", Set("sys", lambda m, r: {"sys.led": "ports_off"}))
@@ -1934,7 +1940,7 @@ def _mac_show(l, v, m, r):
     return bool(a)
 
 
-row(r"mac", Read("sys", ["state.sys.mac"], _mac_show))
+row(r"mac", Read("sys.mac", ["state.sys.mac"], _mac_show))
 
 
 @_cli

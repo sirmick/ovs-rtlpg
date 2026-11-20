@@ -164,9 +164,11 @@ void flash_controller::execute()
 		case 0x01: m_status = data[0] & 0xfc; m_wel = false; break;	// write status
 		case 0x02:						// page program
 			if (m_wel) {
-				unsigned const n = ops();
+				unsigned const n = ops(), w = m_dev.page_wraps;
 				begin_op('P', addr, len, t.program_cycles(len));
 				fd_write(&m_dev, addr, data, len);
+				if (m_dev.page_wraps != w)
+					report("flash-page", "flash: page program of %u B at %06x crosses its 256 B page: wrapped", len, addr);
 				if (op_log && ops() != n)
 					fprintf(op_log, "P %06x %u\n", addr, len);
 			}
