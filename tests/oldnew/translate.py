@@ -101,6 +101,9 @@ def n_flags(s):
 
 
 def n_bridge(s):
+    m = re.fullmatch(r"(\d+)\.(\d+)\.((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})", s.strip())    # get's: prio/4096.ext.mac
+    if m:
+        return bridge(f"{int(m[1]) * 4096 + int(m[2]):04x}", m[3].replace(":", ""))
     m = re.fullmatch(r"(?:0x)?([0-9a-fA-F]{1,4})[/.:-]?((?:[0-9a-fA-F]{2}[:-]?){6})", s.strip())
     return bridge(m[1], m[2]) if m else s
 
@@ -189,7 +192,19 @@ PATHS = [
 PENDING = {"sys.mac", "vlan", "lag", "stp", "igmp", "lldp", "loop", "mirror",
            "port.design",
            "state.loader",
-           "state.sfp", "state.stp", "state.lag", "state.l2", "state.mib"}
+           "state.sfp", "state.l2", "state.mib"}
+# Fields a moved state object defers (its schema lists them): the new image
+# has no path for them, so while the surface lasts both images read them there
+DEFERRED = [_r for _r in (
+    r"state\.stp\.(root_maxage_s|root_fwd_s|msg_age_s|tc_age_s)",
+    r"state\.stp\.(port|lag)\.\d+\.(guard_tripped|link|legacy|dbridge|dport|dcost|loop_held)",
+    r"state\.lacp\.running", r"state\.lacp\.port\.\d+\.partner_(key|port|sys_prio|port_prio)")]
+
+
+def deferred(p):
+    return any(re.fullmatch(x, p) for x in DEFERRED)
+
+
 # What `get` takes for an object, where that isn't its own name
 GETS = {"port": ["port", "state.port"], "port.design": ["port", "state.port"], "state.sched":
         ["state.sched", "state.health", "state.con"], "state.lag": ["state.lag", "state.lacp"],
@@ -312,8 +327,10 @@ class Read:
 
     def comparable(self, p, oms):
         """Whether both images can show p: each has moved its object, or
-        still has the surface."""
+        still has the surface (a deferred field: only the surface)."""
         o = obj_of(p)
+        if deferred(p):
+            return all(not self.gone(om) for om in oms)
         return all((o is not None and o in om) or not self.gone(om) for om in oms)
 
     def gets(self, m, r, objs):
@@ -1153,8 +1170,10 @@ def _stp_status_post(v, m, r):
 
 
 row(r"stp status", Read("state.stp", ["stp.(enabled|version)", "state.stp.(bridge|root|is_root|root_port|root_cost|tc_count)",
-                         "state.stp.(port|lag).#.(state|role|edge|tx_bpdu|bpdu_age_ms)"], _stp_status,
-                        narrow=_stp_status_narrow, post=_stp_status_post))
+                         "state.stp.(port|lag).#.(state|role|edge|tx_bpdu|bpdu_age_ms)", "state.stp.lag.#.members"], _stp_status,
+                        narrow=_stp_status_narrow,
+                        post=lambda v, m, r: _stp_status_post({p: x for p, x in _active_ents(v, m, r).items()
+                                                               if not p.endswith(".members")}, m, r)))
 
 
 # --- state.lag (P5-4): lacp show, lag show
@@ -1171,9 +1190,7 @@ def _lacp_show(text, m, r):
     received and the partner's system."""
     v, rest = {}, []
     for l in _lines(text):
-        a = re.fullmatch(r"LACP (on|off)", l)
-        if a:
-            v["state.lacp.running"] = a[1]
+        if re.fullmatch(r"LACP (on|off)", l):           # state.lacp.running: deferred (P5-4)
             continue
         a = re.fullmatch(r"lag (\d\d) ports 0x([0-9a-f]{4}) aggregator (\(none\)|[0-9a-f]{12}) members 0x([0-9a-f]{4})", l)
         if a:
@@ -1197,15 +1214,18 @@ def _lacp_post(v, m, r):
     """The LAG lines only for a LAG in LACP mode (the new side's lag.L.mode
     says, then goes); no aggregator when not valid."""
     lacp = {p.split(".")[1] for p, x in v.items() if re.fullmatch(r"lag\.\d\.mode", p) and x == "lacp"}
-    if any(re.fullmatch(r"lag\.\d\.mode", p) for p in v):
+    # get state.lag (P5-4) lists every LAG: an LACP one has a port in it
+    lacp |= {x for p, x in v.items() if re.fullmatch(r"state\.lacp\.port\.\d+\.lag", p) and x != "0"}
+    if any(re.fullmatch(r"(state\.lacp\.port\.\d+\.)?lag(\.\d\.mode)?", p) for p in v):
+        v = {p: x for p, x in v.items() if not p.endswith(".lag")}
         v = {p: x for p, x in v.items() if not re.fullmatch(r"(state\.)?lag\.\d\..*", p) or p.split(".")[-2] in lacp}
         v = {p: x for p, x in v.items() if not p.endswith(".mode")}
     return {p: x for p, x in v.items() if not (p.endswith(".aggregator") and
                                               v.get(p[:-len("aggregator")] + "agg_valid") == "off")}
 
 
-row(r"lacp show", Read("state.lag", ["state.lacp.running", "lag.#.(members|mode)", "state.lag.#.(active|agg_valid|aggregator)",
-                        "state.lacp.port.#.(actor|partner|rx_state|rx_pdus|partner_sys)"], _lacp_show, post=_lacp_post))
+row(r"lacp show", Read("state.lag", ["lag.#.(members|mode)", "state.lag.#.(active|agg_valid|aggregator)",
+                        "state.lacp.port.#.(lag|actor|partner|rx_state|rx_pdus|partner_sys)"], _lacp_show, post=_lacp_post))
 
 
 @_cli
@@ -1557,9 +1577,15 @@ def _stpcnt(d, v, rest, m, r):
     _left(d, set(k) | {"ports"}, rest, "")
 
 
+def _stpcnt_post(v, m, r):
+    """The active entities; the BPDU ages in whole seconds: get reads them a
+    step or two after the page would (20 ms ticks)."""
+    return {p: (str(int(x) // 1000) + " s" if p.endswith(".bpdu_age_ms") else x)
+            for p, x in _active_ents(v, m, r).items() if not p.endswith(".members")}
+
+
 page(r"/stpcnt\.json", Read("state.stp", ["stp.enabled", "state.stp.tc_count", "state.stp.(port|lag).#.(rx_bpdu|tx_bpdu|rx_tc|tx_tc|bpdu_age_ms)",
-                             "state.stp.lag.#.members"], _json(_stpcnt),
-                            post=lambda v, m, r: {p: x for p, x in _active_ents(v, m, r).items() if not p.endswith(".members")}))
+                             "state.stp.lag.#.members"], _json(_stpcnt), post=_stpcnt_post))
 
 
 def _lag_json(d, v, rest, m, r):
