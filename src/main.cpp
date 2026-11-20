@@ -572,8 +572,8 @@ int main(int argc, char **argv)
 			(unsigned long long)sys.cpu().idle_skipped, (unsigned long long)sys.resets);
 		auto &n = sys.nic().stats;
 		auto &d = sys.flash().dev();
-		fprintf(stderr, "rtlsim: flash: %u erases, %u programs, %u wrapped past the end, %u wrote without erase\n",
-			d.erases, d.writes, d.wrapped_ops, d.wrote_without_erase);
+		fprintf(stderr, "rtlsim: flash: %u erases, %u programs, %u wrapped past the end, %u wrapped in a page, %u wrote without erase\n",
+			d.erases, d.writes, d.wrapped_ops, d.page_wraps, d.wrote_without_erase);
 		if (fab)
 			fprintf(stderr, "rtlsim: fabric: %llu compiles, %zu flows, %llu learned, %llu aged out\n",
 				(unsigned long long)fab->compiles, ofp->flows_installed(),

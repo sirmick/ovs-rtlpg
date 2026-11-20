@@ -69,14 +69,30 @@ void fd_write(flashdev_t *fd, uint32_t addr, const uint8_t *src, uint32_t len)
 	fd->writes++;
 	if (addr > fd->addr_mask || addr + len > fd->size)
 		fd->wrapped_ops++;
+	if ((addr & (FD_PAGE_SIZE - 1)) + len > FD_PAGE_SIZE)
+		fd->page_wraps++;
 	for (uint32_t i = 0; i < len; i++) {
-		uint32_t a = (addr + i) & fd->addr_mask;
+		/* page program wraps within its 256 B page */
+		uint32_t a = ((addr & ~(FD_PAGE_SIZE - 1)) | ((addr + i) & (FD_PAGE_SIZE - 1))) & fd->addr_mask;
 		uint8_t  want = src[i], have = fd->mem[a];
 		/* NOR can only clear bits: any bit set in want but clear in have
 		 * cannot be written without erasing first. */
 		if (want & ~have)
 			fd->wrote_without_erase++;
 		fd->mem[a] = have & want;
+	}
+}
+
+void fd_write_ops(flashdev_t *fd, uint32_t addr, const uint8_t *src, uint32_t len, int cut)
+{
+	while (len && !fd->powercut) {
+		uint32_t n = cut ? 4 - (addr & 3) : 4;
+		if (len < n)
+			n = len;
+		fd_write(fd, addr, src, n);
+		addr += n;
+		src += n;
+		len -= n;
 	}
 }
 
