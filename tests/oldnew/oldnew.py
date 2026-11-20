@@ -79,6 +79,7 @@ def _link_first(t):
 
 class Run:
     """What a scenario does to one image, and what came back."""
+    reads = None			# get_l2_pages: a get line's reply, read once for every page
 
     def __init__(self, image, board, rtlsim, payload, om=(), oms=()):
         self.b = Bench(image, board=board, rtlsim=rtlsim)
@@ -266,9 +267,13 @@ class Run:
         if moved:
             text = ""
             for l in what.gets(m, self, moved):
-                out = self._typed(l, until)
+                out = self.reads.get(l) if self.reads is not None else None
+                if out is None:
+                    out = self._typed(l, until)
                 if out is None:
                     return None
+                if self.reads is not None:
+                    self.reads[l] = out
                 text += out
             got, more = what.new(text, m, self, moved)
             v.update(got)
@@ -489,10 +494,20 @@ class Run:
     def get_l2_pages(self, pages=40, slot=2000):
         """/l2.json as the UI loads it (app.js l2Load()): from index 0, each
         page from the index after the last entry of the one before, until a
-        page is empty or comes round to an entry already seen."""
+        page is empty or comes round to an entry already seen. An image
+        with state.l2 (P5-5) reads the table once, a get state.l2 (the first
+        page's slot is long enough for it on both), and each page is cut
+        from it (translate._l2_page)."""
         idx, seen = 0, set()
-        for _ in range(pages):
-            self.get(f"/l2.json?idx={idx}", slot=slot)
+        self.reads = {} if "state.l2" in self.om else None
+        try:
+            self._l2_pages(pages, slot, idx, seen)
+        finally:
+            self.reads = None
+
+    def _l2_pages(self, pages, slot, idx, seen):
+        for i in range(pages):
+            self.get(f"/l2.json?idx={idx}", slot=slot if i else max(slot, 30000))
             res = self.results[f"{self.n - 1:03d} web GET /l2.json?idx={idx}"]
             if res.startswith("HTTP/"):
                 got = [int(x, 16) for x in re.findall(r'"idx": *"([0-9a-fA-F]+)"', res.partition("\n\n")[2])]

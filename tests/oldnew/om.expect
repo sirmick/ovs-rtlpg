@@ -98,3 +98,14 @@ config *boot -/.*/ +/.*/
 # /stpcnt.json is gone (P5-4): the stp scenario reads it with get, so it
 # sends fewer HTTP frames to the host
 stp frames * tcp/80
+
+# /ports.json, /traffic.json, /counters.json and /l2.json are gone (P5-5):
+# the scenarios read them with get, so they send fewer HTTP frames to the host
+vlan,sfp,flaps,l2_big,lacp_l2 frames * tcp/80
+# get state.l2 walks the table once, to the search that wraps; the old pages
+# stopped at outbuf's room, a page at a time: the table registers' last
+# values differ (the values read are the same)
+l2_big,lacp_l2 reg 5cac
+l2_big,lacp_l2 reg 5cb0
+l2_big,lacp_l2 reg 5ccc
+l2_big,lacp_l2 reg 5cd0
