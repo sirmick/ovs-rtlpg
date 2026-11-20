@@ -46,13 +46,16 @@ class Console:
     def console(self, line, until):
         self.typed.append(line)
         self.now += 1000
-        return "", f"{line}\n{self.replies.get(line, 'ok')}\n> "
+        x = self.replies.get(line, "ok")
+        if isinstance(x, list):		# one reply after another
+            x = x.pop(0) if len(x) > 1 else x[0]
+        return "", f"{line}\n{x}\n> "
 
 
-def run(side_om, line, replies, board=None):
+def run(side_om, line, replies, board=None, canon=("port",)):
     r = object.__new__(Run)
     r.b, r.t, r.n, r.results, r.replies = Console(replies), 0, 0, {}, {}
-    r.om, r.oms, r.canon = set(side_om), [set(), {"port"}], {"port"}
+    r.om, r.oms, r.canon = set(side_om), [set(), set(canon)], set(canon)
     r.P, r.F, r.cages = ([0, 1], ["1", "2"], {1: (8, "3")}) if board is None else (board.P, board.F, board.cages)
     r.cli(line)
     return r.b.typed, r.results[f"000 cli {line}"]
@@ -92,8 +95,8 @@ def main():
     case("H", res == res2 == "refused" and t2 == [], f"a usage error: refused on both, the new one types nothing ({t2})")
     t, res = run((), "pvid", {"pvid": "something"})
     case("I", res != "refused", "the old one accepting it is a difference")
-    t, res = run({"port"}, "vlan show", {"vlan show": "table"})
-    case("J", t == ["vlan show"] and res == "vlan show\ntable\n> ", "a line with no row goes as it is")
+    t, res = run({"port"}, "version", {"version": "table"})
+    case("J", t == ["version"] and res == "version\ntable\n> ", "a line whose rows' objects aren't named goes as it is")
     t, res = run({"port"}, "ingress t", {})
     case("K", t[:3] == ["set port.1.ingress tagged", "set port.2.ingress tagged", "set port.3.ingress tagged"],
          f"ingress for every port, the cage's too ({t[:3]})")
@@ -153,6 +156,7 @@ def main():
     case("T", ok, f"a live row says what it can't compare yet: {nc}")
     fails += not ok
     fails += real_gets(case)
+    fails += config_rows(case)
     fails += state_paths(case)
     sys.exit(1 if fails else 0)
 
@@ -195,6 +199,169 @@ def real_gets(case):
     ok = o == n == o2 == "refused" and "discard" in t
     fails += not ok
     case("Q9", ok, f"the old SFP and lldp refusals without Error: are refused; the new err too ({o!r}, {n!r}, {o2!r})")
+    return fails
+
+
+# --- the config commands of the P4 objects (P3H): each row on both images.
+# A case: the old line, its objects, what the old says (Error..., or ""),
+# the values it means (or "refused", "ok"), the lines the new image is
+# typed (None: not checked), the new image's state before (get's values).
+# The new image's get replies after are the wanted values: the result
+# must come back the same (a deleted entry: get refuses it).
+
+E_ = "Error: no"
+CONFIG = [
+    ("hostname sw-1", "sys", "", {"sys.hostname": "sw-1"}, ["set sys.hostname sw-1", "apply", "get sys.hostname"], None),
+    ('hostname a"b\\c', "sys", "", {"sys.hostname": "a.b.c"}, None, None),
+    ("hostname a b", "sys", E_, "refused", [], None),
+    ("mac 02-11-22-33-44-55", "sys", "", {"sys.mac": "02:11:22:33:44:55"}, ["set sys.mac 02:11:22:33:44:55", "apply", "get sys.mac"], None),
+    ("mac 01:00:00:00:00:01", "sys", E_, "refused", [], None),
+    ("mac 00:00:00:00:00:01", "sys", E_, "refused", [], None),
+    ("led off ports", "sys", "", {"sys.led": "ports_off"}, None, None),
+    ("led on", "sys", "", {"sys.led": "on"}, None, None),
+    ("led blink", "sys", E_, "refused", [], None),
+    ("passwd my long secret", "web", "", {"web.password": "*"}, ["set web.password my long secret", "apply", "get web.password"], None),
+    ("passwd 123456789012345678901234", "web", "", {"web.password": "*"}, ["set web.password 12345678901234567890", "apply",
+                                                                          "get web.password"], None),
+    ("session 300", "web", "Session timeout: 300 s", {"web.session_timeout_s": "300"}, None, None),
+    ("session 0", "web", "Must be 1-65535 s", "refused", None, None),
+    ("ip 10.0.0.2", "mgmt", "", {"mgmt.ip": "10.0.0.2", "mgmt.mode": "static"}, None, None),
+    ("ip 300.0.0.2", "mgmt", E_, "refused", [], None),
+    ("ip dhcp", "mgmt", "", {"mgmt.mode": "dhcp"}, ["get mgmt.mode", "set mgmt.mode dhcp", "apply", "do mgmt.dhcp_renew", "get mgmt.mode"],
+     {"mgmt.mode": "dhcp"}),
+    ("ip dhcp", "mgmt", "", {"mgmt.mode": "dhcp"}, ["get mgmt.mode", "set mgmt.mode dhcp", "apply", "get mgmt.mode"], {"mgmt.mode": "static"}),
+    ("gw 10.0.0.1", "mgmt", "", {"mgmt.gateway": "10.0.0.1"}, None, None),
+    ("netmask 255.255.0.0", "mgmt", "", {"mgmt.netmask": "255.255.0.0"}, None, None),
+    ("vlan 5 mgmt", "mgmt", "", {"mgmt.vlan": "5"}, ["get mgmt.mode", "get mgmt.vlan", "set mgmt.vlan 5", "apply", "do mgmt.dhcp_renew",
+                                                     "get mgmt.vlan"], {"mgmt.mode": "dhcp", "mgmt.vlan": "1"}),
+    ("vlan 5 mgmt", "mgmt", "", {"mgmt.vlan": "5"}, ["get mgmt.mode", "get mgmt.vlan", "set mgmt.vlan 5", "apply", "get mgmt.vlan"],
+     {"mgmt.mode": "dhcp", "mgmt.vlan": "5"}),
+    ("dns server 1.1.1.1", "dns", "", {"dns.server1": "1.1.1.1", "dns.server2": "0.0.0.0"}, None, None),
+    ("dns server 1.1.1.1 8.8.8.8", "dns", "", {"dns.server1": "1.1.1.1", "dns.server2": "8.8.8.8"}, None, None),
+    ("dns server 1.1.1.1 bad", "dns", E_, {"dns.server1": "1.1.1.1", "dns.server2": "0.0.0.0"}, None, None),
+    ("dns server bad", "dns", E_, "refused", [], None),
+    ("ntp on", "ntp", "", {"ntp.enabled": "on"}, ["get ntp.enabled", "set ntp.enabled on", "apply", "do ntp.sync", "get ntp.enabled"],
+     {"ntp.enabled": "on"}),
+    ("ntp on", "ntp", "", {"ntp.enabled": "on"}, ["get ntp.enabled", "set ntp.enabled on", "apply", "get ntp.enabled"], {"ntp.enabled": "off"}),
+    ("ntp timezone 5:30", "ntp", "", {"ntp.timezone": "+05:30"}, None, None),
+    ("ntp timezone -12", "ntp", "", {"ntp.timezone": "-12:00"}, None, None),
+    ("ntp timezone +15", "ntp", E_, "refused", [], None),
+    ("ntp interval 0", "ntp", E_, "refused", [], None),
+    ("ntp dst eu", "ntp", "", {"ntp.dst": "eu"}, None, None),
+    ("ntp server pool.example", "ntp", "", {"ntp.server": "pool.example"}, None, None),
+    ("syslog ip 10.0.0.9", "syslog", "", {"syslog.server": "10.0.0.9"}, None, None),
+    ("syslog port 1514", "syslog", "", {"syslog.port": "1514"}, None, None),
+    ("syslog on", "syslog", "", {"syslog.enabled": "on"}, None, None),
+    ("vlan 10 office 2 3t", "vlan", "", {"vlan.10.name": "office", "vlan.10.members": "2,3", "vlan.10.tagged": "3"}, None, None),
+    ("vlan 10 2 3", "vlan", "", {"vlan.10.members": "2,3", "vlan.10.tagged": "none"}, None, None),
+    ("vlan 10 office", "vlan", "", {"vlan.10.name": "office", "vlan.10.members": "none", "vlan.10.tagged": "none"}, None, None),
+    ("vlan 10 dmz", "vlan", "", {"vlan.10": "<deleted>"}, ["del vlan.10", "apply", "get vlan.10"], None),
+    ("vlan 10 d", "vlan", "", {"vlan.10": "<deleted>"}, None, None),
+    ("vlan 0 2", "vlan", E_, "refused", [], None),
+    ("vlan 4095 2", "vlan", E_, "refused", [], None),
+    ("lag 1 3 4", "lag", "", {"lag.1.mode": "static", "lag.1.members": "3,4"}, None, None),
+    ("lag 2 d", "lag", "", {"lag.2.mode": "off", "lag.2.members": "none"}, None, None),
+    ("lag 1 lacp 3 4", "lag", "", "ok", ["get lag.1.mode", "get lag.1.members", "get lag.2.mode", "get lag.2.members", "get lag.3.mode",
+                                        "get lag.3.members", "get lag.4.mode", "get lag.4.members", "set lag.1.mode lacp",
+                                        "set lag.1.members 3,4", "set lag.2.members 5", "apply"],
+     {"lag.2.mode": "lacp", "lag.2.members": "4-5"}),
+    ("lag 1 lacp 3 4", "lag", "", "ok", None, {"lag.2.mode": "lacp", "lag.2.members": "4"}),
+    ("lacp off", "lag", "", "ok", None, {"lag.1.mode": "lacp", "lag.3.mode": "lacp", "lag.2.mode": "static"}),
+    ("lag 3 lacp off", "lag", "", "ok", ["get lag.3.mode"], {"lag.3.mode": "static"}),
+    ("laghash 1 smac dmac", "lag", "", {"lag.1.hash": "dmac,smac"}, None, None),
+    ("laghash 1 bogus", "lag", E_, "refused", [], None),
+    ("stp prio 4", "stp", "", {"stp.priority": "4"}, None, None),
+    ("stp hello 11", "stp", E_, "refused", [], None),
+    ("stp port 3 edge auto", "stp", "", {"stp.port.3.edge": "auto"}, None, None),
+    ("stp lag 2 prio 32", "stp", "", {"stp.lag.2.priority": "32"}, None, None),
+    ("stp port 3 prio 33", "stp", E_, "refused", [], None),
+    ("stp port 3 cost 20000", "stp", "", {"stp.port.3.cost": "20000"}, None, None),
+    ("stp clear", "stp", "", "ok", ["do stp.counters_clear"], None),
+    ("stp port 2 mcheck", "stp", "", "ok", ["do stp.port.2.mcheck"], None),
+    ("stp version stp", "stp", "", {"stp.version": "stp"}, None, None),
+    ("igmp on", "igmp", "", {"igmp.enabled": "on"}, None, None),
+    ("lldp on", "lldp", "", {"lldp.enabled": "on"}, None, None),
+    ("lldp show", "lldp", "", {"lldp.enabled": "off"}, None, None),
+    ("lldp", "lldp", "", {"lldp.enabled": "off"}, None, None),
+    ("loop on", "loop", "", {"loop.enabled": "on"}, None, None),
+    ("mirror 1 2 3r 4t", "mirror", "", {"mirror.enabled": "on", "mirror.port": "1", "mirror.rx": "2,3", "mirror.tx": "2,4"}, None, None),
+    ("mirror off", "mirror", "", {"mirror.enabled": "off"}, None, None),
+    ("bw in 2 100", "port.design", "", {"port.2.bw_in_kbps": "256", "port.2.bw_in_mode": "fc"}, None, None),
+    ("bw in 2 1f", "port.design", "", {"port.2.bw_in_kbps": "16", "port.2.bw_in_mode": "fc"}, None, None),
+    ("bw out 3 off", "port.design", "", {"port.3.bw_out_kbps": "0"}, None, None),
+    ("bw in 2 drop", "port.design", "", {"port.2.bw_in_mode": "drop"}, None, None),
+    ("bw out 2 drop", "port.design", E_, "refused", [], None),
+    ("storm 3 bcast 1000 pps", "port.design", "", {"port.3.storm.bcast.rate": "1000", "port.3.storm.bcast.unit": "pps"}, None, None),
+    ("storm 3 bcast 0 pps", "port.design", "usage: storm [...]", "refused", [], None),
+    ("storm 3 umcast off", "port.design", "", {"port.3.storm.umcast.rate": "0"}, None, None),
+    ("sfp 1 10g", "port.design", "", {"port.9.speed": "10g"}, ["set port.9.speed 10g", "apply", "get port.9.speed"], None),
+    ("sfp 2 10g", "port.design", E_, "refused", [], None),
+]
+
+
+def config_rows(case):
+    """Each CONFIG case on the old image (the line typed, its meaning or
+    refused) and the new one (the lines typed; the values read back the
+    same). The objects named only for the case."""
+    fails, bad = 0, []
+    B = SimpleNamespace(P=list(range(8)), F=[str(i + 1) for i in range(8)], cages={1: (8, "9")})
+    for line, obj, says, want, typed, prev in CONFIG:
+        canon = (obj,)
+        _, o = run((), line, {line: says}, B, canon)
+        w = want if isinstance(want, str) else translate.canon(translate.normalized(want))
+        rep = {f"get {p}": f"{p} {x}\nok" for p, x in (prev or {}).items()}
+        after = {} if isinstance(want, str) else {f"get {p}": "err no such" if x == "<deleted>" else f"{p} {x}\nok"
+                                                  for p, x in want.items()}
+        if isinstance(want, dict) and "web.password" in want:
+            after = {"get web.password": "web.password *\nok"}
+        both = {k: [rep[k], after[k]] if k in rep and k in after else rep.get(k, after.get(k)) for k in set(rep) | set(after)}
+        t, n = run({obj}, line, both, B, canon)
+        ok = o == w and n == w and (typed is None or t == typed)
+        if not ok:
+            bad.append(f"{line!r}: old {o!r}, new {n!r}, want {w!r}" + (f", typed {t}" if typed is not None and t != typed else ""))
+    fails += bool(bad)
+    case("C1", not bad, f"{len(CONFIG)} config lines of {len({c[1] for c in CONFIG})} objects, both images, the side effects "
+         "(ip dhcp and vlan N mgmt renew, ntp on syncs, lacp moves ports, bw rate means fc, ...)" + ("; " + "; ".join(bad[:4]) if bad else ""))
+    # every config command form has a row (CONF_CMDS and the others)
+    forms = ["hostname x", "mac 02:00:00:00:00:01", "led on", "passwd x", "session 9", "ip 1.2.3.4", "ip dhcp", "gw 1.2.3.4",
+             "netmask 255.0.0.0", "vlan 9 mgmt", "dns server 1.2.3.4", "ntp on", "ntp off", "ntp server x", "ntp interval 5",
+             "ntp timezone +01:00", "ntp dst us", "syslog on", "syslog ip 1.2.3.4", "syslog port 5", "vlan 9 a 1 2t", "vlan 9 d",
+             "lag 1 2 3", "lag 1 lacp 2 3", "lag 1 d", "lag 1 lacp off", "lacp off", "laghash 1 sip", "stp on", "stp prio 1",
+             "stp hello 2", "stp maxage 20", "stp fwd 15", "stp txhold 6", "stp version rstp", "stp pathcost short",
+             "stp bpdu filter", "stp port 1 on", "stp lag 1 off", "stp port 1 edge on", "stp port 1 cost 5", "stp port 1 prio 16",
+             "stp port 1 guard bpdu", "stp port 1 filter on", "stp port 1 p2p on", "igmp on", "lldp on", "loop on",
+             "mirror 1 2", "mirror off", "bw in 1 10", "bw in 1 fc", "bw out 1 10", "storm 1 bcast 5 pps", "storm 1 bcast off",
+             "sfp 1 1g", "port 1 duplex full", "port 1 name x", "port 1 on", "port 1 1g", "pvid 1 1", "mtu 1 1500",
+             "isolate 1 off", "ingress 1u", "eee on 1"]
+    every = {o for _, w in translate.ROWS for o in w.objs if o}
+    miss = [f for f in forms if not translate.find(f, every) or isinstance(translate.find(f, every)[1], translate.Refused)]
+    fails += bool(miss)
+    case("C2", not miss, f"{len(forms)} config command forms, each with a row that translates it" + (f": missing {miss}" if miss else ""))
+    # the readbacks: a dump as 53ee574 leaves it, and the running values that match it
+    B2 = SimpleNamespace(P=[0, 1], F=["1", "2"], cages={})
+    dump = ["r 4f38 00000003", "r 4f48 0000007e", "r 6048 00000003", "r 604c 00010002", "r 5310 000fffff", "r 4ee8 00000010",
+            "r 52a0 00ff7c2a", "r 106c 0000000d", "r 4c18 00100010", "r 4c8c 00000001", "r 54e4 00000002",
+            "r 5d60 000003e8", "r 5ef0 00000000", "r 5ef4 00000000"]
+    vlans = ["001 0207ffff", "00a 0207ce0e"]
+    l2 = ["118 00b5325d 600106eb 0001001e"]		# rtlsim's, 53ee574's management entry
+    running = {"lag.1.members": "1-2", "lag.1.hash": "smac,dmac,sip,dip,sport,dport", "lag.1.mode": "static",
+               "lag.2.members": "none", "lag.2.hash": "none", "lag.3.members": "none", "lag.3.hash": "none",
+               "lag.4.members": "none", "lag.4.hash": "none", "mirror.enabled": "on", "mirror.port": "2",
+               "mirror.rx": "1", "mirror.tx": "2", "stp.enabled": "off", "lldp.enabled": "on", "igmp.enabled": "on",
+               "loop.enabled": "on", "vlan.1.members": "1-2", "vlan.1.tagged": "none", "vlan.10.members": "2",
+               "vlan.10.tagged": "2", "sys.led": "on", "sys.mac": "06:eb:00:b5:32:5d", "mgmt.vlan": "1",
+               "port.1.bw_in_kbps": "256", "port.1.bw_in_mode": "fc", "port.2.bw_in_kbps": "0", "port.2.bw_in_mode": "drop",
+               "port.1.bw_out_kbps": "0", "port.2.bw_out_kbps": "0", "port.2.storm.bcast.rate": "1000",
+               "port.2.storm.bcast.unit": "kbps", **{f"port.{n}.storm.{t}.rate": "0" for n in (1, 2) for t in translate.STORMS
+                                                     if (n, t) != (2, "bcast")}}
+    objs = {"lag", "mirror", "stp", "lldp", "igmp", "loop", "vlan", "sys", "mgmt", "port.design"}
+    bad, n = translate.boot_defaults(dump, running, B2, objs, vlans, l2)
+    got = sorted(p for p, _, _ in bad)
+    want = ["vlan.10.tagged"]		# the running says 2 tagged; the word (the 8x's vlan 10) has it untagged
+    ok = got == want and n > 30
+    fails += not ok
+    case("C3", ok, f"the readbacks of the P4 objects: trunk, hash, mirror, STP, LLDP, IGMP, RLDP, VLAN table, LEDs, the "
+         f"management entry, bandwidth, storm meters: {n} compared, the differences {got}")
     return fails
 
 

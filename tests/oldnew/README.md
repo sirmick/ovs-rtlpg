@@ -102,6 +102,18 @@ corrects what its schema named otherwise). A config the config scenario
 saves goes to the new image as set lines and an apply (`Run.convert()`, a
 stand-in for `rtlpg_client.py convert`).
 
+The config commands of the P4 objects have their rows too, pending:
+every CONF_CMDS form and the others (mac, sfp, port N duplex) to DESIGN 6's
+paths, with the old commands' side effects: a `Set` may delete a keyed
+entry (`del vlan.10` for `vlan 10 dmz`), read the new image's state first
+(`before`) and type actions after the apply (`then`: `ip dhcp` renews when
+DHCP was on already, `ntp on` syncs); one whose values depend on that state
+(LACP taking a port from another LAG, `lacp off`) compares only accepted or
+refused, its effect left to the registers and tables. The check "boot
+defaults" (READBACK) reads every register-backed field back from rtlsim
+after the first boot, per port, LAG, VLAN or once, against get's running
+value: a default the chip doesn't hold fails the run.
+
 A POST /cmd of a moved object raises until the web side is translated
 too. `test_translate.py` (in `make test`) checks the rows and the line
 items without rtlsim: every old surface's samples (`om_samples.json`, from

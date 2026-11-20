@@ -137,16 +137,22 @@ PATHS = [
     # DESIGN 7.5 paths dab5d13 hasn't (or names otherwise: eee_active, cabletest.a)
     (r"state.port.#.eee.active", "port.design", ident), (r"state.port.#.(eee.lp|lp_adv)", "port.design", n_flags),
     (r"state.port.#.lag", "port.design", num), (r"port.#.eee_speeds", "port.design", n_flags),
+    (r"port.#.(bw_in_kbps|bw_out_kbps)", "port.design", num), (r"port.#.bw_in_mode", "port.design", ident),
+    (r"port.#.storm.(bcast|mcast|ucast|umcast).rate", "port.design", num),
+    (r"port.#.storm.(bcast|mcast|ucast|umcast).unit", "port.design", ident),
     (r"state.port.#.mib.*", "state.mib", num),
     # config (DESIGN 6)
     (r"sys.mac", "sys", mac), (r"sys.(hostname|led)", "sys", ident),
     (r"web.session_timeout_s", "web", num), (r"mgmt.vlan", "mgmt", num), (r"mgmt.*", "mgmt", ident),
+    (r"web.password", "web", lambda x: "*"),	# a Secret: get prints *
     (r"syslog.port", "syslog", num), (r"syslog.*", "syslog", ident), (r"dns.*", "dns", ident),
     (r"ntp.interval_min", "ntp", num), (r"ntp.*", "ntp", ident),
     (r"lag.#.members", "lag", n_pmask), (r"lag.#.hash", "lag", n_flags), (r"lag.#.mode", "lag", ident),
     (r"stp.(priority|hello_s|maxage_s|fwd_delay_s|txhold)", "stp", num),
     (r"stp.(port|lag).#.(cost|priority)", "stp", num), (r"stp.**", "stp", ident),
-    (r"loop.enabled", "loop", ident), (r"lldp.enabled", "lldp", ident),
+    (r"loop.enabled", "loop", ident), (r"lldp.enabled", "lldp", ident), (r"igmp.enabled", "igmp", ident),
+    (r"vlan.#.(members|tagged)", "vlan", n_pmask), (r"vlan.#.name", "vlan", ident), (r"vlan.#", "vlan", ident),
+    (r"mirror.(rx|tx)", "mirror", n_pmask), (r"mirror.(enabled|port)", "mirror", ident),
     # state (DESIGN 7)
     (r"state.sys.mac", "state.sys", mac), (r"state.sys.(uptime_s|image_size|flash.size)", "state.sys", num),
     (r"state.sys.(temp_c|temp_poweron_c)", "state.sys", n_dec(1)),
@@ -179,7 +185,8 @@ PATHS = [
     (r"raw.**", None, ident),
 ]
 # Objects whose rows wait for their node; each takes itself out (P4-*, P5-*)
-PENDING = {"sys", "web", "mgmt", "syslog", "dns", "ntp", "lag", "stp", "loop", "lldp", "port.design",
+PENDING = {"sys", "web", "mgmt", "syslog", "dns", "ntp", "vlan", "lag", "stp", "igmp", "lldp", "loop", "mirror",
+           "port.design",
            "state.sys", "state.sched", "state.mgmt", "state.ntp", "state.dns", "state.loop", "state.loader",
            "state.sfp", "state.stp", "state.lag", "state.l2", "state.mib"}
 # What `get` takes for an object, where that isn't its own name
@@ -228,7 +235,7 @@ def canon(v, rest=()):
 
 
 # What the old CLI says, not through cmd_error(), when it does nothing
-REFUSALS = ("is SFP no PHY information available", "Unknown port <port> lldp")
+REFUSALS = ("is SFP no PHY information available", "Unknown port <port> lldp", "Must be 1-65535 s", "usage: storm")
 
 
 def refused(text):
@@ -238,14 +245,31 @@ def refused(text):
 
 def normalized(v):
     """Values by path as the canon has them (each path's norm())."""
-    return {p: path_of(p)[1](x) if path_of(p) else x for p, x in v.items()}
+    return {p: path_of(p)[1](x) if path_of(p) and not x.startswith("<") else x for p, x in v.items()}
 
 
 # --- rows
 
+DEL = None	# a Set value: the keyed entry goes (del <path>)
+
+
 class Set:
-    def __init__(self, obj, values):
-        self.objs, self.values = {obj}, values
+    """A setting. values(m, r, prev) is {path: value}, a value DEL for an
+    entry deleted; prev is {path: value} of the before(m, r) paths as get
+    printed them on the new image (None on the old). then(m, r, prev) are
+    the lines typed after apply: the old command's side effects that are
+    actions now (do ...). status: the values depend on prev, which the old
+    image can't print, so the result is only accepted or refused (the
+    effect is compared in the registers and tables). accept_error: the old
+    command sets the values even though it says Error (dns server a <bad>)."""
+    def __init__(self, obj, values, before=None, then=None, status=False, accept_error=False):
+        self.objs, self.values, self.before, self.then = {obj}, values, before, then
+        self.status, self.accept_error = status, accept_error
+
+    def vals(self, m, r, prev=None):
+        if self.values.__code__.co_argcount == 3:
+            return self.values(m, r, prev)
+        return self.values(m, r)
 
 
 class Refused:
@@ -1649,66 +1673,581 @@ page(r"/isolation\.json", Read("port", ["port.#.isolate"], _json(_isolation), ge
 # --- the pages with side effects (P3C: POST only on the new image; the
 # old takes GET)
 
-for _rx in (r"/reset", r"/cmd_log_clear", r"/l2_del\.json\?idx=\d+"):
-    action(_rx, "http.post")
+for _page in (r"/reset", r"/cmd_log_clear", r"/l2_del\.json\?idx=\d+"):
+    action(_page, "http.post")
 
 
 # --- the boot's defaults against the hardware (a design call: the boot
 # programs only the fields that differ from the schema's defaults, so a
 # default the chip's reset or init state doesn't hold is a bug). Each row:
-# a config field, its object, and how to read it back from rtlsim's stored
-# registers (reg dump: regs {addr: value}, phys {(phy, mmd, reg): value}) for
-# logical port l, as the old firmware's readback reads it; copper only or
-# every port. Registers never written read 0, as in rtlsim.
+# a config field (N a front port, L a LAG, V a VLAN), its object, its scope
+# (port, copper, lag, vlan, global) and how to read it back from rtlsim's
+# stored state as the old firmware's setters encode it: f(c, i) with c.regs
+# {addr: value}, c.phys {(phy, mmd, reg): value}, c.vlans {vid: word},
+# c.l2 [(idx, a, b, c)], c.r (the board), c.running (get's values); i the
+# logical port, the LAG or the VID. It gives the value, a tuple of values
+# any of which is right, or None: not compared here. Registers never
+# written read 0, as in rtlsim.
 
 READBACK = []
 
 
-def readback(path, obj, f, copper=False):
-    READBACK.append((path, obj, f, copper))
+def readback(path, obj, f, scope="port"):
+    READBACK.append((path, obj, f, scope))
 
 
-def _reg(regs, a):
-    return regs.get(a, 0)
+def _reg(c, a):
+    return c.regs.get(a, 0)
 
 
-readback("port.N.mtu", "port", lambda rg, ph, l, r: str(_reg(rg, 0x1250 + (l << 8)) & 0x3fff))	# parse_mtu()
-readback("port.N.pvid", "port", lambda rg, ph, l, r: str(_reg(rg, 0x4e1c + (l >> 1 << 2)) >> (12 if l & 1 else 0) & 0xfff))
-readback("port.N.ingress", "port", lambda rg, ph, l, r: ("all", "tagged", "untagged", "3")[_reg(rg, 0x4e10) >> 2 * l & 3])
-readback("port.N.ingress_filter", "port", lambda rg, ph, l, r: onoff(_reg(rg, 0x4e18) >> l & 1))
-readback("port.N.isolate", "port", lambda rg, ph, l, r: lmask(_reg(rg, 0x50c0 + (l << 2)) & 0xffff, r))
-readback("port.N.eee", "port", lambda rg, ph, l, r: onoff(_reg(rg, 0x125c + (l << 8)) & 3 == 3), copper=True)	# EEE_CTRL rx|tx
-readback("port.N.enabled", "port", lambda rg, ph, l, r: onoff(not ph.get((l, 0x1f, 0xa610), 0) & 0x0800), copper=True)
-# not read back here: speed and duplex (the PHY's AN and forced registers, as
+def _bit(c, a, b):
+    return _reg(c, a) >> b & 1
+
+
+# port.N (live): parse_mtu(), port_pvid_write(), port_ingress_filter(),
+# port_ingress_vlan_filter_set(), port_isolate(), port_eee_enable(), the PHY's
+# power-down bit (phy_set_speed())
+readback("port.N.mtu", "port", lambda c, l: str(_reg(c, 0x1250 + (l << 8)) & 0x3fff))
+readback("port.N.pvid", "port", lambda c, l: str(_reg(c, 0x4e1c + (l >> 1 << 2)) >> (12 if l & 1 else 0) & 0xfff))
+readback("port.N.ingress", "port", lambda c, l: ("all", "tagged", "untagged", "3")[_reg(c, 0x4e10) >> 2 * l & 3])
+readback("port.N.ingress_filter", "port", lambda c, l: onoff(_bit(c, 0x4e18, l)))
+readback("port.N.isolate", "port", lambda c, l: lmask(_reg(c, 0x50c0 + (l << 2)) & 0xffff, c.r))
+readback("port.N.eee", "port", lambda c, l: onoff(_reg(c, 0x125c + (l << 8)) & 3 == 3), "copper")	# EEE_CTRL rx|tx
+readback("port.N.enabled", "port", lambda c, l: onoff(not c.phys.get((l, 0x1f, 0xa610), 0) & 0x0800), "copper")
+# not read back: speed and duplex (the PHY's AN and forced registers, as
 # phy_set_speed() leaves them), lldp and name (no hardware)
 
+# port.N bandwidth and storm (P4-6): bandwidth_ingress_set() (IGBW_PORT_CTRL
+# + 4 port, bit 20 on, the rate >> 4), its flow control bit, the egress at
+# + 1024 port; storm_set() (STORM_CTRL + 4 type, the port's bit; meter 24 +
+# 4 port + type: METER_RATE, METER_MODE's bit for pps)
+STORMS = ("bcast", "mcast", "ucast", "umcast")
 
-def boot_defaults(dump, running, r, om):
+
+def _bw(c, a):
+    v = _reg(c, a)
+    return str((v & 0xfffff) << 4) if v >> 20 & 1 else "0"
+
+
+readback("port.N.bw_in_kbps", "port.design", lambda c, l: _bw(c, 0x4c18 + 4 * l))
+readback("port.N.bw_in_mode", "port.design", lambda c, l: "fc" if _bit(c, 0x4c8c, l) else "drop")
+readback("port.N.bw_out_kbps", "port.design", lambda c, l: _bw(c, 0x1c34 + 1024 * l))
+for _t, _name in enumerate(STORMS):
+    readback(f"port.N.storm.{_name}.rate", "port.design", lambda c, l, t=_t: str(_reg(c, 0x5cf0 + (24 + 4 * l + t << 2)) & 0xffffff)
+             if _bit(c, 0x54e4 + (t << 2), l) else "0")
+    readback(f"port.N.storm.{_name}.unit", "port.design", lambda c, l, t=_t: ("pps" if _bit(c, 0x5ef0 + ((24 + 4 * l + t) >> 5 << 2),
+                                                                                    (24 + 4 * l + t) & 31) else "kbps")
+             if _bit(c, 0x54e4 + (t << 2), l) else None)
+
+
+# vlan.V (P4-2): vlan_create()'s table word: members in bits 0-9 (the CPU
+# bit 9, always a tagged member: not in the config's masks), the untagged
+# set in bits 10-19; a VID not in the table is absent
+def _vlan_word(c, v):
+    w = c.vlans.get(v)
+    if w is None:
+        return None, None
+    b1, b2, b3 = w >> 16 & 0xff, w >> 8 & 0xff, w & 0xff
+    return (b2 & 3) << 8 | b3, (b1 & 0xf) << 6 | b2 >> 2
+
+
+readback("vlan.V.members", "vlan", lambda c, v: "<absent>" if _vlan_word(c, v)[0] is None else
+         lmask(_vlan_word(c, v)[0] & 0x1ff, c.r), "vlan")
+readback("vlan.V.tagged", "vlan", lambda c, v: "<absent>" if _vlan_word(c, v)[0] is None else
+         lmask(_vlan_word(c, v)[0] & ~_vlan_word(c, v)[1] & 0x1ff, c.r), "vlan")
+
+# lag.L (P4-3): TRK_MBR_CTRL + 4 (L - 1) (a LACP LAG's holds the active set:
+# not config), TRK_HASH_CTRL's low byte
+readback("lag.L.members", "lag", lambda c, L: None if c.running.get(f"lag.{L}.mode") == "lacp" else
+         lmask(_reg(c, 0x4f38 + (L - 1 << 2)) & 0xffff, c.r), "lag")
+readback("lag.L.hash", "lag", lambda c, L: bits(_reg(c, 0x4f48 + (L - 1 << 2)) & 0xff, HASH), "lag")
+
+# mirror (P4-5): MIRROR_CTRL bit 0 and the monitor port above it,
+# MIRROR_CONF rx (high half) and tx (low)
+readback("mirror.enabled", "mirror", lambda c, i: onoff(_reg(c, 0x6048) & 1), "global")
+readback("mirror.port", "mirror", lambda c, i: str(fronts(c.r).get(_reg(c, 0x6048) >> 1 & 0xf, "?"))
+         if _reg(c, 0x6048) & 1 else None, "global")
+readback("mirror.rx", "mirror", lambda c, i: lmask(_reg(c, 0x604c) >> 16, c.r) if _reg(c, 0x6048) & 1 else None, "global")
+readback("mirror.tx", "mirror", lambda c, i: lmask(_reg(c, 0x604c) & 0xffff, c.r) if _reg(c, 0x6048) & 1 else None, "global")
+
+# stp, lldp, igmp, loop (P4-4, P4-5): STP off leaves every port forwarding
+# (MSTP_STATES, 2 bits a port, 3); LLDP on traps RMA 0x0e (RMA0E_CONF's
+# action bits 0x30: 0x10 trap, 0 forward); IGMP_PORT_CFG trap (0x2a) when
+# snooping is on, flood (0x15) when off; RLDP_RLPP's enable bit
+readback("stp.enabled", "stp", lambda c, i: ("on", "off") if _reg(c, 0x5310) & 0xfffff == 0xfffff else "on", "global")
+readback("lldp.enabled", "lldp", lambda c, i: {0x10: "on", 0: "off"}.get(_reg(c, 0x4ee8) & 0x30, "?"), "global")
+readback("igmp.enabled", "igmp", lambda c, i: {0x2a: "on", 0x15: "off"}.get(_reg(c, 0x52a0 + (min(c.r.P) << 2)) & 0x3f, "?"),
+         "global")
+readback("loop.enabled", "loop", lambda c, i: onoff(_reg(c, 0x106c) & 1), "global")
+# sys (P4-1): leds_off()'s LED_PORT_SW_EN (ports off: every bit; the system
+# LED is a GPIO, not read here); the static management L2 entry (on the CPU,
+# port 9): sys.mac its MAC (auto: compared by state.sys.mac), mgmt.vlan its
+# VID (0: VLAN 1)
+readback("sys.led", "sys", lambda c, i: ("on",) if not _reg(c, 0x6554) else ("ports_off", "off"), "global")
+
+
+def _mgmt_entry(c):
+    """The static unicast L2 entry on the CPU (port 9): (MAC, VID), or None."""
+    for idx, a, b, cc in c.l2:
+        port, static = (b >> 30 & 3) | (cc & 3) << 2, cc >> 16 & 1
+        mac_ = (b & 0xffff) << 32 | a
+        if static and port == 9 and not mac_ >> 40 & 1:
+            return ":".join(f"{mac_ >> 8 * k & 0xff:02x}" for k in range(5, -1, -1)), b >> 16 & 0xfff
+    return None
+
+
+readback("sys.mac", "sys", lambda c, i: None if c.running.get("sys.mac") in (None, "auto") else
+         (_mgmt_entry(c) or ("<none>",))[0], "global")
+readback("mgmt.vlan", "mgmt", lambda c, i: "<none>" if not _mgmt_entry(c) else
+         ("0", "1") if _mgmt_entry(c)[1] == 1 else str(_mgmt_entry(c)[1]), "global")
+# not read back: mgmt.ip/netmask/gateway/mode, dns, ntp, syslog, web, the
+# VLAN names, stp's bridge and per-port fields (RAM only, no register)
+
+
+def boot_defaults(dump, running, r, om, vlans=(), l2=()):
     """[(path, hardware, running)] where the boot's hardware state and the
     running config differ, and the number of fields compared: the readback
-    rows of the objects om has, for every port the board has."""
-    regs, phys = {}, {}
+    rows of the objects om has, over their scope."""
+    from types import SimpleNamespace
+    c = SimpleNamespace(regs={}, phys={}, vlans={}, l2=[], r=r, running={p: path_of(p)[1](x) if path_of(p) else x
+                                                                        for p, x in running.items()})
     for l in dump:
         k, a, v = l.split()
         if k == "r":
-            regs[int(a, 16)] = int(v, 16)
+            c.regs[int(a, 16)] = int(v, 16)
         elif k == "p":
             p, m, g = a.split(".")
-            phys[(int(p, 16), int(m, 16), int(g, 16))] = int(v, 16)
+            c.phys[(int(p, 16), int(m, 16), int(g, 16))] = int(v, 16)
+    for l in vlans:
+        vid, w = l.split()
+        c.vlans[int(vid, 16)] = int(w, 16)
+    for l in l2:
+        idx, a, b, cc = (int(x, 16) for x in l.split())
+        c.l2.append((idx, a, b, cc))
     copper = set(r.P)
+    run_vids = {int(p.split(".")[1]) for p in c.running if re.fullmatch(r"vlan\.\d+\.\w+", p)}
+    scopes = {"port": [(l, f".{f}.") for l, f in sorted(fronts(r).items())],
+              "copper": [(l, f".{f}.") for l, f in sorted(fronts(r).items()) if l in copper],
+              "lag": [(L, f".{L}.") for L in range(1, 5)],
+              "vlan": [(v, f".{v}.") for v in sorted(run_vids | set(c.vlans))],
+              "global": [(None, None)]}
     bad, n = [], 0
-    for path, obj, f, cu in READBACK:
+    for path, obj, f, scope in READBACK:
         if obj not in om:
             continue
-        for l, front in sorted(fronts(r).items()):
-            if cu and l not in copper:
+        for i, sub in scopes[scope]:
+            p = path.replace(".N.", sub).replace(".L.", sub).replace(".V.", sub) if sub else path
+            hw = f(c, i)
+            if hw is None:
                 continue
-            p = path.replace(".N.", f".{front}.")
-            if p not in running:
-                bad.append((p, f(regs, phys, l, r), "<no get value>"))
-                continue
-            hw, run = f(regs, phys, l, r), path_of(p)[1](running[p])
+            run = c.running.get(p, "<absent>")
             n += 1
-            if hw != run:
-                bad.append((p, hw, run))
+            if run not in (hw if isinstance(hw, tuple) else (hw,)):
+                bad.append((p, hw if isinstance(hw, str) else "|".join(hw), run))
     return bad, n
+
+
+# === P3H: the config commands of the P4 objects (research/config.md 1-13,
+# 17), each to set/apply lines on DESIGN 6's paths, with the old command's
+# side effects; pending until the object moves. The old parsers they mirror
+# are 53ee574's cmd_parser.c, dns_cli.c, ntp_cli.c, rtl837x_stp_cli.c.
+
+def name_char(c):
+    """cmd_parser.c name_char(): what the old stores of a name's character."""
+    return "." if ord(c) < 0x20 or ord(c) > 0x7e or c in '"\\' else c
+
+
+def _ip(s):
+    """parse_ip(): a.b.c.d, each 0..255, or None."""
+    a = re.fullmatch(r"(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})", s or "")
+    return s if a and all(int(x) <= 255 for x in a.groups()) else None
+
+
+IP = r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"
+
+
+def _mac(s):
+    """parse_mac(): six hex pairs, ':' or '-'; unicast, the first three
+    bytes not all zero (else refused)."""
+    a = re.fullmatch(r"([0-9a-fA-F]{2})[:-]([0-9a-fA-F]{2})[:-]([0-9a-fA-F]{2})[:-]([0-9a-fA-F]{2})[:-]([0-9a-fA-F]{2})[:-]([0-9a-fA-F]{2})", s)
+    if not a:
+        return None
+    b = [int(x, 16) for x in a.groups()]
+    return None if b[0] & 1 or not (b[0] | b[1] | b[2]) else ":".join(f"{x:02x}" for x in b)
+
+
+def _prev(prev, p, default=None):
+    return (prev or {}).get(p, default)
+
+
+# --- sys, web (P4-1)
+
+row(r"hostname (\S+)", Set("sys", lambda m, r: {"sys.hostname": "".join(map(name_char, m[1]))[:23]}))
+row(r"hostname \S+ .*", Refused("sys"))		# a name with spaces: refused
+row(r"mac (\S+)", Set("sys", lambda m, r: {"sys.mac": _mac(m[1])} if _mac(m[1]) else {}))
+row(r"led on", Set("sys", lambda m, r: {"sys.led": "on"}))
+row(r"led off", Set("sys", lambda m, r: {"sys.led": "off"}))
+row(r"led off ports", Set("sys", lambda m, r: {"sys.led": "ports_off"}))
+row(r"led(?: .*)?", Refused("sys"))
+# passwd: the rest of the line, spaces too, up to 20 (a Secret: compared as
+# *); apply logs every session out, as session_init() did
+row(r"passwd (.+)", Set("web", lambda m, r: {"web.password": m[1][:20]}))
+row(r"passwd", Refused("web"))
+row(r"session (\d+)", Set("web", lambda m, r: {"web.session_timeout_s": str(int(m[1]))} if 1 <= int(m[1]) <= 65535 else {}))
+row(r"session \S+", Refused("web"))		# "Must be 1-65535 s"
+
+
+@_cli
+def _hostname(l, v, m, r):
+    v["sys.hostname"] = l
+    return True
+
+
+row(r"hostname", Read("sys", ["sys.hostname"], _hostname, gets=lambda m, r, o: ["get sys.hostname"]))
+
+
+@_cli
+def _mac_show(l, v, m, r):
+    a = re.fullmatch(r"Current MAC: ([0-9a-f:]{17})", l)
+    if a:
+        v["state.sys.mac"] = a[1]
+    return bool(a)
+
+
+row(r"mac", Read("sys", ["state.sys.mac"], _mac_show))
+
+
+@_cli
+def _session(l, v, m, r):
+    a = re.fullmatch(r"Session timeout: (\d+) s", l)
+    if a:
+        v["web.session_timeout_s"] = a[1]
+    return bool(a)
+
+
+row(r"session", Read("web", ["web.session_timeout_s"], _session, gets=lambda m, r, o: ["get web.session_timeout_s"]))
+
+
+# --- mgmt (P4-1): ip, gw, netmask, vlan N mgmt
+
+# ip <addr> stops DHCP: static with that address. ip dhcp (re)starts DHCP
+# every time: dhcp mode, and a renew if it already was (apply starts it if
+# not)
+row(r"ip " + IP, Set("mgmt", lambda m, r: {"mgmt.mode": "static", "mgmt.ip": m[1]} if _ip(m[1]) else {}))
+row(r"ip dhcp", Set("mgmt", lambda m, r: {"mgmt.mode": "dhcp"}, before=lambda m, r: ["mgmt.mode"],
+                    then=lambda m, r, prev: ["do mgmt.dhcp_renew"] if _prev(prev, "mgmt.mode") == "dhcp" else []))
+row(r"ip \S+", Refused("mgmt"))
+row(r"gw " + IP, Set("mgmt", lambda m, r: {"mgmt.gateway": m[1]} if _ip(m[1]) else {}))
+row(r"gw \S+", Refused("mgmt"))
+row(r"netmask " + IP, Set("mgmt", lambda m, r: {"mgmt.netmask": m[1]} if _ip(m[1]) else {}))
+row(r"netmask \S+", Refused("mgmt"))
+# vlan N mgmt: moves the management L2 entry; restarts DHCP if it is on and
+# the VLAN changed ("Management VLAN unchanged" else)
+row(r"vlan (\d+) mgmt", Set("mgmt", lambda m, r: {"mgmt.vlan": str(int(m[1]))} if int(m[1]) <= 4094 else {},
+                            before=lambda m, r: ["mgmt.mode", "mgmt.vlan"],
+                            then=lambda m, r, prev: ["do mgmt.dhcp_renew"] if _prev(prev, "mgmt.mode") == "dhcp"
+                            and _prev(prev, "mgmt.vlan") != str(int(m[1])) else []))
+
+
+# --- dns, ntp, syslog (P4-1)
+
+# one command sets both servers: the second 0.0.0.0 when absent, and when
+# it is bad (the first is set by then, and the old says Error)
+row(r"dns server " + IP, Set("dns", lambda m, r: {"dns.server1": m[1], "dns.server2": "0.0.0.0"} if _ip(m[1]) else {}))
+row(r"dns server " + IP + " " + IP, Set("dns", lambda m, r: {"dns.server1": m[1], "dns.server2": m[2]}
+                                        if _ip(m[1]) and _ip(m[2]) else {"dns.server1": m[1], "dns.server2": "0.0.0.0"},
+                                        accept_error=True))
+row(r"dns server " + IP + r" \S+.*", Set("dns", lambda m, r: {"dns.server1": m[1], "dns.server2": "0.0.0.0"},
+                                          accept_error=True))
+row(r"dns server.*", Refused("dns"))
+# ntp on starts a sync too: a sync if it was on already (apply starts it if not)
+row(r"ntp on", Set("ntp", lambda m, r: {"ntp.enabled": "on"}, before=lambda m, r: ["ntp.enabled"],
+                   then=lambda m, r, prev: ["do ntp.sync"] if _prev(prev, "ntp.enabled") == "on" else []))
+row(r"ntp off", Set("ntp", lambda m, r: {"ntp.enabled": "off"}))
+row(r"ntp server (\S{1,47})", Set("ntp", lambda m, r: {"ntp.server": m[1]}))	# restarts if on: apply's
+row(r"ntp interval (\d+)", Set("ntp", lambda m, r: {"ntp.interval_min": str(int(m[1]))} if 1 <= int(m[1]) <= 1440 else {}))
+
+
+def _tz(s):
+    """ntp_cli_timezone(): [+-]h[h][:mm], mm 00/30/45, -12:00..+14:00, as +hh:mm."""
+    a = re.fullmatch(r"([+-]?)(\d{1,2})(?::(00|30|45))?", s)
+    if not a:
+        return None
+    v = int(a[2]) * 60 + int(a[3] or 0)
+    neg = a[1] == "-"
+    if v > (12 * 60 if neg else 14 * 60):
+        return None
+    return f"{'-' if neg and v else '+'}{v // 60:02d}:{v % 60:02d}"
+
+
+row(r"ntp timezone (\S+)", Set("ntp", lambda m, r: {"ntp.timezone": _tz(m[1])} if _tz(m[1]) else {}))
+row(r"ntp dst (off|eu|us)", Set("ntp", lambda m, r: {"ntp.dst": m[1]}))
+row(r"ntp \S+.*", Refused("ntp"))
+row(r"syslog (on|off)", Set("syslog", lambda m, r: {"syslog.enabled": m[1]}))
+row(r"syslog ip " + IP, Set("syslog", lambda m, r: {"syslog.server": m[1]} if _ip(m[1]) else {}))	# stop, start: apply's
+row(r"syslog port (\d+)", Set("syslog", lambda m, r: {"syslog.port": str(int(m[1]))} if 1 <= int(m[1]) <= 65535 else {}))
+
+
+@_cli
+def _syslog(l, v, m, r):
+    a = re.fullmatch(r"Current syslog status: (disabled|enabled, sending to ([\d.]+):(\d+))", l)
+    if a:
+        v["syslog.enabled"] = "off" if a[1] == "disabled" else "on"
+        if a[2]:
+            v["syslog.server"], v["syslog.port"] = a[2], a[3]
+    return bool(a)
+
+
+row(r"syslog", Read("syslog", ["syslog.(enabled|server|port)"], _syslog,
+                    post=lambda v, m, r: {p: x for p, x in v.items() if v.get("syslog.enabled") == "on" or p == "syslog.enabled"}))
+
+
+# --- vlan.V (P4-2)
+
+def _vlan(m, r):
+    """vlan V [name] [port[t]]...: the membership replaced (the CPU always a
+    tagged member: not in the config's masks), the name if one is given (a
+    word starting with a letter), else kept."""
+    v, w = int(m[1]), m[2].split() if m[2] else []
+    if not 1 <= v <= 4094:
+        return {}
+    out, mem, tag = {}, [], []
+    if w and w[0][0].isalpha():
+        out[f"vlan.{v}.name"] = "".join(map(name_char, w[0]))
+        w = w[1:]
+    for x in w:
+        a = re.fullmatch(r"(\d)(t?)", x)
+        if not a:
+            return {}
+        mem.append(int(a[1]))
+        if a[2]:
+            tag.append(int(a[1]))
+    out[f"vlan.{v}.members"], out[f"vlan.{v}.tagged"] = plist(mem), plist(tag)
+    return out
+
+
+# vlan V d...: any three-word line whose third word starts with d deletes
+# (so "vlan 10 dmz" too: cmd_parser.c:724)
+row(r"vlan (\d+) d\S*", Set("vlan", lambda m, r: {f"vlan.{int(m[1])}": DEL} if 1 <= int(m[1]) <= 4094 else {}))
+row(r"vlan (\d+)((?: \S+)*)", Set("vlan", _vlan))
+
+
+@_cli
+def _vlan_show(l, v, m, r):
+    """vlan show: per port (and the CPU: no path) its PVID (hex), the
+    acceptable frames, the VLAN filter."""
+    if l in ("Ingress VLAN configuration:", "Port\tPVID\tType\tFiltering") or l.startswith(("Type - ", "Filtering - ", "PVID - ")):
+        return True
+    a = re.fullmatch(r"(\d|CPU)\t0x([0-9a-f]{4})\t(Any|Tagged|Untag\.)\t(Enabled|Disabled)", l)
+    if a:
+        p = "raw.cpu." if a[1] == "CPU" else f"port.{a[1]}."
+        v[p + "pvid"], v[p + "ingress"] = str(int(a[2], 16)), {"Any": "all", "Tagged": "tagged", "Untag.": "untagged"}[a[3]]
+        v[p + "ingress_filter"] = onoff(a[4] == "Enabled")
+    return bool(a)
+
+
+row(r"vlan show", Read("vlan", ["port.#.(pvid|ingress|ingress_filter)", "raw.cpu.(pvid|ingress|ingress_filter)"],
+                       _vlan_show, gets=lambda m, r, o: ["get port.*.pvid", "get port.*.ingress", "get port.*.ingress_filter"]))
+
+
+# --- lag.L (P4-3)
+
+def _lacp_take(m, r, prev, L, ports):
+    """lacp_lag_set(): a port joining a LACP LAG leaves any other LACP LAG
+    (one left empty goes off). From the new side's lag.*.mode/members."""
+    out = {}
+    for k in range(1, 5):
+        if k == L or _prev(prev, f"lag.{k}.mode") != "lacp":
+            continue
+        rest = [int(x) for x in n_pmask(_prev(prev, f"lag.{k}.members", "none")).split(",") if x.isdigit()]
+        keep = [x for x in rest if x not in ports]
+        if keep != rest:
+            out[f"lag.{k}.members"] = plist(keep)
+            if not keep:
+                out[f"lag.{k}.mode"] = "off"
+    return out
+
+
+LAGS = lambda m, r: [f"lag.{k}.{f}" for k in range(1, 5) for f in ("mode", "members")]
+row(r"lag ([1-4]) d", Set("lag", lambda m, r: {f"lag.{m[1]}.mode": "off", f"lag.{m[1]}.members": "none"}))
+row(r"lag ([1-4]) lacp off", Set("lag", lambda m, r, prev: {f"lag.{m[1]}.mode": "off", f"lag.{m[1]}.members": "none"}
+                                 if _prev(prev, f"lag.{m[1]}.mode") == "lacp" else {},
+                                 before=lambda m, r: [f"lag.{m[1]}.mode"], status=True))
+row(r"lag ([1-4]) lacp((?: \d)+)", Set("lag", lambda m, r, prev: {f"lag.{m[1]}.mode": "lacp", f"lag.{m[1]}.members":
+                                                                  plist(int(x) for x in m[2].split()),
+                                                                  **_lacp_take(m, r, prev, int(m[1]), [int(x) for x in m[2].split()])},
+                                       before=LAGS, status=True))
+# static: lacp_lag_set(L, 0), then the members, with no overlap check (the
+# new apply refuses an overlap: a difference by design, DESIGN 6.20.4)
+row(r"lag ([1-4])((?: \d)+)", Set("lag", lambda m, r: {f"lag.{m[1]}.mode": "static",
+                                                       f"lag.{m[1]}.members": plist(int(x) for x in m[2].split())}))
+row(r"lacp off", Set("lag", lambda m, r, prev: {p: x for k in range(1, 5) if _prev(prev, f"lag.{k}.mode") == "lacp"
+                                                for p, x in ((f"lag.{k}.mode", "off"), (f"lag.{k}.members", "none"))},
+                     before=LAGS, status=True))
+row(r"laghash ([1-4])((?: (?:spa|smac|dmac|sip|dip|sport|dport))+)",
+    Set("lag", lambda m, r: {f"lag.{m[1]}.hash": flags(m[2].split())}))
+row(r"lag(?: \S+.*)?|laghash.*", Refused("lag"))
+
+
+# --- stp, stp.port.N, stp.lag.L (P4-4)
+
+STP_G = {"prio": ("stp.priority", 0, 15), "hello": ("stp.hello_s", 1, 10), "maxage": ("stp.maxage_s", 6, 40),
+         "fwd": ("stp.fwd_delay_s", 4, 30), "txhold": ("stp.txhold", 1, 10)}
+row(r"stp (on|off)", Set("stp", lambda m, r: {"stp.enabled": m[1]}))
+row(r"stp (prio|hello|maxage|fwd|txhold) (\d+)", Set("stp", lambda m, r: {STP_G[m[1]][0]: str(int(m[2]))}
+                                                      if STP_G[m[1]][1] <= int(m[2]) <= STP_G[m[1]][2] else {}))
+row(r"stp version (rstp|stp)", Set("stp", lambda m, r: {"stp.version": m[1]}))
+row(r"stp pathcost (long|short)", Set("stp", lambda m, r: {"stp.pathcost": m[1]}))
+row(r"stp bpdu (filter|flood)", Set("stp", lambda m, r: {"stp.bpdu": m[1]}))
+row(r"stp clear", Set("stp", lambda m, r: {}, then=lambda m, r, prev: ["do stp.counters_clear"], status=True))
+STP_E = r"stp (port|lag) (\d)"
+
+
+def _ent_path(m):
+    return f"stp.{m[1]}.{m[2]}"
+
+
+# on also clears a tripped guard and rejoins (listening): no path for it;
+# a port in a LAG is refused on the old, kept with no effect on the new
+# (DESIGN 6.8: a difference by design)
+row(STP_E + r" (on|off)", Set("stp", lambda m, r: {_ent_path(m) + ".enabled": m[3]}))
+row(STP_E + r" mcheck", Set("stp", lambda m, r: {}, then=lambda m, r, prev: [f"do {_ent_path(m)}.mcheck"], status=True))
+row(STP_E + r" edge (on|off|auto)", Set("stp", lambda m, r: {_ent_path(m) + ".edge": m[3]}))
+row(STP_E + r" cost (\d+)", Set("stp", lambda m, r: {_ent_path(m) + ".cost": str(int(m[3]))} if int(m[3]) <= 200000000 else {}))
+row(STP_E + r" p2p (auto|on|off)", Set("stp", lambda m, r: {_ent_path(m) + ".p2p": m[3]}))
+row(STP_E + r" prio (\d+)", Set("stp", lambda m, r: {_ent_path(m) + ".priority": str(int(m[3]))}
+                                if int(m[3]) <= 240 and not int(m[3]) & 15 else {}))
+row(STP_E + r" guard (none|bpdu|root)", Set("stp", lambda m, r: {_ent_path(m) + ".guard": m[3]}))
+row(STP_E + r" filter (on|off)", Set("stp", lambda m, r: {_ent_path(m) + ".filter": m[3]}))
+row(r"stp(?! status).*", Refused("stp"))
+
+
+# --- igmp, lldp, loop, mirror (P4-5)
+
+row(r"igmp (on|off)", Set("igmp", lambda m, r: {"igmp.enabled": m[1]}))	# off re-runs the setup: apply's
+row(r"lldp on", Set("lldp", lambda m, r: {"lldp.enabled": "on"}))
+row(r"lldp(?: .*)?", Set("lldp", lambda m, r: {"lldp.enabled": "off"}))	# every other lldp line disables it
+row(r"loop (on|off)", Set("loop", lambda m, r: {"loop.enabled": m[1]}))
+
+
+def _mirror(m, r):
+    """mirror <monitor> <p>[r|t]...: a port with no suffix (or another
+    letter) is mirrored both ways, r received, t sent."""
+    rx, tx = [], []
+    for w in m[2].split():
+        a = re.fullmatch(r"(\d)(\D?)", w)
+        if not a:
+            return {}
+        if a[2] != "t":
+            rx.append(int(a[1]))
+        if a[2] != "r":
+            tx.append(int(a[1]))
+    return {"mirror.enabled": "on", "mirror.port": m[1], "mirror.rx": plist(rx), "mirror.tx": plist(tx)}
+
+
+row(r"mirror off", Set("mirror", lambda m, r: {"mirror.enabled": "off"}))
+row(r"mirror (\d)((?: \S+)*)", Set("mirror", _mirror))
+
+
+@_cli
+def _mirror_status(l, v, m, r):
+    a = re.fullmatch(r"(NOT )?Enabled: Mirroring port: (\d+), Port mask RX: 0x([0-9a-f]{4}), Port mask TX: 0x([0-9a-f]{4})", l)
+    if a:
+        v["mirror.enabled"] = onoff(not a[1])
+        v["mirror.port"], v["mirror.rx"], v["mirror.tx"] = a[2], lmask(int(a[3], 16), r), lmask(int(a[4], 16), r)
+    return bool(a)
+
+
+row(r"mirror status", Read("mirror", ["mirror.(enabled|port|rx|tx)"], _mirror_status,
+                           post=lambda v, m, r: v if v.get("mirror.enabled") == "on" else {"mirror.enabled": "off"}))
+row(r"mirror.*", Refused("mirror"))
+
+
+@_cli
+def _igmp_show(l, v, m, r):
+    """igmp show: each port's IGMP_PORT_CFG, trap (0x2a) when snooping is on,
+    flood (0x15) when off: igmp.enabled, if every port agrees."""
+    if l == "igmp_show called":
+        return True
+    a = re.fullmatch(r"(\d):0x([0-9a-f]{8})", l)
+    if a:
+        x = {0x2a: "on", 0x15: "off"}.get(int(a[2], 16) & 0x3f, "?")
+        v["igmp.enabled"] = x if v.get("igmp.enabled", x) == x else "mixed"
+    return bool(a)
+
+
+row(r"igmp show", Read("igmp", ["igmp.enabled"], _igmp_show))
+row(r"igmp(?! show).*", Refused("igmp"))
+
+
+# --- port.N: bandwidth, storm, SFP speed (P4-6; port.design until then)
+
+def _bw_rate(s):
+    """bw's hex kbit/s (up to 4 bytes): the register keeps it in 16 kbit
+    steps (>> 4), so the value is what it holds."""
+    return str(int(s, 16) & ~15) if re.fullmatch(r"[0-9a-fA-F]{1,8}", s) else None
+
+
+# bandwidth_ingress_set() turns flow control on: a rate means mode fc
+row(r"bw in (\d) ([0-9a-fA-F]{1,8})", Set("port.design", lambda m, r: {f"port.{m[1]}.bw_in_kbps": _bw_rate(m[2]),
+                                                                        f"port.{m[1]}.bw_in_mode": "fc"}))
+row(r"bw in (\d) off", Set("port.design", lambda m, r: {f"port.{m[1]}.bw_in_kbps": "0"}))
+row(r"bw in (\d) (fc|drop)", Set("port.design", lambda m, r: {f"port.{m[1]}.bw_in_mode": m[2]}))
+row(r"bw out (\d) ([0-9a-fA-F]{1,8})", Set("port.design", lambda m, r: {f"port.{m[1]}.bw_out_kbps": _bw_rate(m[2])}))
+row(r"bw out (\d) off", Set("port.design", lambda m, r: {f"port.{m[1]}.bw_out_kbps": "0"}))
+
+
+@_cli
+def _bw_status(l, v, m, r):
+    """bw status N: in and out, disabled or the rate (hex, a literal 0 after:
+    the register's 16 kbit steps)."""
+    a = re.fullmatch(r"(ingress|egress): (?:disabled|enabled: 0x([0-9a-f]{6})0)", l)
+    if a:
+        v[f"port.{m[1]}.bw_{'in' if a[1] == 'ingress' else 'out'}_kbps"] = str(int(a[2], 16) << 4) if a[2] else "0"
+    return bool(a)
+
+
+row(r"bw status (\d)", Read("port.design", ["port.#.(bw_in_kbps|bw_out_kbps)"], _bw_status,
+                            gets=lambda m, r, o: [f"get port.{m[1]}.bw_in_kbps", f"get port.{m[1]}.bw_out_kbps"]))
+row(r"bw.*", Refused("port.design"))
+STORM_T = r"(bcast|mcast|ucast|umcast)"
+row(r"storm (\d) " + STORM_T + r" (\d+) (pps|kbps)",
+    Set("port.design", lambda m, r: {f"port.{m[1]}.storm.{m[2]}.rate": str(int(m[3])), f"port.{m[1]}.storm.{m[2]}.unit": m[4]}
+        if 1 <= int(m[3]) <= (0xfffff if m[4] == "pps" else 10000000) else {}))
+row(r"storm (\d) " + STORM_T + r" off", Set("port.design", lambda m, r: {f"port.{m[1]}.storm.{m[2]}.rate": "0"}))
+
+
+@_cli
+def _storm_show(l, v, m, r):
+    """storm: per port, each type off or its meter rate (hex) and unit."""
+    a = re.fullmatch(r"port (\d)((?: (?:bcast|mcast|ucast|umcast) (?:off|[0-9a-f]{6} (?:pps|kbps)))+)", l)
+    if not a:
+        return False
+    for t, x in re.findall(r"(bcast|mcast|ucast|umcast) (off|[0-9a-f]{6} (?:pps|kbps))", a[2]):
+        s = f"port.{a[1]}.storm.{t}."
+        if x == "off":
+            v[s + "rate"] = "0"
+        else:
+            v[s + "rate"], v[s + "unit"] = str(int(x.split()[0], 16)), x.split()[1]
+    return True
+
+
+def _storm_post(v, m, r):
+    """A unit only for a type that is on."""
+    return {p: x for p, x in v.items() if not (p.endswith(".unit") and v.get(p[:-4] + "rate") == "0")}
+
+
+row(r"storm", Read("port.design", ["port.#.storm.(bcast|mcast|ucast|umcast).(rate|unit)"], _storm_show, post=_storm_post))
+row(r"storm.*", Refused("port.design"))		# "usage: storm ..."
+
+
+def _sfp_speed(m, r):
+    s = int(m[1])
+    return {f"port.{r.cages[s][1]}.speed": m[2]} if s in r.cages else {}
+
+
+# sfp S <speed> (DESIGN 20.2: the SFP port's port.N.speed): the module is
+# found again and re-read (sfp.S.reread, an action of state.sfp)
+row(r"sfp ([12]) (10g|2g5|1g|100m|auto)", Set("port.design", _sfp_speed,
+                                               then=lambda m, r, prev: [f"do sfp.{m[1]}.reread"] if "state.sfp" in r.om else []))
+row(r"sfp \S+.*", Refused("port.design"))

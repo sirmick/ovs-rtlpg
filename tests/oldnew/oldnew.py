@@ -124,12 +124,13 @@ class Run:
         out = self.b.wait_uart(PROMPT, until)
         self.results[self._key("boot")] = out if out is not None else "<timeout>"
         self.b.advance(self.b.now + 10000)	# cmd_editor_init() drops input before it
-        if "state.mgmt" in self.om:	# the harness's own question: not a result
-            before, ip = self._type("get state.mgmt.ip", until)
-        else:
-            before, ip = self._type("ip", until)
+        # the harness's own question, not a result: the effective address
+        # (state.mgmt, P5-3), else the configured one (mgmt, P4-1: its ip
+        # printer goes before state.mgmt comes), else the old ip
+        q = "get state.mgmt.ip" if "state.mgmt" in self.om else "get mgmt.ip" if "mgmt" in self.om else "ip"
+        before, ip = self._type(q, until)
         self._console(before)
-        m = re.search(r"(?:Current IP:|state\.mgmt\.ip) ([\d.]+)", ip or "")
+        m = re.search(r"(?:Current IP:|(?:state\.)?mgmt\.ip) ([\d.]+)", ip or "")
         sw = m.group(1) if m else "192.168.10.247"
         if not self.booted:
             self.booted = True
@@ -152,7 +153,8 @@ class Run:
         for g in sorted({x for o in objs for x in translate.GETS.get(o, [o]) if not x.startswith("state.")}):
             _, out = self._type(f"get {g}", until)
             running += out or ""
-        bad, n = translate.boot_defaults(self.b.reg_dump(), translate.values(running), self, objs)
+        bad, n = translate.boot_defaults(self.b.reg_dump(), translate.values(running), self, objs,
+                                         self.b.table("vlan"), self.b.table("l2"))
         self.checks.append(("boot defaults", [f"{p}: hardware {h}, running {x}" for p, h, x in bad],
                             f"{n} fields of {' '.join(sorted(objs))} against the registers the boot left", None, [], None))
 
@@ -193,24 +195,47 @@ class Run:
                 return "refused"
             out = self._typed(line, until)
             return "refused" if out is not None and translate.refused(out) else out
-        v = what.values(m, self)
         if not new:
             out = self._typed(line, until)
-            return None if out is None else "refused" if translate.refused(out) else translate.canon(translate.normalized(v))
-        for l in [f"set {p} {x}" for p, x in v.items()] + ["apply"]:
+            if out is None:
+                return None
+            if translate.refused(out) and not what.accept_error:
+                return "refused"
+            return "ok" if what.status else translate.canon(translate.normalized(
+                {p: "<deleted>" if x is translate.DEL else x for p, x in what.vals(m, self).items()}))
+        prev = None
+        if what.before:
+            text = ""
+            for p in what.before(m, self):
+                out = self._typed(f"get {p}", until)
+                if out is None:
+                    return None
+                text += out
+            prev = translate.normalized(translate.values(text))
+        v = what.vals(m, self, prev)
+        if not v and not what.status:
+            return "refused"		# the row's parser refuses it, as the old does
+        lines = [f"del {p}" if x is translate.DEL else f"set {p} {x}" for p, x in v.items()] + (["apply"] if v else [])
+        for i, l in enumerate(lines + (what.then(m, self, prev) if what.then else [])):
             out = self._typed(l, until)
             if out is None:
                 return None
             if translate.refused(out):
-                self._typed("discard", until)	# as the old image: refused, nothing changed
+                if i < len(lines):
+                    self._typed("discard", until)	# as the old image: refused, nothing changed
                 return "refused"
-        text = ""
-        for p in v:
-            out = self._typed(f"get {p}", until)
-            if out is None:
+        if what.status:
+            return "ok"
+        out = {}
+        for p, x in v.items():
+            text = self._typed(f"get {p}", until)
+            if text is None:
                 return None
-            text += out
-        return translate.canon(translate.normalized(translate.values(text)))
+            if x is translate.DEL:
+                out[p] = "<deleted>" if translate.refused(text) or not translate.values(text) else "<still there>"
+            else:
+                out.update(translate.values(text))
+        return translate.canon(translate.normalized(out))
 
     def _read(self, m, what, fetch, until):
         """A Read row (a printer or a page) on this image: from the old

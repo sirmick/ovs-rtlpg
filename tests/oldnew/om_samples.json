@@ -1,4 +1,11 @@
 {
+ "cli bw status 2": [
+  "bw status 2\ningress: disabled\negress: disabled\n\n> \n",
+  "bw status 2\ningress: enabled: 0x0000100\negress: disabled\n\n> \n"
+ ],
+ "cli bw status 3": [
+  "bw status 3\ningress: disabled\negress: enabled: 0x0001f40\n\n> \n"
+ ],
  "cli dns": [
   "dns\nDNS servers 0.0.0.0 0.0.0.0, from DHCP 0.0.0.0\n\n> ",
   "dns\nDNS servers 0.0.0.0 0.0.0.0, from DHCP 0.0.0.0\n\n> \n"
@@ -15,6 +22,12 @@
  ],
  "cli health tasks": [
   "health tasks\nslot\ttask\tstate\tmask\twake\n0\trx\tRX_STEP\t0x0081\t+32766\n1\tlink\tLINK_READ\t0x0082\t+32766\n2\tloop\tLOOP_POLL\t0x0000\t+199\n3\tcon\tCON_EDIT\t0x0084\t+32766\n4\tcli\tCLI_MORE\t0x0000\tnow\n5\tnet\tNET_TICK\t0x0000\tnow\n6\tstp\tSTP_TICK\t0x0000\t+1\n7\tlacp\tLACP_TICK\t0x0000\t+1\n8\tlldp\tLLDP_TICK\t0x0000\t+1\n9\tsfp0\tSFP_POLL\t0x0000\t+8\n10\tsfp1\tfree\n11\thouse\tHOUSE_SEC\t0x0000\t+198\n12\tjob0\tfree\n13\tjob1\tfree\n14\tjob2\tfree\n15\tjob3\tfree\n16\tjob4\tfree\n17\tjob5\tfree\n18\tjob6\tfree\n19\tjob7\tfree\n20\tjob8\tfree\n21\tjob9\tfree\n22\tjob10\tfree\n23\tjob11\tfree\nstate\truns\tmax\nRX_IDLE\t1\t24us\nRX_STEP\t11\t30us\nLINK_READ\t12\t42us\nLOOP_START\t1\t18us\nLOOP_POLL\t0\t0us\nCON_EDIT\t13\t171us\nCLI_IDLE\t2\t18us\nCLI_RUN\t1\t184us\nCLI_NEXT\t0\t0us\nCLI_MORE\t35\t380us\nCLI_PROMPT\t0\t0us\nNET_START\t1\t12us\nNET_TICK\t7\t110us\nSTP_TICK\t7\t18us\nLACP_TICK\t7\t18us\nLLDP_TICK\t8\t24us\nSFP_START\t2\t24us\nSFP_POLL\t0\t0us\nSFP_WAKE\t0\t0us\nSFP_READ\t0\t0us\nSFP_CONFIG\t0\t0us\nSFP_DDM\t0\t0us\nHOUSE_START\t1\t12us\nHOUSE_SEC\t0\t0us\nFL_ERASE\t0\t0us\nFL_PROG\t0\t0us\nFL_VERIFY\t0\t0us\nFL_DONE\t0\t0us\npasses 0x00000039 idle 0x00000000 longest 2167us\noverruns 0, con rx overruns 0, hw timeouts 0\n\n> \n"
+ ],
+ "cli hostname": [
+  "hostname\nRTLPlayground-b5325d\n\n> \n"
+ ],
+ "cli igmp show": [
+  "igmp show\nigmp_show called\n0:0x00ff7c15\n1:0x00ff7c15\n2:0x00ff7c15\n3:0x00ff7c15\n4:0x00ff7c15\n5:0x00ff7c15\n6:0x00ff7c15\n7:0x00ff7c15\n8:0x00ff7c15\n\n> \n"
  ],
  "cli ip": [
   "ip\nCurrent IP: 192.168.2.2 (static)\n\n> ",
@@ -40,6 +53,13 @@
   "loop show\nLoop detection: on\nLooped ports: \nBlocked ports: \n\n> ",
   "loop show\nLoop detection: off\n\n> "
  ],
+ "cli mac": [
+  "mac\nCurrent MAC: 06:eb:00:b5:32:5d\n\n> \n"
+ ],
+ "cli mirror status": [
+  "mirror status\nNOT Enabled: Mirroring port: 1, Port mask RX: 0x0000, Port mask TX: 0x0000\n\n> \n",
+  "mirror status\nEnabled: Mirroring port: 1, Port mask RX: 0x0006, Port mask TX: 0x000a\n\n> \n"
+ ],
  "cli mtu show": [
   "mtu show\nPort 1 0x0000\nPort 2 0x0000\nPort 3 0x0000\nPort 4 0x0000\nPort 5 0x0000\nPort 6 0x0000\nPort 7 0x0000\nPort 8 0x0000\nPort 9 0x0000\n\n> \n"
  ],
@@ -60,6 +80,9 @@
  "cli port 9 show": [
   "port 9 show\nLogical Port: 08\nName: \nPause negotiated: none\n\n> \n"
  ],
+ "cli session": [
+  "session\nSession timeout: 3600 s\n\n> \n"
+ ],
  "cli sfp": [
   "sfp\n\nSlot 1 - Rate: 67  Encoding: 06\nRTLSIM          SFP-10G-SR      1.0 \nOptions: 68\nTemp: 2380\nVcc: 80e8\nTX Bias: 0bb8\nTX Power: 178a\nRX Power: 0f8d\nLaser: 0000\nState: 00\n\n> ",
   "sfp\n\nSlot 1 - empty\n\n> ",
@@ -70,10 +93,18 @@
   "stat\n\nPort\tState\tLink\tTxGood\t\tTxBad\t\tRxGood\t\tRxBad\t\tMACs\n1\tOn\t1000M\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n2\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n3\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n4\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n5\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n6\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n7\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n8\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n9\tSFP IN\t10G\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n\n> ",
   "stat\n\nPort\tState\tLink\tTxGood\t\tTxBad\t\tRxGood\t\tRxBad\t\tMACs\n1\tOn\t1000M\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n2\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n3\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n4\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n5\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n6\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n7\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n8\tOn\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n9\tNO SFP\tDown\t0x00000000\t0x00000000\t0x00000000\t0x00000000\t0\n\n> "
  ],
+ "cli storm": [
+  "storm\nport 1 bcast off mcast off ucast off umcast off\nport 2 bcast off mcast off ucast off umcast off\nport 3 bcast off mcast off ucast off umcast off\nport 4 bcast off mcast off ucast off umcast off\nport 5 bcast off mcast off ucast off umcast off\nport 6 bcast off mcast off ucast off umcast off\nport 7 bcast off mcast off ucast off umcast off\nport 8 bcast off mcast off ucast off umcast off\nport 9 bcast off mcast off ucast off umcast off\n\n> \n",
+  "storm\nport 1 bcast off mcast off ucast off umcast off\nport 2 bcast off mcast off ucast off umcast off\nport 3 bcast 0003e8 pps mcast off ucast off umcast off\nport 4 bcast off mcast 004e20 kbps ucast off umcast off\nport 5 bcast off mcast off ucast off umcast off\nport 6 bcast off mcast off ucast off umcast off\nport 7 bcast off mcast off ucast off umcast off\nport 8 bcast off mcast off ucast off umcast off\nport 9 bcast off mcast off ucast off umcast off\n\n> \n"
+ ],
  "cli stp status": [
   "stp status\nSTP on, RSTP\nbridge  8000/06eb00b5325d\nroot    8000/06eb00b5325d (this switch)\nchanges 0x0001\nport state role edge tx age[s]\n 01  fwd   desg yes  14 40\n 02  fwd   desg yes  14 40\n 03  fwd   desg no   15 0\n 04  block back no   14 0\n 05  fwd   dis  yes  00 40\n 06  fwd   dis  yes  00 40\n 07  fwd   dis  yes  00 40\n 08  fwd   dis  yes  00 40\n 09  fwd   dis  yes  00 40\n\n> ",
   "stp status\nSTP off\n\n> ",
   "stp status\nSTP off\n\n> \n"
+ ],
+ "cli syslog": [
+  "syslog\nCurrent syslog status: disabled\n\n> \n",
+  "syslog\nCurrent syslog status: enabled, sending to 10.0.0.9:1514\n\n> \n"
  ],
  "cli temp": [
   "temp\n\nChip temperature: 0.0 C\nAt power-on:      0.0 C\n\n> ",
@@ -86,6 +117,10 @@
  "cli version": [
   "version\nSoftware version: <version>\nBuild date: <build date>\nCompiler: SDCC 4.6.0 #16555\nToolchain: sdcc/ at 8954637 (4 patches)\nHardware: keepLink KP-9000-9XHPML V1.2\n\n> ",
   "version\nSoftware version: v0.1.0-53ee574\nBuild date: 2026-11-20 03:54:56\nCompiler: SDCC 4.6.0 #16555\nToolchain: sdcc/ at 8954637 (4 patches)\nHardware: keepLink KP-9000-9XHPML V1.2\n\n> \n"
+ ],
+ "cli vlan show": [
+  "vlan show\nIngress VLAN configuration:\nPort\tPVID\tType\tFiltering\n1\t0x0001\tAny\tEnabled\n2\t0x0001\tAny\tEnabled\n3\t0x0001\tAny\tEnabled\n4\t0x0001\tAny\tEnabled\n5\t0x0001\tAny\tEnabled\n6\t0x0001\tAny\tEnabled\n7\t0x0001\tAny\tEnabled\n8\t0x0001\tAny\tEnabled\n9\t0x0001\tAny\tEnabled\nCPU\t0x0001\tAny\tEnabled\n\nType - Which frame types are allowed: untagged, tagged or any\nFiltering - Whether packets not belonging to member VLANs on that port are dropped\nPVID - Assumed VLAN for untagged packets\n\n> \n",
+  "vlan show\nIngress VLAN configuration:\nPort\tPVID\tType\tFiltering\n1\t0x0001\tAny\tEnabled\n2\t0x000a\tAny\tEnabled\n3\t0x0001\tTagged\tEnabled\n4\t0x0001\tAny\tEnabled\n5\t0x0001\tAny\tEnabled\n6\t0x0001\tAny\tEnabled\n7\t0x0001\tAny\tEnabled\n8\t0x0001\tAny\tEnabled\n9\t0x0001\tAny\tEnabled\nCPU\t0x0001\tAny\tEnabled\n\nType - Which frame types are allowed: untagged, tagged or any\nFiltering - Whether packets not belonging to member VLANs on that port are dropped\nPVID - Assumed VLAN for untagged packets\n\n> \n"
  ],
  "web /counters.json?port=1": [
   "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\n\n[\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\",\"0x0\"]"
