@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from oldnew import Run, compare, load_expect
+from oldnew import Run, compare, load_expect, _link_first
 import translate
 
 STAT_OLD = ("\nPort\tState\tLink\tTxGood\t\tTxBad\t\tRxGood\t\tRxBad\t\tMACs\n"
@@ -571,6 +571,12 @@ def state_paths(case):
     c("P14", "state.sched.slot.rx.mask forever,rx" in o and "state.health.hw_timeout_reg 23724" in o and
       "state.sys.reset.cause watchdog" in o and "state.sys.reset.pc 4660" in o and "max_us 48ms" in o,
       "health tasks: the mask's bits, the hex counts, the reset record")
+    old = "\n<new link: 0400020000, was 0000020000>\n\n<MODULE INSERTED>  Slot: 1\n<SFP-RX OK>  Slot: 1\n  Rate: 67\n"
+    new = "\n<MODULE INSERTED>  Slot: 1\n<SFP-RX OK>  Slot: 1\n\n<new link: 0400020000, was 0000020000>\n  Rate: 67\n"
+    lone = "<MODULE REMOVED>  Slot: 1\n<SFP-RX LOS>  Slot: 1\n"
+    links = "\n<new link: 0000020000, was 0000000001>\n\n<new link: 0000020001, was 0000020000>\n"
+    c("P15", _link_first(old) == old and _link_first(new) == old and _link_first(lone) == lone and _link_first(links) == links,
+      "console: an SFP event and its link change in either order read as one, link first; nothing else moves")
     return fails
 
 

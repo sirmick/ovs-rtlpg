@@ -64,6 +64,19 @@ CODE_LOAD = range(0x80b0, 0x80b0 + 4 * 0x1000)
 PASSWORD = "1234"
 
 
+
+LINK_LINE = re.compile(r"\n?<new link: [0-9a-f]+, was [0-9a-f]+>\n")
+
+
+def _link_first(t):
+    """An SFP module's event and its port's link change, at one moment: two
+    tasks (sfp, link) report them, and which prints first is the boot's
+    timing phase (a 5 ms nudge flips feat/om 0aa0752 on the SWGT024). Only
+    in that pair, the link lines go first."""
+    if "<MODULE " not in t or not LINK_LINE.search(t):
+        return t
+    return "".join(LINK_LINE.findall(t)) + LINK_LINE.sub("", t)
+
 class Run:
     """What a scenario does to one image, and what came back."""
 
@@ -101,7 +114,7 @@ class Run:
         text = self.b.pending() if text is None else text
         if text:
             k = f"{self.n:03d} console"
-            self.results[k] = self.results.get(k, "") + text
+            self.results[k] = _link_first(self.results.get(k, "") + text)
 
     def _slot(self, ms):
         start = self.t
