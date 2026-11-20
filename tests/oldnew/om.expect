@@ -142,8 +142,9 @@ lacp frames * tcp/80
 # the tree starts a tick later: the link line lands a result later, and the
 # BPDUs sent and the ages read a BPDU and a tick behind
 stp* *console -/<new link: [0-9a-f]+, was [0-9a-f]+>|/ +/<new link: [0-9a-f]+, was [0-9a-f]+>|/
-stp *cli stp status -/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms|tx_bpdu) \d+/ +/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms|tx_bpdu) \d+/
-stp *web GET /stpcnt.json -/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms \d+ s|tx_bpdu \d+)/ +/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms \d+ s|tx_bpdu \d+)/
-# STP off writes every port forwarding, the power-on 0xfffff: the old left
-# the logical ports that aren't front ports disabled (the SWGT024's 0-2)
-stp* reg 5310 -/000fffc0/ +/000fffff/
+stp *cli stp status -/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms|[rt]x_bpdu) \d+/ +/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms|[rt]x_bpdu) \d+/
+stp *web GET /stpcnt.json -/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms \d+ s|[rt]x_bpdu \d+)/ +/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms \d+ s|[rt]x_bpdu \d+)/
+# STP off and the boot write every port forwarding, the power-on 0xfffff: the
+# old left the logical ports that aren't front ports disabled (the SWGT024's
+# 0-2), and after stp_upload's soft reset kept the states STP had (a port blocked)
+stp* reg 5310 -/000f[0-9a-f]{4}/ +/000fffff/
