@@ -20,6 +20,10 @@ vlan,cli,web,loop,sfp,flaps reg 0f6[048] -/[0-9a-f]{8}/ +/[0-9a-f]{8}/
 # (translate.py), and not the old ones they stand for
 * *cli history +/(get|set) \S+( .*)?|apply|discard/ -/(stat|mtu .*|pvid .*|port .*|isolate .*|ingress .*|eee .*|version|temp)/
 * *web GET /cmd_log +/(get|set) \S+( .*)?|apply|discard/ -/(stat|mtu .*|pvid .*|port .*|isolate .*|ingress .*|eee .*|version|temp)/
+# state.mgmt, state.ntp (P5-3): ip, gw, netmask and time with no argument
+# print nothing any more; get state.mgmt and state.ntp stand for them
+* *cli history -/(ip|gw|netmask|time)/
+* *web GET /cmd_log -/(ip|gw|netmask|time)/
 
 # A page gone on the new image is read there with get, on the console: the
 # HTTP frames to the host are fewer. With port: /eee.json and

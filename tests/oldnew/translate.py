@@ -187,7 +187,7 @@ PATHS = [
 # Objects whose rows wait for their node; each takes itself out (P4-*, P5-*)
 PENDING = {"sys", "web", "mgmt", "syslog", "dns", "ntp", "vlan", "lag", "stp", "igmp", "lldp", "loop", "mirror",
            "port.design",
-           "state.mgmt", "state.ntp", "state.dns", "state.loop", "state.loader",
+           "state.loader",
            "state.sfp", "state.stp", "state.lag", "state.l2", "state.mib"}
 # What `get` takes for an object, where that isn't its own name
 GETS = {"port": ["port", "state.port"], "port.design": ["port", "state.port"], "state.sched":
@@ -836,7 +836,15 @@ def _ip_post(v, m, r):
     return v
 
 
-row(r"ip", Read("mgmt", ["state.mgmt.ip", "state.mgmt.dhcp.(state|renew_s)"], _ip, post=_ip_post))
+def _ip_narrow(p, x, m, r):
+    """get's DHCP state as the old says it: leasing, or not."""
+    if p == "state.mgmt.dhcp.state":
+        return "leasing" if x == "leasing" else "not leasing"
+    return x
+
+
+# the no-argument forms go with state.mgmt (P5-3); setting stays with mgmt
+row(r"ip", Read("state.mgmt", ["state.mgmt.ip", "state.mgmt.dhcp.(state|renew_s)"], _ip, narrow=_ip_narrow, post=_ip_post))
 
 
 def _current(name, path):
@@ -849,8 +857,8 @@ def _current(name, path):
     return p
 
 
-row(r"gw", Read("mgmt", ["state.mgmt.gateway"], _current("gw", "state.mgmt.gateway")))
-row(r"netmask", Read("mgmt", ["state.mgmt.netmask"], _current("netmask", "state.mgmt.netmask")))
+row(r"gw", Read("state.mgmt", ["state.mgmt.gateway"], _current("gw", "state.mgmt.gateway")))
+row(r"netmask", Read("state.mgmt", ["state.mgmt.netmask"], _current("netmask", "state.mgmt.netmask")))
 
 
 # --- state.ntp, state.dns, state.loop (P5-3): ntp, time, dns, loop
@@ -880,6 +888,9 @@ def _ntp_narrow(p, x, m, r):
     if p == "state.ntp.last_sync_s":
         return f"{int(x) // 60} min"
     if p == "state.ntp.time":
+        if x.isdigit():                         # seconds since 1970 (P5-3)
+            import datetime
+            return datetime.datetime.fromtimestamp(int(x), datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         a = re.match(r"(\d+-\d\d-\d\d)[ T](\d\d:\d\d:\d\d)", x)
         return f"{a[1]} {a[2]}" if a else x
     return x
@@ -911,13 +922,14 @@ row(r"time", Read("state.ntp", NTP, _cli(lambda l, v, m, r: _time_line(l, v)), n
 
 @_cli
 def _dns(l, v, m, r):
-    a = re.fullmatch(r"DNS servers ([\d.]+) ([\d.]+), from DHCP ([\d.]+)", l)
+    a = re.fullmatch(r"DNS servers ([\d.]+) ([\d.]+)(?:, from DHCP ([\d.]+))?", l)     # P5-3: the servers only
     if a:
-        v["dns.server1"], v["dns.server2"], v["state.dns.dhcp_server"] = a[1], a[2], a[3]
+        v["dns.server1"], v["dns.server2"] = a[1], a[2]
+        if a[3]:
+            v["state.dns.dhcp_server"] = a[3]
         return True
     a = re.fullmatch(r"Last lookup (.*): (pending|failed|[\d.]+)", l)
-    if a:
-        v["state.dns.lookup.name"] = a[1]
+    if a:                                       # the name: deferred (P5-3)
         v["state.dns.lookup.status"] = a[2] if a[2] in ("pending", "failed") else "done"
         if v["state.dns.lookup.status"] == "done":
             v["state.dns.lookup.ip"] = a[2]
@@ -927,14 +939,14 @@ def _dns(l, v, m, r):
 
 def _dns_post(v, m, r):
     """No lookup line before the first lookup; an address only when done."""
-    if v.get("state.dns.lookup.status") in (None, "none") or not v.get("state.dns.lookup.name"):
+    if v.get("state.dns.lookup.status") in (None, "none"):
         return {p: x for p, x in v.items() if not p.startswith("state.dns.lookup.")}
     if v["state.dns.lookup.status"] != "done":
         v.pop("state.dns.lookup.ip", None)
     return v
 
 
-row(r"dns", Read("dns state.dns", ["dns.server[12]", "state.dns.dhcp_server", "state.dns.lookup.(name|status|ip)"], _dns, post=_dns_post))
+row(r"dns", Read("dns state.dns", ["dns.server[12]", "state.dns.dhcp_server", "state.dns.lookup.(status|ip)"], _dns, post=_dns_post))
 
 
 @_cli
@@ -961,7 +973,7 @@ def _loop_json_post(v, m, r):
     return v
 
 
-row(r"loop(?: show)?", Read("state.loop", ["loop.enabled", "state.loop.(looped|blocked)"], _loop_show, post=_loop_post))
+row(r"loop(?: show)?", Read("loop", ["loop.enabled", "state.loop.(looped|blocked)"], _loop_show, post=_loop_post))
 
 
 # --- state.sfp (P5-4): sfp
