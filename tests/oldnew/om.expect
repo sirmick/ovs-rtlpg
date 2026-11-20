@@ -73,12 +73,11 @@ web *web GET /index.html -/<\d+ bytes, sha256 \w+>/ +/<\d+ bytes, sha256 \w+>/	#
 web *web GET /app.js -/<\d+ bytes, sha256 \w+>/ +/<\d+ bytes, sha256 \w+>/	# the old text save's code goes
 # config: saved with save by POST /cli (oldnew.py post_config); the objects
 # not on the model yet run and are dropped by the save, so after the power
-# cut VLAN 10, STP and loop detection differ until P4-2 (vlan), P4-3 (stp)
-# and P4-4 (loop). The new image now boots after the cut.
+# cut STP and loop detection differ until P4-3 (stp) and P4-4 (loop); VLAN 10
+# is saved since P4-2. The new image now boots after the cut.
 config *web POST /config -/.*/ +/.*/
 config *console -/.*/ +/.*/
 config flash config -/.*/ +/.*/
-config vlan 00a
 config reg 10[679][0-9a-f]
 config reg 108c
 config reg 4ecc
@@ -108,3 +107,24 @@ l2_big,lacp_l2 reg 5cac
 l2_big,lacp_l2 reg 5cb0
 l2_big,lacp_l2 reg 5ccc
 l2_big,lacp_l2 reg 5cd0
+# vlan.V (P4-2, om/core): /vlan.json and /vlanlist.json go (read by value with
+# get); a POST /cmd vlan goes as set lines and an apply (oldnew.py post_cmd):
+# vlan_create()'s line on the old console, the ok lines on the new
+web,vlan *console -/vlan: 0x[0-9a-f]{4}, members: 0x[0-9a-f]{4}, tagged: 0x[0-9a-f]{4}/ +/ok/
+# the pages read with get: fewer HTTP frames (as port's in web)
+vlan,lldp frames * tcp/80
+
+# P3J (om/core-p3j 179eafd): the boot writes every port's settings and the LEDs once, at their
+# defaults too (a soft reset keeps the chip and the PHYs as they were), so the PHYs' autoneg
+# registers and the LED SW_EN registers are written where the old image left them at reset; and
+# the boot's L2 flush takes the static entries and the CPU's too (FLUSH_MODE bit 2)
+* reg 53d4 -/[0-9a-f]{8}/ +/[0-9a-f]{8}/
+* reg 53dc -/00000000/ +/00000004/
+* reg 655[48] -/<absent>/ +/00000000/
+* phy *.07.00[0-2]0 -/<absent>/ +/[0-9a-f]{4}/
+* phy *.1f.a412 -/<absent>/ +/[0-9a-f]{4}/
+# and /ports.json then reads each copper port's advertisement from what the boot wrote (speed
+# auto: every mode the port has), where the old image's untouched PHYs read none in rtlsim
+* *web GET /ports.json -/raw\.port\.\d+\.adv none/ +/raw\.port\.\d+\.adv [0-9a-z,]+/
+# and LLDP's 802.3 MAC/PHY TLV says autonegotiation supported and on, with those modes
+lldp *lldp frames -/\s*org len 9: 00120f\/1 010000000a/ +/\s*org len 9: 00120f\/1 036c01000a/

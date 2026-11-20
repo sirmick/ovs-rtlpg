@@ -164,5 +164,15 @@
  ],
  "web /traffic.json": [
   "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\n\n[{\"port\":1,\"link\":\"1000M\",\"txG\":\"0x0\",\"txB\":\"0x0\",\"rxG\":\"0x0\",\"rxB\":\"0x0\",\"macs\":\"0x0\"},{\"port\":2,\"link\":\"DOWN\",\"txG\":\"0x0\",\"txB\":\"0x0\",\"rxG\":\"0x0\",\"rxB\":\"0x0\",\"macs\":\"0x0\"},{\"port\":3,\"link\":\"DOWN\",\"txG\":\"0x0\",\"txB\":\"0x0\",\"rxG\":\"0x0\",\"rxB\":\"0x0\",\"macs\":\"0x0\"},{\"port\":4,\"link\":\"DOWN\",\"txG\":\"0x0\",\"txB\":\"0x0\",\"rxG\":\"0x0\",\"rxB\":\"0x0\",\"macs\":\"0x0\"},{\"port\":5,\"link\":\"DOWN\",\"txG\":\"0x0\",\"txB\":\"0x0\",\"rxG\":\"0x0\",\"rxB\":\"0x0\",\"macs\":\"0x0\"},{\"port\":6,\"link\":\"DOWN\",\"txG\":\"0x0\",\"txB\":\"0x0\",\"rxG\":\"0x0\",\"rxB\":\"0x0\",\"macs\":\"0x0\"},{\"port\":7,\"link\":\"DOWN\",\"txG\":\"0x0\",\"txB\":\"0x0\",\"rxG\":\"0x0\",\"rxB\":\"0x0\",\"macs\":\"0x0\"},{\"port\":8,\"link\":\"DOWN\",\"txG\":\"0x0\",\"txB\":\"0x0\",\"rxG\":\"0x0\",\"rxB\":\"0x0\",\"macs\":\"0x0\"},{\"port\":9,\"link\":\"DOWN\",\"txG\":\"0x0\",\"txB\":\"0x0\",\"rxG\":\"0x0\",\"rxB\":\"0x0\",\"macs\":\"0x0\"}]"
+ ],
+ "web /vlan.json?vid=1": [
+  "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\n\n{\"untagged_members\":[1,2,3,4,5,6,7,8,9],\"tagged_members\":[],\"name\":\"\",\"pvid\":[1,2,3,4,5,6,7,8,9]}"
+ ],
+ "web /vlan.json?vid=10": [
+  "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\n\n{\"untagged_members\":[2],\"tagged_members\":[3,4],\"name\":\"office\",\"pvid\":[2]}"
+ ],
+ "web /vlanlist.json": [
+  "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\n\n{\"mgmt\":1,\"vlan\":[{\"id\":1,\"name\":\"\"},{\"id\":10,\"name\":\"office\"},{\"id\":20,\"name\":\"lab\"}]}",
+  "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/json\n\n{\"vlan\":[{\"id\":1,\"name\":\"\"}]}"
  ]
 }
