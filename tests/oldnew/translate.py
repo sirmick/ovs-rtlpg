@@ -190,7 +190,7 @@ PATHS = [
 ]
 # Objects whose rows wait for their node; each takes itself out (P4-*, P5-*)
 # sys.mac: P4-1 left it (the MAC type's cost); the mac command stays until it moves
-PENDING = {"sys.mac", "igmp", "lldp", "loop", "mirror",
+PENDING = {"sys.mac",
            "port.design",
            "state.loader"}
 # Fields a moved state object defers (its schema lists them): the new image
@@ -2224,6 +2224,40 @@ def _mirror_status(l, v, m, r):
 row(r"mirror status", Read("mirror", ["mirror.(enabled|port|rx|tx)"], _mirror_status,
                            post=lambda v, m, r: v if v.get("mirror.enabled") == "on" else {"mirror.enabled": "off"}))
 row(r"mirror.*", Refused("mirror"))
+
+
+def _mirror_json(d, v, rest, m, r):
+    """/mirror.json: on, the mirror port (front number), the rx and tx
+    sources; the registers whatever on says (post: only on when off)."""
+    if "enabled" in d:
+        v["mirror.enabled"] = onoff(d["enabled"])
+    if "mirrorPort" in d:
+        v["mirror.port"] = str(d["mirrorPort"])
+    for key, p in (("mirror_rx", "mirror.rx"), ("mirror_tx", "mirror.tx")):
+        if key in d:
+            v[p] = plist(d[key])
+    _left(d, {"enabled", "mirrorPort", "mirror_rx", "mirror_tx"}, rest, "")
+
+
+page(r"/mirror\.json", Read("mirror", ["mirror.(enabled|port|rx|tx)"], _json(_mirror_json),
+                            post=lambda v, m, r: v if v.get("mirror.enabled") == "on" else {"mirror.enabled": "off"}))
+
+
+def _lldp_json(d, v, rest, m, r):
+    """/lldp.json: on, and per port its name and whether LLDP is permitted."""
+    if "on" in d:
+        v["lldp.enabled"] = onoff(d["on"])
+    for e in d.get("portStatus", []):
+        P = e.get("port")
+        if "name" in e:
+            v[f"port.{P}.name"] = e["name"]
+        if "permitted" in e:
+            v[f"port.{P}.lldp"] = "permit" if e["permitted"] else "block"
+        _left(e, {"port", "name", "permitted"}, rest, f"port {P} ")
+    _left(d, {"on", "portStatus"}, rest, "")
+
+
+page(r"/lldp\.json", Read("lldp", ["lldp.enabled", "port.#.(name|lldp)"], _json(_lldp_json)))
 
 
 @_cli

@@ -148,3 +148,13 @@ stp *web GET /stpcnt.json -/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms \d+ s|[rt]x
 # old left the logical ports that aren't front ports disabled (the SWGT024's
 # 0-2), and after stp_upload's soft reset kept the states STP had (a port blocked)
 stp* reg 5310 -/000f[0-9a-f]{4}/ +/000fffff/
+
+# igmp, lldp, loop, mirror (P4-5, om/proto): igmp_setup's debug print goes
+# (the boot runs it); the cli scenario reads lldp.enabled by value, not from
+# RMA0E_CONF; /loop.json goes (read with get: fewer HTTP frames, as vlan's);
+# a translated igmp on / loop on (set lines and an apply) answers at another
+# time, so the link change the scenario makes lands in the result before
+* *boot -/igmp_setup called/
+cli reg 4ee8 -/[0-9a-f]{8}/ +/<absent>/
+loop frames * tcp/80
+igmp,loop *console -/\n<new link: [0-9a-f]+, was [0-9a-f]+>/ +/\n<new link: [0-9a-f]+, was [0-9a-f]+>/
