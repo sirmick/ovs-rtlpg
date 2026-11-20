@@ -132,6 +132,10 @@ def main():
     ok2 = compare("boot", {"000 boot": "x\n\n" + blk}, {"000 boot": "x\na\nb"}, ex)[0] != []
     case("O", ok1 and ok2, "a block item covers its run of lines, not a blank line elsewhere")
     fails += not (ok1 and ok2)
+    ok = translate.by_post("/cmd_log_clear", {"http.post"}) and translate.by_post("/l2_del.json?idx=12", {"http.post"}) \
+        and not translate.by_post("/cmd_log_clear", {"port"}) and not translate.by_post("/cmd_log", {"http.post"})
+    case("R", ok, "the action pages by POST on an image with http.post, GET on the others")
+    fails += not ok
     fails += real_gets(case)
     fails += state_paths(case)
     sys.exit(1 if fails else 0)

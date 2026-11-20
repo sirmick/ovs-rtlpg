@@ -16,12 +16,6 @@
 * reg 0f6[048] -/[0-9a-f]{8}/ +/<absent>/
 vlan,cli,web,loop,sfp,flaps reg 0f6[048] -/[0-9a-f]{8}/ +/[0-9a-f]{8}/
 
-# port.N against /ports.json by value: 53ee574 reads the MTU register, 0 in
-# rtlsim (the boot never writes it); feat/om's port.N.mtu is the default,
-# 16383, which its boot doesn't write either (asked: rtlsim's reset value or
-# a feat/om bug)
-* *web GET /ports.json -/port\.\d+\.mtu 0/ +/port\.\d+\.mtu 16383/
-
 # The history holds what was typed: the new image the translated lines
 # (translate.py), and not the old ones they stand for
 * *cli history +/(get|set) \S+( .*)?|apply|discard/ -/(stat|mtu .*|pvid .*|port .*|isolate .*|ingress .*|eee .*)/

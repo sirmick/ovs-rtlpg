@@ -272,6 +272,9 @@ class Run:
     def get(self, path, login=True, slot=5000):
         h = b"Cookie: session=" + self.cookie + b"\r\n" if login and self.cookie else b""
         req = f"GET {path} HTTP/1.1\r\n".encode() + h + b"\r\n"
+        if translate.by_post(path, self.om):	# an action the image takes by POST only (its result
+            # keeps the GET's name, so the two images' line up)
+            req = f"POST {path} HTTP/1.1\r\n".encode() + h + b"Content-Length: 0\r\n\r\n"
         t = translate.find_page(path, self.canon) if login else None
         if t is None:
             self._http(f"GET {path}", req, slot)

@@ -306,7 +306,7 @@ class Read:
         return self._post(v, m, r) if self._post else v
 
 
-ROWS, PAGES = [], []
+ROWS, PAGES, ACTIONS = [], [], []
 
 
 def row(rx, what):
@@ -331,8 +331,18 @@ def find_page(path, canon):
     return find(path, canon, PAGES)
 
 
+def action(rx, obj):
+    """A page with a side effect, which an image that has obj takes by POST."""
+    ACTIONS.append((re.compile(rx), obj))
+
+
+def by_post(path, om):
+    """Whether this image takes GET path by POST (an action page)."""
+    return any(rx.fullmatch(path) and o in om for rx, o in ACTIONS)
+
+
 def objects():
-    return {o for _, w in ROWS + PAGES for o in w.objs if o}
+    return {o for _, w in ROWS + PAGES for o in w.objs if o} | {o for _, o in ACTIONS}
 
 
 def pending(objs):
@@ -1620,3 +1630,10 @@ def _isolation(d, v, rest, m, r):
 
 
 page(r"/isolation\.json", Read("port", ["port.#.isolate"], _json(_isolation), gets=lambda m, r, o: ["get port.*.isolate"]))
+
+
+# --- the pages with side effects (P3C: POST only on the new image; the
+# old takes GET)
+
+for _rx in (r"/reset", r"/cmd_log_clear", r"/l2_del\.json\?idx=\d+"):
+    action(_rx, "http.post")

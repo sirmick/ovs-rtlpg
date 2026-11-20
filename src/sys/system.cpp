@@ -99,6 +99,11 @@ void rtl837x_system::seed_chip()
 	m_core.set_reg(0x1070, 0x00000808);
 	m_core.set_reg(0x1074, 0x07d007d0);
 	m_core.set_reg(0x1078, 0x000003ff);
+	// MAC_L2_PORT_MAX_LEN (0x1250 + port << 8): 16383 (doc/api.md's ports.json
+	// reads 0x3fff on silicon), as parse_mtu() would write it; the bits above
+	// the length are unmeasured
+	for (u16 p = 0; p < 10; p++)
+		m_core.set_reg(u16(0x1250 + (p << 8)), 0x0fffffff);
 	// LOOP_STATE and LEAVE_LOOP_STATE latch; a 1 written clears its bit
 	for (u16 r : {u16(0x108c), u16(0x1094)})
 		m_core.on_write(r, [this, r](u32 v) { return m_core.reg(r) & ~v; });
