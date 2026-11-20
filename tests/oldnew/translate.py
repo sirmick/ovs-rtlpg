@@ -929,8 +929,7 @@ def _dns(l, v, m, r):
             v["state.dns.dhcp_server"] = a[3]
         return True
     a = re.fullmatch(r"Last lookup (.*): (pending|failed|[\d.]+)", l)
-    if a:
-        v["state.dns.lookup.name"] = a[1]
+    if a:                                       # the name: deferred (P5-3)
         v["state.dns.lookup.status"] = a[2] if a[2] in ("pending", "failed") else "done"
         if v["state.dns.lookup.status"] == "done":
             v["state.dns.lookup.ip"] = a[2]
@@ -940,14 +939,14 @@ def _dns(l, v, m, r):
 
 def _dns_post(v, m, r):
     """No lookup line before the first lookup; an address only when done."""
-    if v.get("state.dns.lookup.status") in (None, "none") or not v.get("state.dns.lookup.name"):
+    if v.get("state.dns.lookup.status") in (None, "none"):
         return {p: x for p, x in v.items() if not p.startswith("state.dns.lookup.")}
     if v["state.dns.lookup.status"] != "done":
         v.pop("state.dns.lookup.ip", None)
     return v
 
 
-row(r"dns", Read("dns state.dns", ["dns.server[12]", "state.dns.dhcp_server", "state.dns.lookup.(name|status|ip)"], _dns, post=_dns_post))
+row(r"dns", Read("dns state.dns", ["dns.server[12]", "state.dns.dhcp_server", "state.dns.lookup.(status|ip)"], _dns, post=_dns_post))
 
 
 @_cli
