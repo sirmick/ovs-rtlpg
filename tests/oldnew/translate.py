@@ -1279,6 +1279,7 @@ def _l2_post(v, m, r):
 
 
 row(r"l2", Read("state.l2", ["state.l2.#.(mac|vlan|port|lag|static)"], _l2, post=_l2_post))
+row(r"l2 forget", Set("l2", lambda m, r: {}, then=lambda m, r, prev: ["do l2.flush"], status=True))
 
 
 # --- the JSON pages (P5-1, P5-4, P5-5)

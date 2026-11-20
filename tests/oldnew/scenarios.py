@@ -284,7 +284,8 @@ L2_HOSTS = 1000
 
 def l2_big(r):
     """1000 hosts behind front port 2, learned by the chip (rtlsim's
-    learning): `l2` on the console prints them all, /l2.json pages them."""
+    learning): `l2` on the console prints them all, /l2.json pages them;
+    then `l2 forget` flushes them."""
     P = r.P
     r.boot()
     r.link(P[1], True)
@@ -295,6 +296,9 @@ def l2_big(r):
     r.cli("l2", slot=30000)
     r.login()
     r.get_l2_pages()
+    r.cli("l2 forget")
+    r.wait(100)
+    r.tables()
 
 
 def lacp_l2(r):
