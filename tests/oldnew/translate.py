@@ -192,8 +192,7 @@ PATHS = [
 # sys.mac: P4-1 left it (the MAC type's cost); the mac command stays until it moves
 PENDING = {"sys.mac", "vlan", "lag", "stp", "igmp", "lldp", "loop", "mirror",
            "port.design",
-           "state.loader",
-           "state.l2", "state.mib"}
+           "state.loader"}
 # Fields a moved state object defers (its schema lists them): the new image
 # has no path for them, so while the surface lasts both images read them there
 DEFERRED = [_r for _r in (
@@ -1439,42 +1438,16 @@ def _traffic(d, v, rest, m, r):
 page(r"/traffic\.json", Read("state.mib", ["state.port.#.(link|speed|tx_good|tx_bad|rx_good|rx_bad|macs)"], _json(_traffic),
                              post=_no_speed_down))
 
-# DESIGN 7.6: STAT index -> one 64-bit counter, or two 32-bit (hi, lo)
-MIB = (["if_in_octets", "if_out_octets", "if_in_ucast", "if_in_mcast", "if_in_bcast", "if_out_ucast",
-        "if_out_mcast", "if_out_bcast"] +
-       [tuple(x.split("/")) for x in (
-           "if_out_discards/dot1d_tp_port_in_discards dot3_single_collision/dot3_multi_collision "
-           "dot3_deferred_tx/dot3_late_collisions dot3_excessive_collisions/dot3_symbol_errors "
-           "dot3_ctrl_in_unknown_opcodes/dot3_in_pause dot3_out_pause/ether_drop_events tx_bcast/tx_mcast "
-           "tx_crc_align_err/rx_crc_align_err tx_undersize/rx_undersize tx_oversize/rx_oversize "
-           "tx_fragments/rx_fragments tx_jabbers/rx_jabbers tx_collisions/tx_64 rx_64/tx_65_127 "
-           "rx_65_127/tx_128_255 rx_128_255/tx_256_511 rx_256_511/tx_512_1023 rx_512_1023/tx_1024_1518 "
-           "rx_1024_1518/x26_lo rx_undersize_drop/tx_over_1518 rx_over_1518/tx_too_large "
-           "rx_too_large/tx_flex_octets_s1 rx_flex_octets_s1/tx_flex_octets_crc_s1 "
-           "rx_flex_octets_crc_s1/tx_flex_octets_s0 rx_flex_octets_s0/tx_flex_octets_crc_s0 "
-           "rx_flex_octets_crc_s0/length_field_errors false_carriers/undersized_octets framing_errors/x35_lo "
-           "rx_mac_discards/rx_mac_ipg_short_drop x37_hi/dot1d_tp_learned_entry_discards "
-           "egress_q7_drop/egress_q6_drop egress_q5_drop/egress_q4_drop egress_q3_drop/egress_q2_drop "
-           "egress_q1_drop/egress_q0_drop egress_q7_out/egress_q6_out egress_q5_out/egress_q4_out "
-           "egress_q3_out/egress_q2_out egress_q1_out/egress_q0_out").split()] +
-       ["tx_good", "rx_good", ("rx_err", "tx_err"), "tx_good_phy", "rx_good_phy", ("rx_err_phy", "tx_err_phy"),
-        "x52", "x53", "x54"])
-assert len(MIB) == 55
-
-
 def _counters(d, v, rest, m, r):
-    """/counters.json?port=N: the 55 STAT indexes, each "0x" + hex: one
-    64-bit counter, or the high and low halves of two."""
+    """/counters.json?port=N: the 55 STAT indexes, each "0x" + hex: as
+    state.port.N.mib.K holds them (P5-5), the raw 64-bit word of index K
+    (the names are schema.js's)."""
     n = m[1]
-    if not isinstance(d, list) or len(d) != len(MIB):
-        rest.append(f"{len(d) if isinstance(d, list) else type(d).__name__} counters, not {len(MIB)}")
+    if not isinstance(d, list) or len(d) != 55:
+        rest.append(f"{len(d) if isinstance(d, list) else type(d).__name__} counters, not 55")
         return
-    for name, x in zip(MIB, d):
-        x = int(x, 16)
-        if isinstance(name, tuple):
-            v[f"state.port.{n}.mib.{name[0]}"], v[f"state.port.{n}.mib.{name[1]}"] = str(x >> 32), str(x & 0xffffffff)
-        else:
-            v[f"state.port.{n}.mib.{name}"] = str(x)
+    for k, x in enumerate(d):
+        v[f"state.port.{n}.mib.{k}"] = str(int(x, 16))
 
 
 page(r"/counters\.json\?port=(\d+)", Read("state.mib", ["state.port.#.mib.*"], _json(_counters),
@@ -1650,7 +1623,8 @@ def _l2_json(d, v, rest, m, r):
 def _l2_page(v, m, r):
     """The new side's table as the page from idx would show it (send_l2():
     from the first entry at or after idx, round the table, until it comes
-    back to the first or 30 have gone)."""
+    back to the first, 30 have gone or the next one's worst case (76 B)
+    would not fit outbuf (2,500 B))."""
     e = _l2_entries(v)
     out = {p: x for p, x in v.items() if not re.fullmatch(r"state\.l2\.\d+\.\w+", p)}
     if not e:
@@ -1658,13 +1632,18 @@ def _l2_page(v, m, r):
     idx = sorted(e)
     start = int(m[1]) & 0xfff
     first, left, entry = None, 30, start
+    slen = 70 + 1                       # HTTP_RESPONSE_JSON, "["
     while True:
         left -= 1
         nxt = next((i for i in idx if i >= entry), idx[0])
+        f = e[nxt]
+        if slen + 76 > 2500:            # send_l2(): an entry's worst case must fit outbuf
+            break
+        slen += (slen > 71) + len('{"vlan":"%03x","mac":"%s","type":"l","port":%s,"lag":%s,"idx":"%04x"}' % (
+            int(f.get("vlan", "0")), f.get("mac"), "0" if f.get("port") == "cpu" else f.get("port"), f.get("lag", "0"), nxt))
         key = f"state.l2.{nxt}"
         while key in out:
             key += "+"
-        f = e[nxt]
         _l2_entry(out, key, f.get("mac"), f.get("vlan"), f.get("port"), f.get("static"), f.get("lag", "0"))
         entry = nxt + 1
         if first is None:
