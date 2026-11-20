@@ -8,7 +8,9 @@ again. Prints the whole console log and the time each step took.
 """
 import argparse, os, re, select, subprocess, sys, time
 
-PROMPT = b"\n> "
+# the prompt, and P3A's markers before it: "[confirm N] " (a confirm window) and
+# "*" (unapplied or unsaved changes); a POSIX ERE too, for rtlsim's until uart
+PROMPT = re.compile(rb"\n(\[confirm [0-9]+\] )?\*?> ")
 
 # The management IP to assume when the firmware's `ip` command can't be read.
 # It is the IP that upstream RTLPlayground bakes into the image (config.txt),
@@ -50,7 +52,7 @@ class Console:
                 if not d:
                     break
                 self.log += d.replace(b"\r", b"")
-                if pat in self.log[start:]:
+                if (pat.search(self.log, start) if hasattr(pat, "search") else pat in self.log[start:]):
                     return True
         return False
 

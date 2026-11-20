@@ -37,7 +37,7 @@ import argparse, os, re, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from rtlsim_ctl import Sim, fmt_us
 
-PROMPT_RE = r"\n> $"
+PROMPT_RE = r"\n(\[confirm [0-9]+\] )?\*?> $"	# with P3A's markers; a POSIX ERE too
 FINDING_RE = (r"early reset: chip reset by the application at pc=[0-9a-f]{4} psbank=[0-9a-f]{2}, t=\d+\.\d{3} ms, "
               r"before the switch init since power-on \(proxy: .*\): the chip hangs until a power cycle, as the 8x's did")
 failures = 0

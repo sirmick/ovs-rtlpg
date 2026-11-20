@@ -8,9 +8,9 @@ The protocol is in src/ctl/control.h.
 
     from rtlsim_ctl import Sim
     with Sim(image, board="boards/keeplink_kp_9000_9xhpml_v1_2.json", map=".../rtlplayground.map") as sim:
-        sim.run_until_uart(r"\\n> $")           # booted: the prompt
+        sim.run_until_uart(r"\\n(\\[confirm [0-9]+\\] )?\\*?> $")  # booted: the prompt (P3A's markers too)
         sim.uart_write("version\\r")
-        sim.run_until_uart(r"\\n> $", max_ms=1000)
+        sim.run_until_uart(r"\\n(\\[confirm [0-9]+\\] )?\\*?> $", max_ms=1000)
         for t, text, done in sim.uart_read(): ...
         ticks = sim.peek_sym("ticks")             # bytes, the symbol's size
         sim.run_until_pc("sched_pass_end")

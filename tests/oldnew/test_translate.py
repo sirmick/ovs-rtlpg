@@ -155,6 +155,17 @@ def main():
     ok = nc == ["not compared: state.sfp.#.present (state.sfp pending)"] and w.not_compared([set(), set()]) == []
     case("T", ok, f"a live row says what it can't compare yet: {nc}")
     fails += not ok
+    import bench
+    outs = []
+    for tail in ("> ", "*> ", "[confirm 30] > ", "[confirm 5] *> "):
+        b = object.__new__(bench.Bench)
+        b.uart = f"version\nv1\n{tail}"
+        b.take_uart, b.advance = (lambda b=b: b.uart), (lambda until, cond: cond())
+        outs.append(b._reply(bench.PROMPT, 0))
+    lines = translate._lines("stat\nx\n[confirm 5] *> ")
+    ok = outs == ["version\nv1\n> "] * 4 and lines == ["x"]
+    case("U", ok, f"P3A's prompts ([confirm N], *) end a reply, which keeps the bare prompt; a parser drops them ({outs[3]!r})")
+    fails += not ok
     fails += real_gets(case)
     fails += config_rows(case)
     fails += state_paths(case)

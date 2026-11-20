@@ -20,7 +20,7 @@ The run is twice; both transcripts must be the same.
 import argparse, json, os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "../oldnew"))
-from bench import Bench
+from bench import Bench, PROMPT
 from lacp_partner import LacpPartner, SYNC, COLL, DIST
 
 failures = 0
@@ -48,7 +48,7 @@ def session(a):
     b = Bench(a.image, board=a.board, rtlsim=a.rtlsim)
     log, f = [], {}
     try:
-        b.wait_uart(r"\n> ", 30_000_000)
+        b.wait_uart(PROMPT, 30_000_000)
         b.advance(b.now + 10_000)
         for p in (pa, pb):
             b.link(p, True)

@@ -50,7 +50,7 @@ from rtlsim_ctl import Sim, fmt_us
 from console import Console, PROMPT
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PROMPT_RE = r"\n> $"
+PROMPT_RE = r"\n(\[confirm [0-9]+\] )?\*?> $"	# with P3A's markers; a POSIX ERE too
 failures = 0
 
 
@@ -128,8 +128,8 @@ def session(a):
 STYLES = {
     "run 60": [("run", "60")],
     "run 0.517 + 11.111 + 48.372": [("run", "0.517"), ("run", "11.111"), ("run", "48.372")],
-    "until uart, run on": [("uart", r"\n> $"), ("to", "60")],
-    "until pc=cmd_parser, until uart, run on": [("pc", "cmd_parser"), ("uart", r"\n> $"), ("to", "60")],
+    "until uart, run on": [("uart", PROMPT_RE), ("to", "60")],
+    "until pc=cmd_parser, until uart, run on": [("pc", "cmd_parser"), ("uart", PROMPT_RE), ("to", "60")],
 }
 
 
@@ -179,7 +179,7 @@ def uart_timing(a):
         sim.run_until_uart(r"Port", max_ms=100)
         paste = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"
         sim.uart_write(paste)
-        sim.run_until_uart(r"\n> [A-Za-z]*$", max_ms=400)
+        sim.run_until_uart(r"\n(\[confirm [0-9]+\] )?\*?> [A-Za-z]*$", max_ms=400)
         sim.run(20)
         lines = sim.uart_read()
         ring = sim.sym("sbuf")[2]

@@ -21,7 +21,7 @@ from rtlsim_ctl import Sim, SimError
 
 GRID = 500			# µs between looks at the wire
 COARSE = 10000			# ... with no cable and nothing to wait for
-PROMPT = r"\n> "			# a reply ends at the first prompt; what follows is kept
+PROMPT = r"\n(\[confirm [0-9]+\] )?\*?> "	# with P3A's markers ([confirm N], *); a POSIX ERE too			# a reply ends at the first prompt; what follows is kept
 # Lines the firmware prints on its own, not as a command's reply (link
 # changes, protocol events): taken out of a reply, wherever they fall in it,
 # and kept with what came after the prompt, so a line printed a scheduler
@@ -153,6 +153,8 @@ class Bench:
             return None
         m = rx.search(self.uart)
         reply, rest = self.uart[:m.end()], self.uart[m.end():]
+        if regex == PROMPT:	# P3A's markers are state.cfg's to compare, not every reply's
+            reply = reply[:m.start()] + "\n> "
         keep, moved = [], []
         for l in reply.splitlines(keepends=True):
             if any(a.match(l.rstrip("\n")) for a in ASYNC):

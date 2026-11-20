@@ -410,7 +410,7 @@ def slot_of(front, r):
 def _lines(text):
     """A reply's lines less the echo, the prompt and blank lines."""
     ls = (text or "").replace("\r", "").split("\n")
-    return [l for l in ls[1:] if l.strip() and l.strip() != ">"]
+    return [l for l in ls[1:] if l.strip() and not re.fullmatch(r"(\[confirm [0-9]+\] )?\*?>", l.strip())]
 
 
 def _cli(parse):

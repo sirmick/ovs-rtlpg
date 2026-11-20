@@ -152,7 +152,7 @@ class Lab:
         sudo("rm", "-rf", self.dir, check=False)
 
 
-PROMPT = b"\n> "
+PROMPT = re.compile(rb"\n(\[confirm [0-9]+\] )?\*?> ")	# with P3A's markers (console.py's)
 
 
 class Net:
@@ -276,7 +276,7 @@ def run_topo(image, topo_file, rtlsim):
             with lock:
                 for l in lines:
                     print(f"[{name}] {l.decode(errors='replace')}", flush=True)
-                if buf.startswith(b"> ") or buf == b">":
+                if re.match(rb"(\[confirm [0-9]+\] )?\*?>( |$)", buf):
                     print(f"[{name}] {buf.decode(errors='replace')}", flush=True)
                     buf = b""
 

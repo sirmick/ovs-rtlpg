@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, ".."))
 from rtlsim_ctl import Sim
 
-PROMPT = r"\n> "
+PROMPT = r"\n(\[confirm [0-9]+\] )?\*?> "	# with P3A's markers; a POSIX ERE too
 failures = 0
 SLOT = 8
 

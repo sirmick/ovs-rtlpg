@@ -19,6 +19,9 @@ from test_nic import Peer, eth, ip_bytes, PEER_MAC, PEER_IP, SWITCH_IP, SWITCH_M
 from console import DEFAULT_IP, peer_ip
 import re
 
+# the prompt, and P3A's "[confirm N] " and "*" markers before it
+PROMPT = re.compile(rb"\n(\[confirm [0-9]+\] )?\*?> ")
+
 failures = 0
 
 
@@ -69,14 +72,14 @@ class VM:
             if not d:
                 break
             self.log += d.replace(b"\r", b"")
-            if pat in self.log[start:]:
+            if (pat.search(self.log, start) if hasattr(pat, "search") else pat in self.log[start:]):
                 return True
         return False
 
     def cli(self, cmd):
         start = len(self.log)
         self.c.sendall(cmd.encode() + b"\r")
-        self.expect(b"\n> ", 10)
+        self.expect(PROMPT, 10)
         return self.log[start:].decode(errors="replace")
 
     def close(self):
@@ -99,7 +102,7 @@ def main():
     try:
         t = time.time()
         vm = VM(a.image, data, d, conf="SFP1=10g")
-        up = vm.expect(b"\n> ", 90)
+        up = vm.expect(PROMPT, 90)
         check(up, f"the VM boots and the firmware reaches its prompt on ttyS1 ({time.time() - t:.0f} s)")
         if not up:
             print(open(os.path.join(d, "linux.log"), errors="replace").read()[-1500:])
@@ -135,7 +138,7 @@ def main():
         vm.close()
 
         vm = VM(a.image, data, d)
-        up = vm.expect(b"\n> ", 90)
+        up = vm.expect(PROMPT, 90)
         why = [w for w, bad in (("first boot wrote the default config", b"Written default config to flash" not in first),
                                 ("second boot found it", b"Written default config" in vm.log),
                                 ("second boot's prompt", not up)) if bad]

@@ -27,6 +27,7 @@ issued before setup_clock()).
 Needs an image that installs web updates (dev e3347e6 and later).
 """
 import argparse, os, re, shutil, subprocess, sys, tempfile
+PROMPT_RX = re.compile(r"\n(\[confirm [0-9]+\] )?\*?> ")	# the prompt, P3A's markers too
 HERE = os.path.dirname(os.path.abspath(__file__))
 UPLOAD, PROGRESS, CONFIG, SECTOR, HOME_BANK = 0x40000, 0x7e000, 0x7f000, 0x1000, 0x4000
 CYCLES = 3_000_000_000  # OLD boot + copy + reset + NEW boot, in one power-on
@@ -58,7 +59,7 @@ def power_on(a, flash, *args, cycles=CYCLES):
         resets.append(f"{kind} (pc {m.group(1)})")
         start = n
     text = out.replace("\r", "")
-    up = "Software version:" in text and "\n> " in text[text.rfind("Software version:"):]
+    up = "Software version:" in text and PROMPT_RX.search(text[text.rfind("Software version:"):]) is not None
     return r.returncode, text, resets, up
 
 

@@ -29,6 +29,7 @@ Layout: compact (CONFIG_START 0x7f000, UPLOAD_START 0x40000, UPDATE_PROGRESS
 off install (before dev e3347e6) shows it as dead cuts all over.
 """
 import argparse, collections, concurrent.futures, os, re, shutil, subprocess, sys, tempfile, threading, time
+PROMPT_RX = re.compile(r"\n(\[confirm [0-9]+\] )?\*?> ")	# the prompt, P3A's markers too
 
 CHIP = 0x80000
 UPLOAD_START, UPDATE_PROGRESS, CONFIG_START, SECTOR = 0x40000, 0x7e000, 0x7f000, 0x1000
@@ -45,7 +46,7 @@ def rtlsim(a, flash, *args, cycles=BOOT_CYCLES):
 
 def prompt_after_last_boot(out):
     last = out.rfind("Software version:")
-    return last >= 0 and "\n> " in out[last:]
+    return last >= 0 and PROMPT_RX.search(out[last:]) is not None
 
 
 def outcome(a, flash, base, new):

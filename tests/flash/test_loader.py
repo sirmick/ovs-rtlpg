@@ -11,7 +11,8 @@ register window at 0x80b0, checks it with movc and jumps to 0: rtlsim must
 show the loader's banner, "Starting application", and the application at its
 prompt.
 """
-import argparse, glob, os, subprocess, sys
+import argparse, glob, os, subprocess, sys, re
+PROMPT_RX = re.compile(r"\n(\[confirm [0-9]+\] )?\*?> ")	# the prompt, P3A's markers too
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -31,7 +32,7 @@ def main():
                          capture_output=True).stdout.decode(errors="replace").replace("\r", "")
     i, j = out.find("RTLPlayground loader"), out.find("Starting application")
     app = out.find("Software version:", max(j, 0))
-    ok = 0 <= i < j < app and "\n> " in out[app:]
+    ok = 0 <= i < j < app and PROMPT_RX.search(out[app:]) is not None
     print(("PASS  " if ok else "FAIL  ") + f"the loader ({os.path.basename(chip)}) loads the application into code RAM "
           "and starts it" + ("" if ok else f": {out[-300:]!r}"))
     print(f"test_loader: {'ALL PASS' if ok else 'FAILED'}")

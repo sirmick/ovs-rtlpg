@@ -9,7 +9,8 @@ rtlsim being deterministic means every later one would too). verdict() says
 whether the result is right. sweep() does that after a power cut at each of
 a list of points, in parallel, and writes one line per cut as it finishes.
 """
-import collections, concurrent.futures, os, shutil, subprocess, threading
+import collections, concurrent.futures, os, re, shutil, subprocess, threading
+PROMPT_RX = re.compile(r"\n(\[confirm [0-9]+\] )?\*?> ")	# the prompt, P3A's markers too
 
 SECTOR = 0x1000
 BOOT_CYCLES = 1_200_000_000	# a boot reaches its prompt in ~250 M; an install and a boot in ~600 M
@@ -39,7 +40,7 @@ class Scenario:
     @staticmethod
     def prompted(out):
         last = out.rfind("Software version:")
-        return last >= 0 and "\n> " in out[last:]
+        return last >= 0 and PROMPT_RX.search(out[last:]) is not None
 
     def settle(self, flash):
         """Power-ons until the prompt: ("up" | "dead", power-ons, console)."""
