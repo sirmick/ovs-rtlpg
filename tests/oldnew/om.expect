@@ -26,6 +26,10 @@ vlan,cli,web,loop,sfp,flaps reg 0f6[048] -/[0-9a-f]{8}/ +/[0-9a-f]{8}/
 * *cli history -/(ip|gw|netmask|time)/
 * *web GET /cmd_log -/(ip|gw|netmask|time)/
 
+# P3C: the session cookie is HttpOnly (the UI never reads it; a script
+# injected into a page can't take it either)
+* *web POST /login -/Set-Cookie: session=<session>; SameSite=Strict/ +/Set-Cookie: session=<session>; SameSite=Strict; HttpOnly/
+
 # A page gone on the new image is read there with get, on the console: the
 # HTTP frames to the host are fewer. With port: /eee.json and
 # /isolation.json, in web only
