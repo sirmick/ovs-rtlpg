@@ -116,7 +116,7 @@ static u16 l3mc_hash(u32 a, u32 b)		// a bucket, as l2_hash()
 int switch_tables::lookup(const u8 mac[6], u16 vid) const
 {
 	const l2_entry *e = l2_find(mac, vid);
-	return e && !(mac[0] & 1) ? int(port(*e)) : -1;
+	return e && !aged_out(*e) && !(mac[0] & 1) ? int(port(*e)) : -1;
 }
 
 // Word layouts: tables.h; C bits 4:2 the age, which lookups need nonzero.

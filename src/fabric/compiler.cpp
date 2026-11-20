@@ -135,7 +135,7 @@ std::vector<flow> compile_flows(const switch_core &core, const switch_tables &ta
 
 	// 1: learn, 2: L2
 	for (auto &e : tables.l2()) {
-		if (!e.present)
+		if (!e.present || switch_tables::aged_out(e))
 			continue;
 		u8 mac[6];
 		u16 vid;
