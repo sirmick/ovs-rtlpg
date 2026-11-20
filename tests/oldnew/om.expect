@@ -168,3 +168,19 @@ igmp,loop *console -/\n<new link: [0-9a-f]+, was [0-9a-f]+>/ +/\n<new link: [0-9
 * reg 604c -/<absent>/ +/00000000/
 # igmp off (igmp_setup) puts IGMP_TRAP_CFG back to 0 too; the old off left it
 igmp reg 50bc -/00010007/ +/00000000/
+# P4-6 (om/core-p46 16849a4): the boot writes every port's bandwidth and storm settings, off
+# too, as the chip's power-on values (rtlsim seeds the limits' 0x0fffff and the meters' burst
+# 0x2000; unconfirmed: P8 silicon read). The zeros land where the old image never wrote: the
+# FC bits (drop), the storm enables, the meters' rates and modes. And the STORM_MIDX rows (the
+# meter of each port and type), which the old wrote only with a storm limit
+* reg 4c8c -/<absent>/ +/00000000/
+* reg 54e[48c] -/<absent>/ +/00000000/
+* reg 54f0 -/<absent>/ +/00000000/
+* reg 54f[48c] -/<absent>/ +/[0-9a-f]{8}/
+* reg 550[048c] -/<absent>/ +/[0-9a-f]{8}/
+* reg 5510 -/<absent>/ +/[0-9a-f]{8}/
+* reg 5d[5-9a-d][048c] -/<absent>/ +/00000000/
+* reg 5ef[04] -/<absent>/ +/00000000/
+# and apply walks the 36 storm instances too (119 apply steps for 76): on the SWGT024 the
+# loop scenario's `loop off` lands a period later, so RLDP sends one frame more (98 -> 99)
+loop frames * rldp -/98/ +/99/
