@@ -73,15 +73,13 @@ web *web GET /index.html -/<\d+ bytes, sha256 \w+>/ +/<\d+ bytes, sha256 \w+>/	#
 web *web GET /app.js -/<\d+ bytes, sha256 \w+>/ +/<\d+ bytes, sha256 \w+>/	# the old text save's code goes
 # config: saved with save by POST /cli (oldnew.py post_config); the objects
 # not on the model yet run and are dropped by the save, so after the power
-# cut STP and loop detection differ until P4-3 (stp) and P4-4 (loop); VLAN 10
-# is saved since P4-2. The new image now boots after the cut.
+# cut loop detection differs until P4-5 (loop); VLAN 10 is saved since P4-2,
+# STP since P4-4. The new image now boots after the cut.
 config *web POST /config -/.*/ +/.*/
 config *console -/.*/ +/.*/
 config flash config -/.*/ +/.*/
 config reg 10[679][0-9a-f]
 config reg 108c
-config reg 4ecc
-config reg 5310
 config frames * rldp
 config frames * stp
 config frames * tcp/80
@@ -140,3 +138,12 @@ lldp *lldp frames -/\s*org len 9: 00120f\/1 010000000a/ +/\s*org len 9: 00120f\/
 lacp* *console -/port_lag_members_set, lag: \d+, members: 0x[0-9a-f]{4}|<new link: [0-9a-f]+, was [0-9a-f]+>|/ +/<absent>|<new link: [0-9a-f]+, was [0-9a-f]+>|/
 # /lag.json read with get: fewer HTTP frames
 lacp frames * tcp/80
+# stp (P4-4): stp on is apply's, the cfg job's a step after the command, so
+# the tree starts a tick later: the link line lands a result later, and the
+# BPDUs sent and the ages read a BPDU and a tick behind
+stp* *console -/<new link: [0-9a-f]+, was [0-9a-f]+>|/ +/<new link: [0-9a-f]+, was [0-9a-f]+>|/
+stp *cli stp status -/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms|tx_bpdu) \d+/ +/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms|tx_bpdu) \d+/
+stp *web GET /stpcnt.json -/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms \d+ s|tx_bpdu \d+)/ +/state\.stp\.(port|lag)\.\d\.(bpdu_age_ms \d+ s|tx_bpdu \d+)/
+# STP off writes every port forwarding, the power-on 0xfffff: the old left
+# the logical ports that aren't front ports disabled (the SWGT024's 0-2)
+stp* reg 5310 -/000fffc0/ +/000fffff/
