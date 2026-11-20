@@ -73,18 +73,18 @@ web *web GET /index.html -/<\d+ bytes, sha256 \w+>/ +/<\d+ bytes, sha256 \w+>/	#
 web *web GET /app.js -/<\d+ bytes, sha256 \w+>/ +/<\d+ bytes, sha256 \w+>/	# the old text save's code goes
 # config: saved with save by POST /cli (oldnew.py post_config); the objects
 # not on the model yet run and are dropped by the save, so after the power
-# cut loop detection differs until P4-5 (loop); VLAN 10 is saved since P4-2,
-# STP since P4-4. The new image now boots after the cut.
+# cut nothing differs but timing: VLAN 10 is saved since P4-2, STP since P4-4,
+# loop detection since P4-5 (its RLDP register and loop show rows went).
+# frames rldp stays: the old POST /config only stores the text, the new image
+# runs it at once, so only the new sends probes before the cut (8x 30); after
+# it both send 89. The new image now boots after the cut.
 config *web POST /config -/.*/ +/.*/
 config *console -/.*/ +/.*/
 config flash config -/.*/ +/.*/
-config reg 10[679][0-9a-f]
-config reg 108c
 config frames * rldp
 config frames * stp
 config frames * tcp/80
 config reg 7850
-config *cli loop show
 config *boot -/.*/ +/.*/
 
 # state.stp (P5-4): with STP off the old `stp status` printed that alone;

@@ -2257,7 +2257,9 @@ def _lldp_json(d, v, rest, m, r):
     _left(d, {"on", "portStatus"}, rest, "")
 
 
-page(r"/lldp\.json", Read("lldp", ["lldp.enabled", "port.#.(name|lldp)"], _json(_lldp_json)))
+page(r"/lldp\.json", Read("lldp", ["lldp.enabled", "port.#.(name|lldp)"], _json(_lldp_json),
+                          gets=lambda m, r, o: (["get lldp"] if "lldp" in o else []) +
+                          (["get port.*.name", "get port.*.lldp"] if "port" in o else [])))
 
 
 @_cli
