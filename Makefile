@@ -63,6 +63,7 @@ test: $(BUILD)/rtlsim $(BUILD)/test_flash_dev
 ifneq ($(FW_IMAGE),)
 	python3 tests/fw/test_boot.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/net/test_nic.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
+	python3 tests/net/test_l2_age.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/fabric/test_flows.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/flash/test_boot0.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/fw/test_control.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim

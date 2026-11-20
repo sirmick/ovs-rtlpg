@@ -13,8 +13,10 @@
 //   way (tables.cpp, l2_hash()): every entry has its own; a full bucket
 //   learns nothing more.
 //   Word B: bit 29 valid, bits 31:30 the low two port bits, 27:16 VID, 15:0
-//   MAC octets 0-1. Word A: MAC octets 2-5. Word C: bit 16 static, bits 1:0 the
-//   high port bits (multicast: bits 7:0 the member mask >> 2).
+//   MAC octets 0-1. Word A: MAC octets 2-5. Word C: bit 16 static, bits 4:2 the
+//   age, bits 1:0 the high port bits (multicast: bits 7:0 the member mask >> 2).
+//   A dynamic entry with age 0 isn't valid: lookups and the fabric skip it, so
+//   its frames flood (the firmware's L2 delete writes one).
 #ifndef RTLSIM_TABLES_H
 #define RTLSIM_TABLES_H
 
@@ -42,6 +44,7 @@ public:
 	static void key(const l2_entry &e, u8 mac[6], u16 *vid);
 	static unsigned port(const l2_entry &e) { return ((e.b >> 30) & 0x3) | ((e.c & 0x3) << 2); }
 	static bool is_static(const l2_entry &e) { return (e.c >> 16) & 1; }
+	static bool aged_out(const l2_entry &e) { return !is_static(e) && !(e.c >> 2 & 7); }
 
 	// An L3 multicast entry (IPMC_USES_L3MC): same TBL type 4, but valid on
 	// word-B bit 28 (not 29), keyed on (SIP, DIP) with a member mask. See
