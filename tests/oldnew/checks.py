@@ -12,7 +12,8 @@ rtlsim --control, as oldnew.py does, and prints each check's verdict:
 - stp hello: BPDUs 2 s +-50 ms apart on every port sending them (stp;
   stp_upload: through a firmware upload);
 - long steps: `health tasks` at the scenario's end, no state's longest step
-  over 20 ms but FL_ERASE (every scenario; skipped on a build without it, as
+  over 50 ms (decision 25; FL_ERASE too, its longest reported) (every
+  scenario; skipped on a build without it, as
   fork main);
 - the upload's flash (upload, stp_upload: the app, its slot, the staged
   image, the config) is a result: oldnew.py compares it, here it is shown.

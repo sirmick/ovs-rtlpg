@@ -1,6 +1,6 @@
 # The new-only checks' failures on record (checks.py --known, oldnew.py --known),
-# as of 2026-11-20 (F1): fork main b635486 and feat/sched 72cee59, the 8x and the
-# SWGT024, rtlsim 999584e (--control). One a line (oldnew.load_known()):
+# as of 2026-11-20: fork main b635486, feat/sched f621897 (M2) and 2ed8e22 (F1b),
+# the 8x and the SWGT024, rtlsim 999584e (--control). One a line (oldnew.load_known()):
 #   <scenario glob>[,<scenario glob>...]: <check glob> (<= <n> ms|s [by cli <commands>|*] | unbounded)   # why
 # A failure is KNOWN only in the scenarios named and within the ceiling (a long
 # step's maximum, a gap check's largest gap over its upper bound); above it, it
@@ -11,10 +11,12 @@
 # Ceilings: the worst measured on either board, rounded up. A line that names a
 # scenario run but matched no failed check is flagged: a fix shows as a stale line.
 #
-# feat/sched at 72cee59 fails none: the two lines left are fork main's alone (the
-# old side of oldnew, or checks.py on b635486); on a feat/sched image they are
-# flagged as matched by nothing, which is right. The long-step lines (CLI_RUN,
-# HOUSE_SEC, RX_STEP) are gone: no step over 20 ms but FL_ERASE in any of the 17
-# scenarios on either board (doc/sched/evidence/f1-acceptance.txt).
+# Long steps: over 50 ms is a failure (decision 25: the limit 50 ms, the target
+# 5 ms; FL_ERASE has no exemption now, its longest is reported). feat/sched at
+# 2ed8e22 fails no check; the two lines left are fork main's alone (the old side
+# of oldnew, or checks.py on b635486): on a feat/sched image they are flagged as
+# matched by nothing, which is right. No long-step line is needed: F1 had none
+# over 20 ms (doc/sched/evidence/f1-acceptance.txt). M2 f621897's `l2` (CLI_RUN
+# > 400 ms in l2_big, lacp_l2) still fails on that build; E1 fixed it.
 lacp_l2: lacp gap <= 4 s		# fork main: `l2` prints 1000 entries in one go, 3.86 s without a LACPDU; fixed in feat/sched by E1 (chunked CLI)
 stp_upload: stp hello <= 3 s		# fork main: the upload's flash writes hold the loop, no BPDU for 2.84 s; fixed in feat/sched by E3 (the flash job)

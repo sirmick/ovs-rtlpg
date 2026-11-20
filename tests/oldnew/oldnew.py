@@ -361,25 +361,29 @@ class Run:
         apart (the hello time)."""
         self.gap_check("stp hello", "stp", t0, t1, lo=1.95, hi=2.05)
 
-    def long_steps(self, limit_ms=20, slot=8000):
+    def long_steps(self, limit_ms=50, slot=8000):
         """`health tasks` at the end: every state's longest step within
-        `limit_ms`, but FL_ERASE (an erase is one step by design). A check per
-        state over the limit ("long step <STATE>"), or "long steps" if none
-        is; skipped ("long steps") on a build without the command."""
+        `limit_ms` (decision 25: the step limit is 50 ms, the target 5 ms;
+        FL_ERASE, an erase in one step, has no exemption now, but its longest
+        is reported). A check per state over the limit ("long step
+        <STATE>"), or "long steps" if none is; skipped ("long steps") on a
+        build without the command."""
         _, out = self._type("health tasks", self.b.now + slot * 1000)
         if out is None or "state\truns\tmax" not in out:
             self.checks.append(("long steps", None, "no `health tasks` in this build: skipped", None, [], None))
             return
-        bad, longest = [], (0, "")
+        bad, longest, erase = [], (0, ""), None
         for l in out.split("state\truns\tmax", 1)[1].splitlines():
             m = re.match(r"(\w+)\t(\d+)\t(>?)(\d+)(us|ms)$", l)
             if not m:
                 continue
             st, runs, over, v, unit = m.groups()
             us = int(v) * (1000 if unit == "ms" else 1) + (1 if over else 0)
-            if us > longest[0] and st != "FL_ERASE":
+            if st == "FL_ERASE":
+                erase = f"{over}{v}{unit}, {runs} runs"
+            elif us > longest[0]:
                 longest = (us, st)
-            if us > limit_ms * 1000 and st != "FL_ERASE":
+            if us > limit_ms * 1000:
                 # ">400ms": the measure saturates (16 bits of 6.144 µs); a known
                 # line bounds it by another measure (a console reply, `by`)
                 self.checks.append((f"long step {st}", [f"{over}{v}{unit}, {runs} runs"], f"over {limit_ms} ms", us,
@@ -387,8 +391,9 @@ class Run:
                 bad.append(st)
         if not bad:
             m = re.search(r"passes .*", out)
-            self.checks.append(("long steps", [], f"none over {limit_ms} ms but FL_ERASE; longest {longest[1]} "
-                                f"{longest[0] / 1000:.3f} ms; {m.group(0) if m else ''}", None, [], None))
+            self.checks.append(("long steps", [], f"none over {limit_ms} ms; longest {longest[1]} "
+                                f"{longest[0] / 1000:.3f} ms, FL_ERASE {erase or 'never ran'}; {m.group(0) if m else ''}",
+                                None, [], None))
 
     def flash_regions(self):
         """The flash after an upload, region by region, as results: the

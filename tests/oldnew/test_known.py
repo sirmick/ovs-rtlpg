@@ -115,6 +115,29 @@ def main():
     fails += not ok
     print(f"{'PASS' if ok else 'FAIL'}  S: the harness's own lines are measured too ({r.replies}); "
           f"b.console() called {src.count('self.b.console(')} time(s) in Run, from _type()")
+
+    # long_steps(): the bound is 50 ms (decision 25), FL_ERASE included; a
+    # step at or under it passes, one over fails, FL_ERASE's longest reported
+    def steps(table):
+        class B:
+            now = 0
+            def console(self, line, until):
+                return "", "health tasks\nslot\ttask\tstate\tmask\twake\nstate\truns\tmax\n" + table + \
+                    "passes 00001000 idle 00000800 longest 41ms\n\n> "
+        r = SimpleNamespace(b=B(), replies={"cli l2": 3_000_000}, checks=[])
+        r._type = lambda line, until: Run._type(r, line, until)
+        Run.long_steps(r)
+        return r.checks
+    c = steps("CLI_RUN\t5\t49ms\nRX_STEP\t9\t51ms\nFL_ERASE\t2\t55ms\nHOUSE_SEC\t3\t40000us\nSFP_READ\t1\t>400ms\n")
+    names = sorted(x[0] for x in c)
+    sfp = [x for x in c if x[0] == "long step SFP_READ"]
+    ok = names == ["long step FL_ERASE", "long step RX_STEP", "long step SFP_READ"] and sfp and sfp[0][5].get("cli l2") == 3_000_000
+    fails += not ok
+    print(f"{'PASS' if ok else 'FAIL'}  T: over 50 ms fails, FL_ERASE too, 49 ms and 40 ms pass: {names}")
+    c = steps("CLI_RUN\t5\t3ms\nFL_ERASE\t2\t45ms\nHOUSE_SEC\t3\t7000us\n")
+    ok = len(c) == 1 and c[0][0] == "long steps" and c[0][1] == [] and "FL_ERASE 45ms, 2 runs" in c[0][2] and "over 50 ms" in c[0][2]
+    fails += not ok
+    print(f"{'PASS' if ok else 'FAIL'}  U: all at or under 50 ms: one PASS, FL_ERASE's longest reported: {c[0][2] if c else c}")
     sys.exit(1 if fails else 0)
 
 

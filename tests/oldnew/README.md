@@ -80,7 +80,7 @@ only with `--checks` (`CHECKS=1`), and then NEW's.
 |---|---|---|
 | lacp gap | lacp (aggregated, before the silence and after the rejoin), lacp_l2 (the `l2` dump and /l2.json) | the switch's LACPDUs on each LAG port < 1.2 s apart |
 | stp hello | stp (converged), stp_upload (from 4 s before the upload to its answer) | the BPDUs on every port sending them 2 s +-50 ms apart |
-| long step \<STATE\> | every scenario, at its end | `health tasks`: no state's longest step over 20 ms but FL_ERASE; skipped (`SKIP long steps`) on a build without the command (fork main) |
+| long step \<STATE\> | every scenario, at its end | `health tasks`: no state's longest step over 50 ms (decision 25: the limit 50 ms, the target 5; FL_ERASE has no exemption, its longest is reported); skipped (`SKIP long steps`) on a build without the command (fork main) |
 
 A gap is measured between the frames' firmware send times (rtlsim's
 capture: what the partner or the cable's far end gets); every gap that
