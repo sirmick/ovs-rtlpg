@@ -526,6 +526,8 @@ class Run:
         build without the command."""
         _, out = self._type("health tasks", self.b.now + slot * 1000)
         if out is None or "state\truns\tmax" not in out:
+            out = self._state_sched(slot)
+        if out is None or "state\truns\tmax" not in out:
             self.checks.append(("long steps", None, "no `health tasks` in this build: skipped", None, [], None))
             return
         bad, longest, erase = [], (0, ""), None
@@ -550,6 +552,25 @@ class Run:
             self.checks.append(("long steps", [], f"none over {limit_ms} ms; longest {longest[1]} "
                                 f"{longest[0] / 1000:.3f} ms, FL_ERASE {erase or 'never ran'}; {m.group(0) if m else ''}",
                                 None, [], None))
+
+    def _state_sched(self, slot):
+        """get state.sched (P5-2 deleted health tasks) as health tasks' text:
+        "state\\truns\\tmax", a "STATE\\tRUNS\\tNus" line each (">400ms" where
+        the measure saturated: 0xffff fine units, 402640 us), "passes ..."."""
+        _, out = self._type("get state.sched.state state.sched.passes state.sched.idle state.sched.pass_max_us",
+                            self.b.now + slot * 1000)
+        if not out or "state.sched.state." not in out:
+            return None
+        v = dict(l.split(" ", 1) for l in out.splitlines() if l.startswith("state.sched.") and " " in l)
+        fmt = lambda us: ">400ms" if int(us) >= 402640 else f"{us}us"
+        rows = ["state\truns\tmax"]
+        for p, x in v.items():
+            m = re.fullmatch(r"state\.sched\.state\.(\w+)\.runs", p)
+            if m:
+                rows.append(f"{m.group(1)}\t{x}\t{fmt(v.get(f'state.sched.state.{m.group(1)}.max_us', '0'))}")
+        rows.append(f"passes {v.get('state.sched.passes')} idle {v.get('state.sched.idle')} "
+                    f"longest {fmt(v.get('state.sched.pass_max_us', '0'))}")
+        return "\n".join(rows) + "\n"
 
     def flash_regions(self):
         """The flash after an upload, region by region, as results: the
