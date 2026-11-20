@@ -59,6 +59,7 @@ test: $(BUILD)/rtlsim $(BUILD)/test_flash_dev
 	python3 tests/flashbusy/test_busy_control.py --rtlsim $(BUILD)/rtlsim
 	python3 tests/cov/test_cov.py --rtlsim $(BUILD)/rtlsim
 	python3 tests/oldnew/test_known.py
+	python3 tests/oldnew/test_translate.py
 ifneq ($(FW_IMAGE),)
 	python3 tests/fw/test_boot.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
 	python3 tests/net/test_nic.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
@@ -95,8 +96,9 @@ test-early-reset: $(BUILD)/rtlsim
 
 # Old vs new (tests/oldnew/README.md): the reference scenarios on two boot
 # images in rtlsim --control, compared on results; < 1 min in parallel.
-#   make oldnew OLD=... NEW=... [BOARD=boards/....json] [EXPECT=file] [ONLY="boot cli"]
-# OLD defaults to the reference build of fork main for the 8x in
+#   make oldnew OLD=... NEW=... [BOARD=boards/....json] [EXPECT=file] [ONLY="boot cli"] [NEW_OM=port,...]
+# NEW_OM (OLD_OM): the objects the image has on the object model, compared by
+# value (tests/oldnew/translate.py; EXPECT=tests/oldnew/om.expect). OLD defaults to the reference build of fork main for the 8x in
 # ~/src/rtlpg-ref (tests/oldnew/README.md), NEW to OLD: old against old, which
 # must match on every scenario.
 OLD ?= $(firstword $(wildcard $(HOME)/src/rtlpg-ref/output/KEEPLINK_KP_9000_9XHPML_V1_2-compact/rtlplayground-boot-v*.bin))
@@ -106,7 +108,8 @@ oldnew: $(BUILD)/rtlsim
 	python3 tests/oldnew/oldnew.py --old $(OLD) --new $(NEW) $(if $(BOARD),--board $(BOARD)) \
 		$(if $(EXPECT),--expect $(EXPECT)) $(if $(ONLY),--only $(ONLY)) \
 		$(if $(NEW_PAYLOAD),--new-payload $(NEW_PAYLOAD)) $(if $(CHECKS),--checks) \
-		$(if $(KNOWN),--known $(KNOWN)) --rtlsim $(BUILD)/rtlsim
+		$(if $(KNOWN),--known $(KNOWN)) $(if $(NEW_OM),--new-om $(NEW_OM)) $(if $(OLD_OM),--old-om $(OLD_OM)) \
+		--rtlsim $(BUILD)/rtlsim
 
 # The bench's HTTP client against a scripted switch (no rtlsim): it honours
 # the switch's TCP window (tests/oldnew/test_bench.py).
@@ -120,7 +123,7 @@ IMAGE ?= $(NEW)
 CHECKS_BOARD = $(if $(filter command line environment,$(origin BOARD)),$(BOARD),$(if $(findstring KEEPLINK_KP_9000_9XHPML,$(IMAGE)),boards/keeplink_kp_9000_9xhpml_v1_2.json))
 oldnew-checks: $(BUILD)/rtlsim
 	python3 tests/oldnew/checks.py --image $(IMAGE) $(if $(CHECKS_BOARD),--board $(CHECKS_BOARD)) \
-		$(if $(ONLY),--only $(ONLY)) $(if $(KNOWN),--known $(KNOWN)) --rtlsim $(BUILD)/rtlsim
+		$(if $(ONLY),--only $(ONLY)) $(if $(KNOWN),--known $(KNOWN)) $(if $(NEW_OM),--om $(NEW_OM)) --rtlsim $(BUILD)/rtlsim
 
 # The firmware against Linux's TCP/IP in a network namespace (needs sudo;
 # real time, so a few seconds): ping, the web UI, and what each frame costs.

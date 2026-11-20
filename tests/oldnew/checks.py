@@ -40,6 +40,7 @@ def main():
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--known")
     ap.add_argument("--payload", help="what the upload scenarios upload (default: the image's own application)")
+    ap.add_argument("--om", default="", metavar="OBJS", help="the objects the image has on the object model (oldnew --new-om)")
     ap.add_argument("-j", type=int, default=os.cpu_count())
     ap.add_argument("--rtlsim", default=os.path.join(HERE, "../../build/rtlsim"))
     a = ap.parse_args()
@@ -47,7 +48,8 @@ def main():
     for n in names:
         if n not in SCENARIOS:
             sys.exit(f"checks: no scenario {n} (have: {' '.join(SCENARIOS)})")
-    opts = {"board": a.board, "rtlsim": a.rtlsim, "payload": a.payload or default_payload(a.image)}
+    opts = {"board": a.board, "rtlsim": a.rtlsim, "payload": a.payload or default_payload(a.image),
+            "om_old": set(), "om_new": {x for x in a.om.split(",") if x}}
     known = load_known(a.known)
     t0 = time.time()
     print(f"image: {a.image}" + (f"\nknown failures: {a.known}" if a.known else ""))

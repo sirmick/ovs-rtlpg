@@ -52,6 +52,7 @@ sys.path.insert(0, HERE)
 from bench import Bench, Host, ip_bytes, csum, PROMPT
 from lacp_partner import LacpPartner
 from scenarios import SCENARIOS
+import translate
 
 CONFIG_START, CONFIG_LEN = 0x7f000, 0x1000	# layout.h, compact
 DEFAULT_BOARD = os.path.join(HERE, "../../boards/swgt024_v2_0_unmanaged.json")	# rtlsim's own default
@@ -65,8 +66,10 @@ PASSWORD = "1234"
 class Run:
     """What a scenario does to one image, and what came back."""
 
-    def __init__(self, image, board, rtlsim, payload):
+    def __init__(self, image, board, rtlsim, payload, om=(), canon=()):
         self.b = Bench(image, board=board, rtlsim=rtlsim)
+        self.om = set(om)		# the objects this image has on the object model (translate.py)
+        self.canon = set(canon)		# those compared by value: either image's
         self.payload = open(payload, "rb").read() if payload else b""
         self.checks = []		# (name, [violations], what was measured, worst µs, hard, saturated): not results
         self.replies = {}		# "cli <line>" -> its longest reply, firmware µs from typed to prompt
@@ -142,9 +145,51 @@ class Run:
         return before, out
 
     def cli(self, line, slot=5000):
-        before, out = self._type(line, self._slot(slot))
-        self._console(before)
+        until = self._slot(slot)
+        t = translate.find(line, self.canon)
+        out = self._typed(line, until) if t is None else self._translated(line, until, *t)
         self.results[self._key(f"cli {line}")] = out if out is not None else "<timeout>"
+
+    def _typed(self, line, until):
+        before, out = self._type(line, until)
+        self._console(before)
+        return out
+
+    def _translated(self, line, until, obj, m, what):
+        """An old line whose object is compared by value (translate.py): on
+        an image that has it on the object model, what the row types
+        instead; on either, the result as values by path."""
+        new = obj in self.om
+        if isinstance(what, translate.Refused):
+            if new:
+                return "refused"
+            out = self._typed(line, until)
+            return "refused" if out is not None and translate.refused(out) else out
+        if isinstance(what, translate.Set):
+            v = what.values(m, self)
+            if not new:
+                out = self._typed(line, until)
+                return None if out is None else "refused" if translate.refused(out) else translate.canon(v)
+            for l in [f"set {p} {x}" for p, x in v.items()] + ["apply"]:
+                out = self._typed(l, until)
+                if out is None:
+                    return None
+                if translate.refused(out):
+                    self._typed("discard", until)	# as the old image: refused, nothing changed
+                    return "refused"
+            news = [f"get {p}" for p in v]
+        else:
+            if not new:
+                out = self._typed(line, until)
+                return None if out is None else translate.canon(what.parse(out, m, self))
+            news = what.news(m, self)
+        text = ""
+        for l in news:
+            out = self._typed(l, until)
+            if out is None:
+                return None
+            text += out
+        return translate.canon((what.new if isinstance(what, translate.Get) else translate.values)(text))
 
     def tables(self):
         """The VLAN and L2 tables now, as one result each."""
@@ -208,6 +253,8 @@ class Run:
         self._http(f"POST {path}", req, slot)
 
     def post_cmd(self, cmd, slot=3000):
+        if translate.find(cmd, self.canon):
+            raise NotImplementedError(f"POST /cmd {cmd!r}: its object is on the object model; translate it (translate.py)")
         self._post("/cmd", "text/plain;charset=UTF-8", cmd.encode(), slot)
 
     def _multipart(self, path, field, name, data, slot):
@@ -536,7 +583,8 @@ def norm(r):
 def run_one(job):
     name, side, image, a = job
     t0 = time.time()
-    r = Run(image, a["board"], a["rtlsim"], a["payload_" + side] if "payload_" + side in a else a["payload"])
+    r = Run(image, a["board"], a["rtlsim"], a["payload_" + side] if "payload_" + side in a else a["payload"],
+            a["om_" + side], a["om_old"] | a["om_new"])
     try:
         SCENARIOS[name](r)
         res = r.finish(cov=os.path.join(a["cov"], f"{name}.{side}.cov") if a.get("cov") else None)
@@ -641,8 +689,14 @@ def stale_known(known, used, names, path):
             for k in known if k["line"] not in used and any(fnmatch.fnmatch(x, p) for x in names for p in k["scenarios"])]
 
 
+EXPECT_LINES = re.compile(r"\s+([-+])/(.*?)/(?=\s|$)")
+
+
 def load_expect(path):
-    """[(scenario glob, result glob, line number)]"""
+    """[(scenario glob, result glob, [(-|+, line regex)], line number)]: a
+    line may end in -/RE/ and +/RE/ items, the lines the result may lose
+    and gain (each line matched in full); without, the whole result may
+    differ."""
     out = []
     if not path:
         return out
@@ -650,13 +704,26 @@ def load_expect(path):
         l = l.split("#", 1)[0].strip()
         if l:
             s, k = l.split(None, 1)
-            out.append((s, k.strip(), n))
+            rx = [(m.group(1), re.compile(m.group(2))) for m in EXPECT_LINES.finditer(" " + k)]
+            k = EXPECT_LINES.split(" " + k, 1)[0].strip() if rx else k.strip()
+            out.append((s, k, rx, n))
     return out
+
+
+def _covered(a, b, rx):
+    """Whether every line `a` loses and `b` gains matches one of rx's."""
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if any(not any(o == "-" and r.fullmatch(x) for o, r in rx) for x in a[i1:i2] if op != "equal") or \
+           any(not any(o == "+" and r.fullmatch(x) for o, r in rx) for x in b[j1:j2] if op != "equal"):
+            return False
+    return True
 
 
 def compare(name, old, new, expect, used=None):
     """(unexpected, expected) differences, each a list of readable blocks;
-    the expect lines that matched one go into `used`."""
+    the expect lines that matched one go into `used`. A result whose expect
+    lines give line regexes is expected only if they cover every line lost
+    and gained; their lines count as used only then."""
     bad, ok = [], []
     for k in list(old) + [k for k in new if k not in old]:
         a, b = old.get(k, "<absent>"), new.get(k, "<absent>")
@@ -667,7 +734,11 @@ def compare(name, old, new, expect, used=None):
             block = f"  {k}:\n" + "\n".join("    " + x for x in d.splitlines())
         else:
             block = f"  {k}: old {a!r}, new {b!r}"
-        hits = [n for s, g, n in expect if fnmatch.fnmatch(name, s) and fnmatch.fnmatch(k, g)]
+        lines = [(rx, n) for s, g, rx, n in expect if fnmatch.fnmatch(name, s) and fnmatch.fnmatch(k, g)]
+        hits = [n for rx, n in lines if not rx]
+        rx = [x for r, _ in lines for x in r]
+        if not hits and rx and _covered(a.splitlines(), b.splitlines(), rx):
+            hits = [n for r, n in lines if r]
         if used is not None:
             used.update(hits)
         (ok if hits else bad).append(block)
@@ -691,6 +762,10 @@ def main():
     ap.add_argument("--new-payload", help="what NEW's upload scenarios upload (default: --payload)")
     ap.add_argument("--checks", action="store_true", help="NEW's new-only checks (checks.py) count too")
     ap.add_argument("--known", help="the checks' known failures, as --expect's format (default: none)")
+    ap.add_argument("--new-om", default="", metavar="OBJS",
+                    help="the objects NEW has on the object model, comma-separated (translate.py): their old "
+                         "commands are translated for it, and compared by value on both sides")
+    ap.add_argument("--old-om", default="", metavar="OBJS", help="the same for OLD")
     ap.add_argument("--save")
     ap.add_argument("--cov", metavar="DIR", help="each run's coverage, <scenario>.<side>.cov (tests/oldnew/cov_diff.py)")
     ap.add_argument("-j", type=int, default=os.cpu_count())
@@ -700,7 +775,11 @@ def main():
     for n in names:
         if n not in SCENARIOS:
             sys.exit(f"oldnew: no scenario {n} (have: {' '.join(SCENARIOS)})")
-    opts = {"board": a.board, "rtlsim": a.rtlsim, "payload": a.payload or default_payload(a.old)}
+    opts = {"board": a.board, "rtlsim": a.rtlsim, "payload": a.payload or default_payload(a.old),
+            "om_old": {x for x in a.old_om.split(",") if x}, "om_new": {x for x in a.new_om.split(",") if x}}
+    for x in opts["om_old"] | opts["om_new"]:
+        if not any(o == x for o, _, _ in translate.ROWS):
+            sys.exit(f"oldnew: no rows for object {x} in translate.py")
     if a.new_payload:
         opts["payload_new"] = a.new_payload
     if a.cov:
@@ -742,7 +821,7 @@ def main():
         for side in ("old", "new"):
             for v, c, text in vs[side]:
                 print(f"  check {side} {v} {c}: {text}")
-    for s, g, line in expect:
+    for s, g, _, line in expect:
         if line not in used:
             print(f"expect: {a.expect}:{line}: '{s} {g}' matched no difference" +
                   (" (in the scenarios run)" if a.only else ""))

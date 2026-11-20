@@ -1,0 +1,14 @@
+# The intended differences of the object model (RTLPlayground feat/om)
+# against the reference (53ee574), with --new-om naming the objects moved.
+# `<scenario glob> <result glob> [-/RE/|+/RE/]...  # why`: a line's -/RE/
+# and +/RE/ are the lines a result may lose and gain (oldnew.py).
+# Each object migration adds its own.
+
+# port.N (dab5d13): the boot no longer prints the EEE setup per port, nor
+# the port table (stat's), and so no longer reads the STAT counters at boot
+* *boot -/EEE on for \d+ speed \w+/ -/EEE can't be enabled for SFP port \d+/
+* *boot -/Verifying PHY settings:/ -// -/Port\tState\tLink\t.*/ -/\d+\t(On|Off|SFP IN|NO SFP)\t.*/
+# The STAT block: read by the boot's port table and nothing else before a
+# stat; after one, its last counter differs (get reads the ports in front
+# order, stat in logical order)
+* reg 0f6[048]

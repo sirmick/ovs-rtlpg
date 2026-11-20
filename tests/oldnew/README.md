@@ -26,6 +26,8 @@ rtlsim, and all of them run in parallel. The full set takes about 30 s on the
 - `mutation.expect`: the expected differences of the check build (below).
 - `checks.py`: the new-only checks on one image (below); `known-failures`,
   today's.
+- `translate.py`, `om.expect`: an object-model image, compared by value
+  (below).
 
 ## Scenarios
 
@@ -61,6 +63,29 @@ the chip's geometry, 1024 buckets of 4 with an index per entry, its hash a
 placeholder: a MAC whose bucket is full is not learned, as on the chip. The
 scenario checks that all 1000 are in the table (else it errs, on either
 side), so a learning regression can't hide by being on both.
+
+## An object-model image: compared by value
+
+RTLPlayground's object model (feat/om) replaces commands with paths: the
+old image takes `pvid 2 10`, the new one `set port.2.pvid 10` and `apply`.
+`--new-om OBJS` (`NEW_OM=`; `--old-om` for OLD) names the objects NEW has
+moved, and `translate.py` holds, per object, a row for each old command
+form: a setting (the new image is given `set` lines, `apply`, then `get`),
+a read (`get` lines; the old reply parsed into the same paths), or a usage
+error (the new image is given nothing). A row's command is then compared on
+both sides as `path value` lines, or `refused`; every other line is typed
+as it is and compared as text. `om.expect` lists the intended
+differences; an expect line may end in `-/RE/` and `+/RE/`, the lines a
+result may lose and gain (each matched in full), so a boot log that loses
+its port table differs in nothing else:
+
+    make oldnew OLD=<53ee574 boot image> NEW=<feat/om boot image> NEW_OM=port EXPECT=tests/oldnew/om.expect \
+        ONLY="boot vlan stp lacp lldp loop igmp sfp"
+
+Each object migration adds its rows (and its expect lines); a POST /cmd
+of a moved object raises until the web side is translated too.
+`test_translate.py` (in `make test`) checks the rows and the line items
+without rtlsim.
 
 ## The new-only checks
 
