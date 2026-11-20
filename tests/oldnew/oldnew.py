@@ -83,6 +83,7 @@ class Run:
         self.cages = {p["sfp"]["slot"]: (p["phys"], p["front"]) for p in ports if "sfp" in p}
         self.t = 0
         self.n = 0
+        self.booted = False
         self.results = {}
         self.host = None
         self.cookie = b""
@@ -130,10 +131,30 @@ class Run:
         self._console(before)
         m = re.search(r"(?:Current IP:|state\.mgmt\.ip) ([\d.]+)", ip or "")
         sw = m.group(1) if m else "192.168.10.247"
+        if not self.booted:
+            self.booted = True
+            self.boot_defaults(until)
         if self.host is None:
             self.host = Host(self.b, self.P[0], ip=sw.rsplit(".", 1)[0] + ".1", switch_ip=sw)
         self.host.sw_ip = ip_bytes(sw)
         self.host.sw_mac = None
+
+    def boot_defaults(self, until):
+        """The new-only check "boot defaults" after the first boot, on an
+        image with objects on the object model: every config field the
+        hardware holds (translate.READBACK) as the boot left the registers
+        against get's running value. Not a result: get's lines aren't
+        typed on the other image."""
+        objs = {o for _, o, _, _ in translate.READBACK} & self.om
+        if not objs:
+            return
+        running = ""
+        for g in sorted({x for o in objs for x in translate.GETS.get(o, [o]) if not x.startswith("state.")}):
+            _, out = self._type(f"get {g}", until)
+            running += out or ""
+        bad, n = translate.boot_defaults(self.b.reg_dump(), translate.values(running), self, objs)
+        self.checks.append(("boot defaults", [f"{p}: hardware {h}, running {x}" for p, h, x in bad],
+                            f"{n} fields of {' '.join(sorted(objs))} against the registers the boot left", None, [], None))
 
     def _type(self, line, until):
         """b.console(), and its reply's firmware time, typed to prompt, kept
@@ -215,7 +236,8 @@ class Run:
             v.update(got)
             rest += more
         v = what.post(v, m, self)
-        return translate.canon({p: x for p, x in v.items() if what.comparable(p, self.oms)}, rest)
+        return translate.canon({p: x for p, x in v.items() if what.comparable(p, self.oms)},
+                               what.not_compared(self.oms) + rest)
 
     def tables(self):
         """The VLAN and L2 tables now, as one result each."""
@@ -878,7 +900,8 @@ def main():
         bad, ok = compare(n, o, w, expect, used)
         err = "<error>" in o or "<error>" in w
         vs = {side: verdicts(n, checks[(n, side)], known, kused) for side in ("old", "new")}
-        cfail = a.checks and any(v == "FAIL" for v, _, _ in vs["new"])
+        cfail = (a.checks and any(v == "FAIL" for v, _, _ in vs["new"])) or \
+            any(v == "FAIL" and c == "boot defaults" for v, c, _ in vs["new"])
         status = "FAIL" if bad or err or cfail else "PASS"
         failed += status == "FAIL"
         print(f"{status}  {n}: {len(o)} results, {len(bad)} differences"

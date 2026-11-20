@@ -136,6 +136,22 @@ def main():
         and not translate.by_post("/cmd_log_clear", {"port"}) and not translate.by_post("/cmd_log", {"http.post"})
     case("R", ok, "the action pages by POST on an image with http.post, GET on the others")
     fails += not ok
+    B = SimpleNamespace(P=[0, 1], F=["1", "2"], cages={1: (8, "3")})
+    dump = ["r 1250 0fffffff", "r 1350 00000000", "r 4e1c 00001001", "r 4e18 00000103", "r 50c0 00000303",
+            "r 50c4 00000303", "r 50e0 00000303", "r 125c 00000003", "r 135c 00000003", "p 1.1f.a610 2858"]
+    run_ = {f"port.{n}.{f}": x for n in (1, 2, 3) for f, x in (("mtu", "16383"), ("pvid", "1"), ("ingress", "all"),
+                                                              ("ingress_filter", "on"), ("isolate", "1-3,cpu"),
+                                                              ("eee", "on"), ("enabled", "on"))}
+    bad, n = translate.boot_defaults(dump, run_, B, {"port"})
+    got = sorted(p for p, _, _ in bad)
+    ok = got == ["port.2.enabled", "port.2.mtu", "port.3.mtu", "port.3.pvid"] and n == 19
+    case("S", ok, f"boot defaults: a register the boot left at 0 against its default, a PHY powered down: {got} of {n}")
+    fails += not ok
+    m, w = surface("cli stat")
+    nc = w.not_compared([set(), {"port"}])
+    ok = nc == ["not compared: state.sfp.#.present (state.sfp pending)"] and w.not_compared([set(), set()]) == []
+    case("T", ok, f"a live row says what it can't compare yet: {nc}")
+    fails += not ok
     fails += real_gets(case)
     fails += state_paths(case)
     sys.exit(1 if fails else 0)
@@ -165,7 +181,8 @@ def real_gets(case):
             ("Q5", "port 4 1g half", "port.4.duplex auto\nport.4.enabled on\nport.4.speed 1g",
              {**REAL, "get port.4.speed": "port.4.speed 1g\nok", "get port.4.duplex": "port.4.duplex auto\nok"}),
             ("Q6", "port 6 off", "port.6.enabled off", REAL),
-            ("Q7", "port 4 on", "port.4.enabled on\nport.4.speed auto", {**REAL, "get port.4.speed": "port.4.speed auto\nok"}),
+            ("Q7", "port 4 on", "port.4.duplex auto\nport.4.enabled on\nport.4.speed auto",
+             {**REAL, "get port.4.speed": "port.4.speed auto\nok", "get port.4.duplex": "port.4.duplex auto\nok"}),
             ("Q8", "eee off 5", "port.5.eee off", REAL)]:
         _, o = run((), old, {old: ""}, B)
         t, n = run({"port"}, old, real, B)

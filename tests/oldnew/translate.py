@@ -263,6 +263,7 @@ def _probe(t):
 class Read:
     def __init__(self, owner, paths, parse, gets=None, narrow=None, post=None):
         self.owner = set(owner.split())
+        self.templates = paths
         self.paths = [_rx(t) for t in paths]
         self.objs = {obj_of(_probe(t)) for t in paths}
         assert all(path_of(_probe(t)) for t in paths), [t for t in paths if not path_of(_probe(t))]
@@ -272,6 +273,17 @@ class Read:
         """Whether the surface is gone on an image that has moved om: its
         owners (the nodes that delete it) all moved."""
         return self.owner <= set(om)
+
+    def not_compared(self, oms):
+        """The row's paths neither image compares, and why: their object
+        pending (or a path with no design object) while one image's
+        surface is gone, as "~" lines both images print the same."""
+        out = []
+        for t in self.templates:
+            o = obj_of(_probe(t))
+            if not all((o is not None and o in om) or not self.gone(om) for om in oms):
+                out.append(f"not compared: {t} ({o + ' pending' if o in PENDING else o + ' not moved' if o else 'no path'})")
+        return out
 
     def comparable(self, p, oms):
         """Whether both images can show p: each has moved its object, or
@@ -485,11 +497,13 @@ row(r"mtu (\d+) (\d+)", Set("port", lambda m, r: {f"port.{m[1]}.mtu": m[2]}))
 row(r"port (\d+) name (\S.*)", Set("port", lambda m, r: {f"port.{m[1]}.name": m[2][:31]}))
 row(r"port (\d+) lldp (block|permit)", Set("port", lambda m, r: {f"port.{m[1]}.lldp": m[2]}))
 row(r"port (\d+) lldp(?: .*)?", Refused("port"))	# "Unknown port <port> lldp ..." (cmd_parser.c:1002)
-# parse_port(): on is enabled at auto speed (cmd_parser.c:1051); off only
+# parse_port(): on is enabled at auto speed and duplex (cmd_parser.c:973,
+# 1051); off only
 # powers the PHY down; a speed powers it up, its duplex auto (:973) but for
 # 10m and 100m's half or full (:1027-1046; other words ignored); duplex is
 # full for "full", else half
-row(r"port (\d+) on", Set("port", lambda m, r: {f"port.{m[1]}.enabled": "on", f"port.{m[1]}.speed": "auto"}))
+row(r"port (\d+) on", Set("port", lambda m, r: {f"port.{m[1]}.enabled": "on", f"port.{m[1]}.speed": "auto",
+                                                f"port.{m[1]}.duplex": "auto"}))
 row(r"port (\d+) off", Set("port", lambda m, r: {f"port.{m[1]}.enabled": "off"}))
 row(r"port (\d+) (auto|10m|100m|1g|2g5|5g|10g)(?: (\S+).*)?",
     Set("port", lambda m, r: {f"port.{m[1]}.enabled": "on", f"port.{m[1]}.speed": m[2], f"port.{m[1]}.duplex":
@@ -1637,3 +1651,64 @@ page(r"/isolation\.json", Read("port", ["port.#.isolate"], _json(_isolation), ge
 
 for _rx in (r"/reset", r"/cmd_log_clear", r"/l2_del\.json\?idx=\d+"):
     action(_rx, "http.post")
+
+
+# --- the boot's defaults against the hardware (a design call: the boot
+# programs only the fields that differ from the schema's defaults, so a
+# default the chip's reset or init state doesn't hold is a bug). Each row:
+# a config field, its object, and how to read it back from rtlsim's stored
+# registers (reg dump: regs {addr: value}, phys {(phy, mmd, reg): value}) for
+# logical port l, as the old firmware's readback reads it; copper only or
+# every port. Registers never written read 0, as in rtlsim.
+
+READBACK = []
+
+
+def readback(path, obj, f, copper=False):
+    READBACK.append((path, obj, f, copper))
+
+
+def _reg(regs, a):
+    return regs.get(a, 0)
+
+
+readback("port.N.mtu", "port", lambda rg, ph, l, r: str(_reg(rg, 0x1250 + (l << 8)) & 0x3fff))	# parse_mtu()
+readback("port.N.pvid", "port", lambda rg, ph, l, r: str(_reg(rg, 0x4e1c + (l >> 1 << 2)) >> (12 if l & 1 else 0) & 0xfff))
+readback("port.N.ingress", "port", lambda rg, ph, l, r: ("all", "tagged", "untagged", "3")[_reg(rg, 0x4e10) >> 2 * l & 3])
+readback("port.N.ingress_filter", "port", lambda rg, ph, l, r: onoff(_reg(rg, 0x4e18) >> l & 1))
+readback("port.N.isolate", "port", lambda rg, ph, l, r: lmask(_reg(rg, 0x50c0 + (l << 2)) & 0xffff, r))
+readback("port.N.eee", "port", lambda rg, ph, l, r: onoff(_reg(rg, 0x125c + (l << 8)) & 3 == 3), copper=True)	# EEE_CTRL rx|tx
+readback("port.N.enabled", "port", lambda rg, ph, l, r: onoff(not ph.get((l, 0x1f, 0xa610), 0) & 0x0800), copper=True)
+# not read back here: speed and duplex (the PHY's AN and forced registers, as
+# phy_set_speed() leaves them), lldp and name (no hardware)
+
+
+def boot_defaults(dump, running, r, om):
+    """[(path, hardware, running)] where the boot's hardware state and the
+    running config differ, and the number of fields compared: the readback
+    rows of the objects om has, for every port the board has."""
+    regs, phys = {}, {}
+    for l in dump:
+        k, a, v = l.split()
+        if k == "r":
+            regs[int(a, 16)] = int(v, 16)
+        elif k == "p":
+            p, m, g = a.split(".")
+            phys[(int(p, 16), int(m, 16), int(g, 16))] = int(v, 16)
+    copper = set(r.P)
+    bad, n = [], 0
+    for path, obj, f, cu in READBACK:
+        if obj not in om:
+            continue
+        for l, front in sorted(fronts(r).items()):
+            if cu and l not in copper:
+                continue
+            p = path.replace(".N.", f".{front}.")
+            if p not in running:
+                bad.append((p, f(regs, phys, l, r), "<no get value>"))
+                continue
+            hw, run = f(regs, phys, l, r), path_of(p)[1](running[p])
+            n += 1
+            if hw != run:
+                bad.append((p, hw, run))
+    return bad, n

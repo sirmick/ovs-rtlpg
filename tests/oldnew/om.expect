@@ -22,8 +22,9 @@ vlan,cli,web,loop,sfp,flaps reg 0f6[048] -/[0-9a-f]{8}/ +/[0-9a-f]{8}/
 * *web GET /cmd_log +/(get|set) \S+( .*)?|apply|discard/ -/(stat|mtu .*|pvid .*|port .*|isolate .*|ingress .*|eee .*)/
 
 # A page gone on the new image is read there with get, on the console: the
-# HTTP frames to the host are fewer
-* frames * tcp/80
+# HTTP frames to the host are fewer. With port: /eee.json and
+# /isolation.json, in web only
+web frames * tcp/80
 
 # The config scenario saves the settings as each image takes them: the old
 # command text, or set lines and an apply (Run.convert(), the stand-in for
