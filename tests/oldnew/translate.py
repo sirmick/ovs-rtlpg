@@ -378,8 +378,13 @@ def by_post(path, om):
     return any(rx.fullmatch(path) and o in om for rx, o in ACTIONS)
 
 
+# cfg: P3B's binary saved config. POST /config's text upload is gone, and
+# the config scenario saves with `save` (oldnew.py post_config)
+MARKERS = {"cfg"}
+
+
 def objects():
-    return {o for _, w in ROWS + PAGES for o in w.objs if o} | {o for _, o in ACTIONS}
+    return {o for _, w in ROWS + PAGES for o in w.objs if o} | {o for _, o in ACTIONS} | MARKERS
 
 
 def pending(objs):

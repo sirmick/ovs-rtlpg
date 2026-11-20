@@ -363,7 +363,17 @@ class Run:
         self._post(path, f"multipart/form-data; boundary={bnd}", body, slot)
 
     def post_config(self, text, slot=5000):
-        self._multipart("/config", "configuration", "config.txt", self.convert(text).encode(), slot)
+        """The UI's save. On a cfg image (P3B) the text upload is gone: the
+        converted lines and a save by POST /cli, its result under the same
+        name. The old commands the model doesn't have yet run, and save
+        drops them (DESIGN 15.2's transition)."""
+        if "cfg" not in self.om:
+            self._multipart("/config", "configuration", "config.txt", self.convert(text).encode(), slot)
+            return
+        body = (self.convert(text).rstrip("\n") + "\nsave\n").encode()
+        req = (b"POST /cli HTTP/1.1\r\nCookie: session=" + self.cookie +
+               f"\r\nContent-Type: text/plain;charset=UTF-8\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body)
+        self._http("POST /config", req, slot)
 
     def convert(self, text):
         """A saved config for this image: the settings of objects it has moved

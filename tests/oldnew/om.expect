@@ -47,3 +47,46 @@ config *boot +/ok/		# the boot runs them: an ok per set line and the apply
 # a POST /cmd setting of a moved object goes as set lines and an apply by
 # POST /cli (oldnew.py post_cmd): their ok lines on the console too
 config *console -/<absent>/ +/ok/
+
+# P3B (the binary saved config, om/core 23580ab)
+# no seeding: a blank saved sector boots on the default and stays blank
+* *boot -/Written default config to flash/
+# where the port table ends the boot (the SWGT024), the two go as one run
+* *boot -/Verifying PHY settings:\n\nPort\tState\tLink\t[^\n]*(\n\d+\t(On|Off|SFP IN|NO SFP)\t[^\n]*)+\nWritten default config to flash/
+upload,stp_upload *flash config 0x7f000 -/0x7f000\.\.0x7fffe sha256 \w+/ +/0x7f000\.\.0x7fffe blank/
+# the default config replays (fileadder fixed, e4b6c83): config.txt's
+# 192.168.10.247 where the old compact image booted on the built-in .2.2
+cli *cli ip -/state\.mgmt\.ip 192\.168\.2\.2/ +/state\.mgmt\.ip 192\.168\.10\.247/	# factory default fixed (e4b6c83)
+cli *cli gw -/state\.mgmt\.gateway 192\.168\.2\.22/ +/state\.mgmt\.gateway 192\.168\.10\.1/	# factory default fixed (e4b6c83)
+web *web GET /information.json -/state\.mgmt\.(ip|gateway) [\d.]+|state\.sys\.uptime_s \d+/ +/state\.mgmt\.(ip|gateway) [\d.]+|state\.sys\.uptime_s \d+/	# factory default fixed (e4b6c83); the boot's length
+lldp *lldp frames -/\s*mgmt\saddr\slen\s12:\s0501c0a80202010000000000/ +/\s*mgmt\saddr\slen\s12:\s0501c0a80af7010000000000/	# factory default fixed (e4b6c83)
+# the boot loads the binary default: about a second longer (the seconds counter)
+* reg 06f4 -/[0-9a-f]{8}/ +/[0-9a-f]{8}/
+# history, /cmd_log and /cmd_log_clear are gone (the ring stays the editor's recall)
+* *cli history +/Error: Unknown command/ -/.+/
+* *web GET /cmd_log -/.+/ +/HTTP\/1\.1 404 Not found|Connection: close|Content-Type: text\/html|<71 bytes, sha256 47f4d797b2e4b273>|/
+* *web GET /cmd_log_clear -/.+/ +/HTTP\/1\.1 404 Not found|Connection: close|Content-Type: text\/html|<71 bytes, sha256 47f4d797b2e4b273>|/
+# GET /config is get -s: the saved config's path lines and ok, or err get: blank;
+# its reply is on the console too
+* *web GET /config -/.*/ +/err get: blank|ok|[a-z_]+\.[\w.]+ .*|/
+web *console -/<absent>/ +/err get: blank/
+web *web GET /index.html -/<\d+ bytes, sha256 \w+>/ +/<\d+ bytes, sha256 \w+>/	# the old text save's button goes
+web *web GET /app.js -/<\d+ bytes, sha256 \w+>/ +/<\d+ bytes, sha256 \w+>/	# the old text save's code goes
+# config: saved with save by POST /cli (oldnew.py post_config); the objects
+# not on the model yet run and are dropped by the save, so after the power
+# cut VLAN 10, STP and loop detection differ until P4-2 (vlan), P4-3 (stp)
+# and P4-4 (loop). The new image now boots after the cut.
+config *web POST /config -/.*/ +/.*/
+config *console -/.*/ +/.*/
+config flash config -/.*/ +/.*/
+config vlan 00a
+config reg 10[679][0-9a-f]
+config reg 108c
+config reg 4ecc
+config reg 5310
+config frames * rldp
+config frames * stp
+config frames * tcp/80
+config reg 7850
+config *cli loop show
+config *boot -/.*/ +/.*/
