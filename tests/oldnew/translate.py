@@ -163,6 +163,7 @@ PATHS = [
     (r"state.sched.state.*.runs", "state.sched", num), (r"state.sched.state.*.max_us", "state.sched", ident),
     (r"state.sched.(passes|idle|overruns)", "state.sched", num), (r"state.sched.**", "state.sched", ident),
     (r"state.health.**", "state.sched", num), (r"state.con.**", "state.sched", num),
+    (r"state.dbg.igmp.port.#.cfg", "state.dbg", ident), (r"state.dbg.*", "state.dbg", ident),	# P7, raw words
     (r"state.mgmt.dhcp.renew_s", "state.mgmt", num), (r"state.mgmt.**", "state.mgmt", ident),
     (r"state.ntp.(local_offset_min|last_sync_s|stratum)", "state.ntp", num), (r"state.ntp.**", "state.ntp", ident),
     (r"state.dns.**", "state.dns", ident),
@@ -2300,18 +2301,19 @@ page(r"/lldp\.json", Read("lldp", ["lldp.enabled", "port.#.(name|lldp)"], _json(
 
 @_cli
 def _igmp_show(l, v, m, r):
-    """igmp show: each port's IGMP_PORT_CFG, trap (0x2a) when snooping is on,
-    flood (0x15) when off: igmp.enabled, if every port agrees."""
+    """igmp show: each port's IGMP_PORT_CFG (logical port N), as
+    state.dbg.igmp.port.<front>.cfg (P7)."""
     if l == "igmp_show called":
         return True
-    a = re.fullmatch(r"(\d):0x([0-9a-f]{8})", l)
-    if a:
-        x = {0x2a: "on", 0x15: "off"}.get(int(a[2], 16) & 0x3f, "?")
-        v["igmp.enabled"] = x if v.get("igmp.enabled", x) == x else "mixed"
+    a = re.fullmatch(r"(\d):(0x[0-9a-f]{8})", l)
+    f = fronts(r)
+    if a and int(a[1]) in f:
+        v[f"state.dbg.igmp.port.{f[int(a[1])]}.cfg"] = a[2]
     return bool(a)
 
 
-row(r"igmp show", Read("igmp", ["igmp.enabled"], _igmp_show))
+row(r"igmp show", Read("state.dbg", ["state.dbg.igmp.port.#.cfg"], _igmp_show,
+                       gets=lambda m, r, o: ["get state.dbg.igmp.port"]))
 row(r"igmp(?! show).*", Refused("igmp"))
 
 
