@@ -194,8 +194,7 @@ PENDING = {"sys.mac",
 # Fields a moved state object defers (its schema lists them): the new image
 # has no path for them, so while the surface lasts both images read them there
 DEFERRED = [_r for _r in (
-    r"state\.stp\.(root_maxage_s|root_fwd_s|msg_age_s|tc_age_s)",
-    r"state\.stp\.(port|lag)\.\d+\.(guard_tripped|link|legacy|dbridge|dport|dcost|loop_held)",
+    r"state\.stp\.msg_age_s", r"state\.stp\.(port|lag)\.\d+\.loop_held",	# P7: the rest of /stp.json moved
     r"state\.lacp\.running", r"state\.lacp\.port\.\d+\.partner_(key|port|sys_prio|port_prio)")]
 
 

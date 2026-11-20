@@ -190,3 +190,7 @@ loop frames * rldp -/98/ +/99/
 * *boot -/\n*(RTL837X_REG_SDS_MODES: 0x[0-9a-f]{8}|sds_config sds: [0-9a-f]{2}, mode: [0-9a-f]{2})(\n+(RTL837X_REG_SDS_MODES: 0x[0-9a-f]{8}|sds_config sds: [0-9a-f]{2}, mode: [0-9a-f]{2}))*\n*/
 * *console -/\n*(RTL837X_REG_SDS_MODES: 0x[0-9a-f]{8}|sds_config sds: [0-9a-f]{2}, mode: [0-9a-f]{2})(\n+(RTL837X_REG_SDS_MODES: 0x[0-9a-f]{8}|sds_config sds: [0-9a-f]{2}, mode: [0-9a-f]{2}))*\n*/
 sfp *console +//		# the blank line <MODULE INSERTED>'s newline adds
+
+# /stp.json is gone (P7): its last fields are state.stp's, which the new side
+# reads with get a cli line or two after the page would, across a second
+stp* *web GET /stp.json -/state\.stp\.tc_age_s \d+/ +/state\.stp\.tc_age_s \d+/
