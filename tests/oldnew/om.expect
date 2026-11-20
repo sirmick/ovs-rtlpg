@@ -90,3 +90,11 @@ config frames * tcp/80
 config reg 7850
 config *cli loop show
 config *boot -/.*/ +/.*/
+
+# state.stp (P5-4): with STP off the old `stp status` printed that alone;
+# get state.stp shows the state whatever STP's config (stp.json did too).
+# Only gained lines: a value that differs is still a difference
+* *cli stp status +/state\.stp\.\S+ .*/
+# /stpcnt.json is gone (P5-4): the stp scenario reads it with get, so it
+# sends fewer HTTP frames to the host
+stp frames * tcp/80

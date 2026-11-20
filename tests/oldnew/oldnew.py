@@ -262,7 +262,7 @@ class Run:
             if text is None:
                 return None
             got, rest = what.parse(text, m, self)
-            v.update({p: x for p, x in got.items() if translate.obj_of(p) not in moved})
+            v.update({p: x for p, x in got.items() if translate.obj_of(p) not in moved or translate.deferred(p)})
         if moved:
             text = ""
             for l in what.gets(m, self, moved):

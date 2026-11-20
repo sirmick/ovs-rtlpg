@@ -101,6 +101,9 @@ def n_flags(s):
 
 
 def n_bridge(s):
+    m = re.fullmatch(r"(\d+)\.(\d+)\.((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})", s.strip())    # get's: prio/4096.ext.mac
+    if m:
+        return bridge(f"{int(m[1]) * 4096 + int(m[2]):04x}", m[3].replace(":", ""))
     m = re.fullmatch(r"(?:0x)?([0-9a-fA-F]{1,4})[/.:-]?((?:[0-9a-fA-F]{2}[:-]?){6})", s.strip())
     return bridge(m[1], m[2]) if m else s
 
@@ -167,9 +170,10 @@ PATHS = [
     (r"state.loop.(looped|blocked)", "state.loop", n_pmask), (r"state.loop.**", "state.loop", ident),
     (r"state.loader.**", "state.loader", n_bool),
     (r"state.sfp.#.(encoding|rate_mbps|options|quirks|ddm.laser)", "state.sfp", num),
-    (r"state.sfp.#.ddm.status", "state.sfp", n_flags), (r"state.sfp.#.ddm.temp_c", "state.sfp", n_dec(1)),
-    (r"state.sfp.#.ddm.vcc_v", "state.sfp", n_dec(2)), (r"state.sfp.#.ddm.tx_bias_ma", "state.sfp", n_dec(1)),
-    (r"state.sfp.#.ddm.(tx|rx)_power_dbm", "state.sfp", n_dec(1)), (r"state.sfp.#.(vendor|part|rev|serial)", "state.sfp", str.strip),
+    (r"state.sfp.#.ddm.status", "state.sfp", n_flags), (r"state.sfp.#.ddm.(temp|tx_bias)", "state.sfp", num),
+    (r"state.sfp.#.ddm.(vcc_v|tx_power_mw|rx_power_mw)", "state.sfp", n_dec(4)),
+    (r"state.sfp.#.ddm.cal", "state.sfp", lambda x: x[:72]),	# the old pages had 184..219
+    (r"state.sfp.#.(vendor|part|rev|serial)", "state.sfp", str.strip),
     (r"state.sfp.**", "state.sfp", ident),
     (r"state.stp.(bridge|root)", "state.stp", n_bridge), (r"state.stp.(port|lag).#.dbridge", "state.stp", n_bridge),
     (r"state.stp.(port|lag).#.members", "state.stp", n_pmask),
@@ -189,7 +193,19 @@ PATHS = [
 PENDING = {"sys.mac", "vlan", "lag", "stp", "igmp", "lldp", "loop", "mirror",
            "port.design",
            "state.loader",
-           "state.sfp", "state.stp", "state.lag", "state.l2", "state.mib"}
+           "state.l2", "state.mib"}
+# Fields a moved state object defers (its schema lists them): the new image
+# has no path for them, so while the surface lasts both images read them there
+DEFERRED = [_r for _r in (
+    r"state\.stp\.(root_maxage_s|root_fwd_s|msg_age_s|tc_age_s)",
+    r"state\.stp\.(port|lag)\.\d+\.(guard_tripped|link|legacy|dbridge|dport|dcost|loop_held)",
+    r"state\.lacp\.running", r"state\.lacp\.port\.\d+\.partner_(key|port|sys_prio|port_prio)")]
+
+
+def deferred(p):
+    return any(re.fullmatch(x, p) for x in DEFERRED)
+
+
 # What `get` takes for an object, where that isn't its own name
 GETS = {"port": ["port", "state.port"], "port.design": ["port", "state.port"], "state.sched":
         ["state.sched", "state.health", "state.con"], "state.lag": ["state.lag", "state.lacp"],
@@ -312,8 +328,10 @@ class Read:
 
     def comparable(self, p, oms):
         """Whether both images can show p: each has moved its object, or
-        still has the surface."""
+        still has the surface (a deferred field: only the surface)."""
         o = obj_of(p)
+        if deferred(p):
+            return all(not self.gone(om) for om in oms)
         return all((o is not None and o in om) or not self.gone(om) for om in oms)
 
     def gets(self, m, r, objs):
@@ -331,6 +349,9 @@ class Read:
         for p, x in values(text).items():
             t = path_of(p)
             if not t or t[0] not in objs or not any(rx.fullmatch(p) for rx in self.paths):
+                continue
+            a = re.match(r"state\.sfp\.(\d+)\.", p)
+            if a and int(a[1]) not in r.cages:         # state.sfp has 2 on every board: a cage it hasn't
                 continue
             x = t[1](x)
             if self.narrow:
@@ -984,32 +1005,19 @@ row(r"loop(?: show)?", Read("loop", ["loop.enabled", "state.loop.(looped|blocked
 
 # --- state.sfp (P5-4): sfp
 
-def _ddm(v, s, raw, cal=None):
-    """The DDM words (SFF-8472 A2 224..235, 238) in the units DESIGN 7.7
-    gives: temp (S16, 1/256 C), Vcc (100 uV), TX bias (2 uA), TX and RX
-    power (0.1 uW, as dBm); external calibration (slope U16 8.8, offset
-    S16) applied to the first four as the getter will, RX power left raw
-    (the coefficients are state.sfp.S.ddm.rx_cal_coef)."""
+def _ddm(v, s, raw):
+    """The DDM words (SFF-8472 A2 224..233) as get prints them (P5-4, the
+    DESIGN 7.7 deviation): temp (1/256 C) and TX bias (2 uA) raw, Vcc
+    (100 uV) and the TX and RX power (0.1 uW) in V and mW. No calibration:
+    that is state.sfp.S.ddm.cal's, the UI's."""
     def word(k):
         return int(raw[k], 16)
-    def c(k, x):
-        if not cal or k not in cal:
-            return x
-        sl, of = int(cal[k][:4], 16), int(cal[k][4:8], 16)
-        return x * sl / 256 + (of - 0x10000 if of & 0x8000 else of)
-    def dbm(x):
-        return "-inf" if x <= 0 else f"{10 * math.log10(x / 10000):.1f}"
-    if "temp" in raw:
-        t = word("temp")
-        v[s + "ddm.temp_c"] = f"{c('temp', t - 0x10000 if t & 0x8000 else t) / 256:.1f}"
-    if "vcc" in raw:
-        v[s + "ddm.vcc_v"] = f"{c('vcc', word('vcc')) / 10000:.2f}"
-    if "txbias" in raw:
-        v[s + "ddm.tx_bias_ma"] = f"{c('txbias', word('txbias')) / 500:.1f}"
-    if "txpower" in raw:
-        v[s + "ddm.tx_power_dbm"] = dbm(c("txpower", word("txpower")))
-    if "rxpower" in raw:
-        v[s + "ddm.rx_power_dbm"] = dbm(word("rxpower"))
+    for k, path in (("temp", "ddm.temp"), ("txbias", "ddm.tx_bias")):
+        if k in raw:
+            v[s + path] = str(word(k))
+    for k, path in (("vcc", "ddm.vcc_v"), ("txpower", "ddm.tx_power_mw"), ("rxpower", "ddm.rx_power_mw")):
+        if k in raw:
+            v[s + path] = f"{word(k) / 10000:.4f}"
 
 
 STATUS = [("not_ready", 0x01), ("rx_los", 0x02), ("tx_fault", 0x04), ("tx_disable", 0x80)]
@@ -1075,12 +1083,14 @@ def _sfp_post(v, m, r):
                 continue
             if p == b + "ddm_ok" and x == "on":
                 continue
+            if ".ddm." in p and v.get(b + "ddm_ok") == "off":     # get prints the empty cache
+                continue
         out[p] = x
     return out
 
 
 SFP = ["state.sfp.#.(present|ready|ddm_ok|rate_mbps|encoding|vendor|part|rev)",
-       "state.sfp.#.ddm.(temp_c|vcc_v|tx_bias_ma|tx_power_dbm|rx_power_dbm|laser|status)", "raw.sfp.#.options_read"]
+       "state.sfp.#.ddm.(temp|vcc_v|tx_bias|tx_power_mw|rx_power_mw|laser|status)", "raw.sfp.#.options_read"]
 row(r"sfp", Read("state.sfp", SFP, _sfp_print, post=_sfp_post))
 
 
@@ -1153,8 +1163,10 @@ def _stp_status_post(v, m, r):
 
 
 row(r"stp status", Read("state.stp", ["stp.(enabled|version)", "state.stp.(bridge|root|is_root|root_port|root_cost|tc_count)",
-                         "state.stp.(port|lag).#.(state|role|edge|tx_bpdu|bpdu_age_ms)"], _stp_status,
-                        narrow=_stp_status_narrow, post=_stp_status_post))
+                         "state.stp.(port|lag).#.(state|role|edge|tx_bpdu|bpdu_age_ms)", "state.stp.lag.#.members"], _stp_status,
+                        narrow=_stp_status_narrow,
+                        post=lambda v, m, r: _stp_status_post({p: x for p, x in _active_ents(v, m, r).items()
+                                                               if not p.endswith(".members")}, m, r)))
 
 
 # --- state.lag (P5-4): lacp show, lag show
@@ -1171,9 +1183,7 @@ def _lacp_show(text, m, r):
     received and the partner's system."""
     v, rest = {}, []
     for l in _lines(text):
-        a = re.fullmatch(r"LACP (on|off)", l)
-        if a:
-            v["state.lacp.running"] = a[1]
+        if re.fullmatch(r"LACP (on|off)", l):           # state.lacp.running: deferred (P5-4)
             continue
         a = re.fullmatch(r"lag (\d\d) ports 0x([0-9a-f]{4}) aggregator (\(none\)|[0-9a-f]{12}) members 0x([0-9a-f]{4})", l)
         if a:
@@ -1197,15 +1207,18 @@ def _lacp_post(v, m, r):
     """The LAG lines only for a LAG in LACP mode (the new side's lag.L.mode
     says, then goes); no aggregator when not valid."""
     lacp = {p.split(".")[1] for p, x in v.items() if re.fullmatch(r"lag\.\d\.mode", p) and x == "lacp"}
-    if any(re.fullmatch(r"lag\.\d\.mode", p) for p in v):
+    # get state.lag (P5-4) lists every LAG: an LACP one has a port in it
+    lacp |= {x for p, x in v.items() if re.fullmatch(r"state\.lacp\.port\.\d+\.lag", p) and x != "0"}
+    if any(re.fullmatch(r"(state\.lacp\.port\.\d+\.)?lag(\.\d\.mode)?", p) for p in v):
+        v = {p: x for p, x in v.items() if not p.endswith(".lag")}
         v = {p: x for p, x in v.items() if not re.fullmatch(r"(state\.)?lag\.\d\..*", p) or p.split(".")[-2] in lacp}
         v = {p: x for p, x in v.items() if not p.endswith(".mode")}
     return {p: x for p, x in v.items() if not (p.endswith(".aggregator") and
                                               v.get(p[:-len("aggregator")] + "agg_valid") == "off")}
 
 
-row(r"lacp show", Read("state.lag", ["state.lacp.running", "lag.#.(members|mode)", "state.lag.#.(active|agg_valid|aggregator)",
-                        "state.lacp.port.#.(actor|partner|rx_state|rx_pdus|partner_sys)"], _lacp_show, post=_lacp_post))
+row(r"lacp show", Read("state.lag", ["lag.#.(members|mode)", "state.lag.#.(active|agg_valid|aggregator)",
+                        "state.lacp.port.#.(lag|actor|partner|rx_state|rx_pdus|partner_sys)"], _lacp_show, post=_lacp_post))
 
 
 @_cli
@@ -1373,12 +1386,12 @@ def _ports_json(d, v, rest, m, r):
                 v[s + "los"], k["sfp_los"] = "none" if e["sfp_los"] is None else "los" if e["sfp_los"] else "ok", 1
             raw = {key[4:]: e[key][2:] for key in ("sfp_temp", "sfp_vcc", "sfp_txbias", "sfp_txpower", "sfp_rxpower")
                    if key in e and len(e[key]) > 2}
-            cal = {CAL[key]: e[key][2:] for key in CAL if key in e}
             k.update({key: 1 for key in ("sfp_temp", "sfp_vcc", "sfp_txbias", "sfp_txpower", "sfp_rxpower")})
-            k.update({key: 1 for key in CAL})
-            _ddm(v, s, raw, cal)
-            if "sfp_rxpower_cal" in e:
-                v[s + "ddm.rx_cal"], v[s + "ddm.rx_cal_coef"], k["sfp_rxpower_cal"] = "on", e["sfp_rxpower_cal"][2:], 1
+            _ddm(v, s, raw)
+            if "sfp_rxpower_cal" in e:              # 184..203, then the pairs 204..219, as ddm.cal holds them
+                v[s + "ddm.cal"] = "".join(e[key][2:] for key in ("sfp_rxpower_cal", "sfp_txbias_cal", "sfp_txpower_cal",
+                                                                  "sfp_temp_cal", "sfp_vcc_cal") if key in e)
+                k.update({key: 1 for key in list(CAL) + ["sfp_rxpower_cal"]})
         _left(e, k, rest, f"port {n} ")
 
 
@@ -1392,7 +1405,7 @@ def _ports_post(v, m, r):
             continue
         if s and ".ddm." in p and not int(v.get(s[1] + "options", "0")) & 0x40:
             continue
-        if s and p.endswith("rx_cal") and x == "off":
+        if s and p.endswith(".ddm.cal") and not x:          # internal calibration: get prints it empty
             continue
         out[p] = x
     return out
@@ -1400,7 +1413,7 @@ def _ports_post(v, m, r):
 
 page(r"/ports\.json", Read("state.mib", ["port.#.(name|enabled|mtu)", "state.port.#.media", "raw.port.#.adv",
                             "state.sfp.#.(present|options|vendor|part|serial|los)",
-                            "state.sfp.#.ddm.(status|temp_c|vcc_v|tx_bias_ma|tx_power_dbm|rx_power_dbm|rx_cal|rx_cal_coef)"],
+                            "state.sfp.#.ddm.(status|temp|vcc_v|tx_bias|tx_power_mw|rx_power_mw|cal)"],
                            _json(_ports_json), post=_ports_post))
 
 
@@ -1557,9 +1570,15 @@ def _stpcnt(d, v, rest, m, r):
     _left(d, set(k) | {"ports"}, rest, "")
 
 
+def _stpcnt_post(v, m, r):
+    """The active entities; the BPDU ages in whole seconds: get reads them a
+    step or two after the page would (20 ms ticks)."""
+    return {p: (str(int(x) // 1000) + " s" if p.endswith(".bpdu_age_ms") else x)
+            for p, x in _active_ents(v, m, r).items() if not p.endswith(".members")}
+
+
 page(r"/stpcnt\.json", Read("state.stp", ["stp.enabled", "state.stp.tc_count", "state.stp.(port|lag).#.(rx_bpdu|tx_bpdu|rx_tc|tx_tc|bpdu_age_ms)",
-                             "state.stp.lag.#.members"], _json(_stpcnt),
-                            post=lambda v, m, r: {p: x for p, x in _active_ents(v, m, r).items() if not p.endswith(".members")}))
+                             "state.stp.lag.#.members"], _json(_stpcnt), post=_stpcnt_post))
 
 
 def _lag_json(d, v, rest, m, r):
@@ -2273,7 +2292,7 @@ def _sfp_speed(m, r):
 
 
 # sfp S <speed> (DESIGN 20.2: the SFP port's port.N.speed): the module is
-# found again and re-read (sfp.S.reread, an action of state.sfp)
-row(r"sfp ([12]) (10g|2g5|1g|100m|auto)", Set("port.design", _sfp_speed,
-                                               then=lambda m, r, prev: [f"do sfp.{m[1]}.reread"] if "state.sfp" in r.om else []))
+# found again and re-read (sfp.S.reread, an action of state.sfp, waits for
+# port.design; P5-4 ships no action)
+row(r"sfp ([12]) (10g|2g5|1g|100m|auto)", Set("port.design", _sfp_speed))
 row(r"sfp \S+.*", Refused("port.design"))
