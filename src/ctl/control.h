@@ -105,8 +105,15 @@
 //       sim models no RTL8224, so its ID (MMD 30 reg 5, 0x8224) must be held
 //       too for the firmware to take that path
 //   phy release <phy> <dev> <reg> | all   ok
+//   reg busy 5cac 1 <n> | reg busy off   ok: a table command takes time, as on
+//       silicon: after a firmware write to TBL_CTRL with execute (bit 0) set,
+//       the next n reads of TBL_CTRL (n decimal) return the bit still set, and
+//       the table engine does the command at the read after them, with the
+//       inputs (TBL_DATA_0, DATA_IN_A-C) it was started with; until then the
+//       outputs keep their old contents. A command written while one is busy
+//       is dropped, and checks lists it (table-busy). Kept over a power cut
 //   holds                             ok <n>, then "r <addr> <mask>", "p <phy>.<dev>.<reg>
-//       <mask>" and "flash wp" for what is held
+//       <mask>", "flash wp" and "reg busy 5cac 1 <n>" for what is held
 //   flash wp on|off                   ok: write protect: write enable (0x06) is
 //       ignored, so the status's WEL stays clear and no program or erase
 //       happens (flash_write_enable's WEL wait times out). Kept over a power cut

@@ -68,10 +68,26 @@ public:
 	bool age_out(const u8 mac[6], u16 vid, unsigned port);
 	// Bumped by every change to the VLAN or L2 table.
 	u64 version = 0;
+	// A table command that takes time (control mode's reg busy 5cac 1 <n>):
+	// after a write to TBL_CTRL with execute set, the next busy_reads reads
+	// of TBL_CTRL return execute still set, and the command is done at the
+	// read after them, with the inputs (TBL_DATA_0, DATA_IN_A-C) it was
+	// started with: until then the outputs keep their old contents. A
+	// command written while one is busy is dropped (reported, table-busy).
+	// 0: done at once, as it was.
+	unsigned busy_reads = 0;
+	// A busy command done now (a chip reset lasts longer than any command).
+	void settle() { if (m_busy.on) table_done(); }
 	void set_counter(u8 port, u8 counter, u64 v) { m_counters[port & 15][counter & 63] = v; }
 
 private:
 	void table_exec(u32 ctrl);
+	void table_done();
+	struct {
+		bool on = false;
+		unsigned left = 0;
+		u32 ctrl = 0, in[4] = {};
+	} m_busy;
 	void flush_exec(u32 ctrl);
 	void stat_exec(u32 v);
 	void l2_out(const l2_entry *e, u16 idx);

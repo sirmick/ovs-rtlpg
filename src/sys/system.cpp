@@ -431,6 +431,7 @@ void rtl837x_system::chip_reset()
 	u8 const bank = m_cpu.psbank();
 	bool const app = m_cpu.cov_region == 1;	// the loader has started the application
 	resets++;
+	m_tables.settle();
 	reset(true);
 	if (!early_reset_hang || !app || m_switch_init || m_held)
 		return;

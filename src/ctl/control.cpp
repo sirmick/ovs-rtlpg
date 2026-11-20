@@ -209,6 +209,7 @@ private:
 	std::map<u16, u32> m_holds;		// reg hold, the same
 	std::map<u32, u16> m_phy_holds;		// phy hold, the same
 	bool m_flash_wp = false;		// flash wp, the same
+	unsigned m_tbl_busy = 0;		// reg busy 5cac, the same
 	bool m_ring_full = false;		// dropping for want of room in the RX ring
 
 	std::vector<uart_line> m_uart;		// since the last uart read
@@ -289,6 +290,7 @@ void controller::attach()
 	s.core().held = m_holds;
 	s.core().phy_held = m_phy_holds;
 	s.flash().write_protect = m_flash_wp;
+	s.tables().busy_reads = m_tbl_busy;
 	peers();
 }
 
@@ -710,7 +712,19 @@ bool controller::request(const std::string &line, std::string &reply)
 			}
 			if (m_flash_wp)
 				l.push_back("flash wp");
+			if (m_tbl_busy)
+				l.push_back("reg busy 5cac 1 " + std::to_string(m_tbl_busy));
 			reply = block(l);
+		} else if (c == "reg" && w.size() == 5 && w[1] == "busy") {
+			if (parse_num("0x" + w[2]) != 0x5cac || parse_num("0x" + w[3]) != 1)
+				throw ctl_error("reg busy: only 5cac 1 (TBL_CTRL execute)");
+			m_tbl_busy = unsigned(parse_num(w[4]));
+			m_sys->tables().busy_reads = m_tbl_busy;
+			reply = "ok";
+		} else if (c == "reg" && w.size() == 3 && w[1] == "busy" && w[2] == "off") {
+			m_tbl_busy = 0;
+			m_sys->tables().busy_reads = 0;
+			reply = "ok";
 		} else if (c == "flash" && w.size() == 3 && w[1] == "wp" && (w[2] == "on" || w[2] == "off")) {
 			m_flash_wp = w[2] == "on";
 			m_sys->flash().write_protect = m_flash_wp;

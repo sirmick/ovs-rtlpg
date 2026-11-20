@@ -1,5 +1,6 @@
 // tables.cpp - see tables.h. Ported from RTLPlayground's test/hw_mock.c.
 #include "sys/tables.h"
+#include "sys/report.h"
 
 #include <algorithm>
 #include <cstring>
@@ -37,11 +38,34 @@ static u16 l2_hash(const u8 mac[6], u16 vid)
 switch_tables::switch_tables(switch_core &core) : m_core(core), m_l2(L2_MAX)
 {
 	m_core.on_write(TBL_CTRL, [this](u32 v) {
+		if (m_busy.on) {
+			if (v & TBL_EXECUTE)
+				report("table-busy", "table: TBL_CTRL %08x written while %08x is busy: dropped", v, m_busy.ctrl);
+			return m_busy.ctrl;			// it stays as it is, executing
+		}
 		if (v & TBL_EXECUTE) {
+			if (busy_reads) {
+				m_busy.on = true;
+				m_busy.left = busy_reads;
+				m_busy.ctrl = v;
+				for (int i = 0; i < 4; i++)
+					m_busy.in[i] = m_core.reg(i ? u16(DATA_IN_A + 4 * (i - 1)) : TBL_DATA_0);
+				return v;
+			}
 			table_exec(v);
 			return v & ~TBL_EXECUTE;
 		}
 		return v;
+	});
+	m_core.on_read(TBL_CTRL, [this](u32 v) {
+		if (!m_busy.on)
+			return v;
+		if (m_busy.left) {
+			m_busy.left--;
+			return v;
+		}
+		table_done();
+		return m_core.reg(TBL_CTRL);
 	});
 	m_core.on_write(L2_FLUSH_CTRL, [this](u32 v) {
 		if (v & FLUSH_EXEC) {
@@ -303,6 +327,26 @@ void switch_tables::table_exec(u32 ctrl)
 		return;
 	}
 	l2_out(e, e ? e->idx : idx);
+}
+
+// The busy command, done now with the inputs it was started with; what the
+// firmware has written to them since stays, but the outputs' bits of
+// TBL_DATA_0 (13:0) are the command's.
+void switch_tables::table_done()
+{
+	u16 const ins[4] = { TBL_DATA_0, DATA_IN_A, DATA_IN_B, DATA_IN_C };
+	u32 now[4];
+	for (int i = 0; i < 4; i++) {
+		now[i] = m_core.reg(ins[i]);
+		m_core.set_reg(ins[i], m_busy.in[i]);
+	}
+	m_busy.on = false;
+	table_exec(m_busy.ctrl);
+	u32 const d0 = m_core.reg(TBL_DATA_0);
+	for (int i = 1; i < 4; i++)
+		m_core.set_reg(ins[i], now[i]);
+	m_core.set_reg(TBL_DATA_0, (now[0] & ~0x3fffu) | (d0 & 0x3fff));
+	m_core.set_reg(TBL_CTRL, m_busy.ctrl & ~TBL_EXECUTE);
 }
 
 void switch_tables::flush_exec(u32 ctrl)

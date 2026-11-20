@@ -11,6 +11,10 @@ save), through the firmware's own reads:
 - phy hold 0 30 3f8 8000 (the RTL8224's SDS_INDACS_CMD busy bit): `phyget 0
   30 03f8` reads 0x8000; released, 0;
 - holds lists them; they are kept over a power cut;
+- reg busy 5cac 1 2: a table command (regset 5cac, a VLAN read) reads busy
+  twice, its output (DATA_OUT_A) stale until then, done at the third read;
+  one written while busy is dropped, in checks (table-busy); a boot with it
+  gives the same VLAN table as one without (fork main waits);
 - flash wp on: a config save from the web (POST /config) programs nothing,
   the config sector stays as it was; flash wp off (and a power cut: fork
   main waits for WEL without end): the save goes through.
@@ -82,6 +86,37 @@ def main():
         r.cli("phyget 0 30 03f8")
         check(int(val(last(r)) or "1", 16) == 0, "released: SDS_INDACS_CMD reads 0")
         check(sim.block("holds") == [], "holds: none")
+
+        # a table command that takes time
+        vlans = sim.block("table dump vlan")
+        check(sim.cmd("reg busy 5cac 1 2") == "" and sim.block("holds") == ["reg busy 5cac 1 2"], "reg busy 5cac 1 2, listed")
+        r.cli("regset 5ccc 12345678")
+        r.cli("regset 5cac 00010301")			# read VID 1 (TBL_VLAN, execute)
+        r.cli("regget 5ccc")
+        stale = val(last(r))
+        reads = []
+        for _ in range(3):
+            r.cli("regget 5cac")
+            reads.append(val(last(r)))
+        r.cli("regget 5ccc")
+        done = val(last(r))
+        vid1 = int([l for l in vlans if l.startswith("001 ")][0].split()[1], 16)
+        check(stale == "0x12345678", f"while busy the output is stale: DATA_OUT_A {stale}")
+        check(reads == ["0x00010301", "0x00010301", "0x00010300"], f"TBL_CTRL reads busy twice, then done: {reads}")
+        check(done is not None and int(done, 16) == vid1, f"done: DATA_OUT_A {done} = VID 1's word {vid1:08x}")
+        r.cli("regset 5cac 00010301")
+        r.cli("regset 5cac 00020301")
+        drops = [x for x in sim.checks() if x[1] == "table-busy"]
+        check(len(drops) == 1 and "00020301" in drops[0][2], f"one written while busy is dropped: {drops}")
+        r.cli("regget 5cac")
+        r.cli("regget 5cac")
+        r.cli("regget 5cac")
+        sim.powercut()
+        r.boot()
+        r.wait(3000)
+        r._now()
+        check(sim.block("table dump vlan") == vlans, "a boot with busy table commands: the same VLAN table")
+        check(sim.cmd("reg busy off") == "" and sim.block("holds") == [], "reg busy off")
 
         cfg0 = r.b.flash(CONFIG_START, CONFIG_LEN)
         check(sim.cmd("flash wp on") == "" and sim.block("holds") == ["flash wp"], "flash wp on, listed")
