@@ -187,7 +187,7 @@ PATHS = [
 # Objects whose rows wait for their node; each takes itself out (P4-*, P5-*)
 PENDING = {"sys", "web", "mgmt", "syslog", "dns", "ntp", "vlan", "lag", "stp", "igmp", "lldp", "loop", "mirror",
            "port.design",
-           "state.sys", "state.sched", "state.mgmt", "state.ntp", "state.dns", "state.loop", "state.loader",
+           "state.sched", "state.mgmt", "state.ntp", "state.dns", "state.loop", "state.loader",
            "state.sfp", "state.stp", "state.lag", "state.l2", "state.mib"}
 # What `get` takes for an object, where that isn't its own name
 GETS = {"port": ["port", "state.port"], "port.design": ["port", "state.port"], "state.sched":
@@ -706,25 +706,25 @@ def _version(l, v, m, r):
     a = re.fullmatch(r"(Software version|Build date|Compiler|Toolchain|Hardware): (.*)", l)
     if a:
         k = {"Software version": "version", "Build date": "build_date", "Hardware": "machine"}.get(a[1])
-        if k:
+        if k:			# Compiler, Toolchain: state.sys.toolchain, deferred (P5-1)
             v["state.sys." + k] = a[2]
-        else:			# state.sys.toolchain: SDCC_TOOLCHAIN and the compiler, as one
-            v["state.sys.toolchain"] = (v.get("state.sys.toolchain", "") + " " + a[2]).strip()
     return bool(a)
 
 
-row(r"version", Read("state.sys", ["state.sys.(version|build_date|toolchain|machine)"], _version))
+# state.sys.toolchain and temp_poweron_c: deferred for room in P5-1 (schema/state_sys.py)
+row(r"version", Read("state.sys", ["state.sys.(version|build_date|machine)"], _version))
 
 
 @_cli
 def _temp(l, v, m, r):
     a = re.fullmatch(r"(Chip temperature|At power-on): +(-?[\d.]+) C", l)
     if a:
-        v["state.sys." + ("temp_c" if a[1] == "Chip temperature" else "temp_poweron_c")] = a[2]
+        if a[1] == "Chip temperature":	# At power-on: temp_poweron_c, deferred (P5-1)
+            v["state.sys.temp_c"] = a[2]
     return bool(a)
 
 
-row(r"temp", Read("state.sys", ["state.sys.temp_c", "state.sys.temp_poweron_c"], _temp))
+row(r"temp", Read("state.sys", ["state.sys.temp_c"], _temp))
 
 
 # --- state.sched (P5-2): health tasks
@@ -1294,9 +1294,12 @@ def _information(d, v, rest, m, r):
 
 def _information_post(v, m, r):
     """A cage whose module wasn't identified sends "" (id_ok off); the rest
-    of its ID only when identified."""
+    of its ID only when identified. A build without PoE sends no poe
+    (state.sys.poe none)."""
     out = {}
     for p, x in v.items():
+        if p == "state.sys.poe" and x == "none":
+            continue
         s = re.match(r"(state\.sfp\.\d\.)", p)
         if s and p != s[1] + "id_ok" and v.get(s[1] + "id_ok") == "off":
             continue
@@ -1306,7 +1309,9 @@ def _information_post(v, m, r):
     return out
 
 
-page(r"/information\.json", Read("sys mgmt web syslog state.sys", ["state.mgmt.(ip|gateway|netmask)", "web.session_timeout_s", "mgmt.mode",
+# gone with state.sys (P5-1 deletes the whole page): its config echoes are
+# compared once their objects move, by get
+page(r"/information\.json", Read("state.sys", ["state.mgmt.(ip|gateway|netmask)", "web.session_timeout_s", "mgmt.mode",
                                   "syslog.(server|port)", "sys.(hostname|led)",
                                   "state.sys.(mac|version|build_date|uptime_s|machine|pcb|temp_c|flash.size|image_size|poe)",
                                   "state.loader.present", "state.sfp.#.(vendor|part|rev|id_ok)"],
