@@ -187,7 +187,7 @@ PATHS = [
 # Objects whose rows wait for their node; each takes itself out (P4-*, P5-*)
 PENDING = {"sys", "web", "mgmt", "syslog", "dns", "ntp", "vlan", "lag", "stp", "igmp", "lldp", "loop", "mirror",
            "port.design",
-           "state.sched", "state.mgmt", "state.ntp", "state.dns", "state.loop", "state.loader",
+           "state.mgmt", "state.ntp", "state.dns", "state.loop", "state.loader",
            "state.sfp", "state.stp", "state.lag", "state.l2", "state.mib"}
 # What `get` takes for an object, where that isn't its own name
 GETS = {"port": ["port", "state.port"], "port.design": ["port", "state.port"], "state.sched":
@@ -744,7 +744,7 @@ def _max_us(p, x, m, r):
     saturated."""
     if not p.endswith(".max_us"):
         return x
-    if x.startswith(">"):
+    if x.startswith(">") or int(x) >= 402640:      # 0xffff fine units: saturated
         return ">400ms"
     u = round(int(x) / 6.144)
     return f"{u * 6 + (u * 9 >> 6)}us" if u <= 7281 else f"{u // 163}ms"
@@ -757,10 +757,10 @@ def _health_tasks(l, v, m, r):
     a = re.fullmatch(r"\d+\t(\S+)\t(?:free|(\w+)\t0x([0-9a-f]{4})\t(now|\+\d+))", l)
     if a:
         s = f"state.sched.slot.{a[1]}."
-        v[s + "state"] = a[2] or "free"
+        v[s + "state"] = a[2] or "none"         # get's word for a free slot
         if a[2]:
             v[s + "mask"] = bits(int(a[3], 16), MASK)
-            v[s + "wake"] = a[4].lstrip("+")
+            v[s + "wake"] = "0" if a[4] == "now" else a[4].lstrip("+")
         return True
     a = re.fullmatch(r"([A-Z][A-Z0-9_]+)\t(\d+)\t(>?\d+(?:us|ms))", l)
     if a:
@@ -783,8 +783,11 @@ def _health_tasks(l, v, m, r):
     a = re.fullmatch(r"last reset: (.+?) in (\S+)/(\S+) after (\d+) ms(?:, PC 0x([0-9a-f]+))? bank (\d+), states(.*)", l)
     if a:
         s = "state.sys.reset."
-        v[s + "cause"], v[s + "slot"], v[s + "state"], v[s + "step_ms"] = CAUSE.get(a[1], a[1]), a[2], a[3], a[4]
-        v[s + "pc"], v[s + "bank"], v[s + "states"] = str(int(a[5] or "0", 16)), a[6], a[7].strip()
+        nm = lambda x: "none" if x == "-" else x            # get's word for no slot or state (P5-2)
+        v[s + "cause"], v[s + "slot"], v[s + "state"], v[s + "step_ms"] = CAUSE.get(a[1], a[1]), nm(a[2]), nm(a[3]), a[4]
+        v[s + "pc"], v[s + "bank"] = str(int(a[5] or "0", 16)), a[6]
+        for i, x in enumerate(a[7].split()):                # states.1-8, oldest first (P5-2)
+            v[f"{s}states.{i + 1}"] = nm(x)
         return True
     return False
 
@@ -792,7 +795,7 @@ def _health_tasks(l, v, m, r):
 def _health_post(v, m, r):
     """A free slot shows no mask or wake; the reset record only after a
     reset that left one (the new side's cause power: none)."""
-    free = {p[:-len("state")] for p, x in v.items() if p.startswith("state.sched.slot.") and p.endswith(".state") and x == "free"}
+    free = {p[:-len("state")] for p, x in v.items() if p.startswith("state.sched.slot.") and p.endswith(".state") and x == "none"}
     out = {p: x for p, x in v.items() if not any(p.startswith(f) and not p.endswith(".state") for f in free)}
     if out.get("state.sys.reset.cause") == "power":
         out = {p: x for p, x in out.items() if not p.startswith("state.sys.reset.")}
@@ -805,7 +808,7 @@ def _health_post(v, m, r):
 
 row(r"health tasks", Read("state.sched", ["state.sched.slot.*.(state|mask|wake)", "state.sched.state.*.(runs|max_us)",
                            "state.sched.(passes|idle|pass_max_us|overruns|overrun_last)", "state.con.rx_overruns",
-                           "state.health.(hw_timeouts|hw_timeout_reg)", "state.sys.reset.(cause|slot|state|step_ms|pc|bank|states)"],
+                           "state.health.(hw_timeouts|hw_timeout_reg)", "state.sys.reset.(cause|slot|state|step_ms|pc|bank|states.#)"],
                           _health_tasks, narrow=lambda p, x, m, r: _max_us(p, x, m, r) if not p.endswith("pass_max_us")
                           else _max_us(".max_us", x, m, r), post=_health_post))
 
