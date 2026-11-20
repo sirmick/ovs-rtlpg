@@ -112,6 +112,10 @@
 //       inputs (TBL_DATA_0, DATA_IN_A-C) it was started with; until then the
 //       outputs keep their old contents. A command written while one is busy
 //       is dropped, and checks lists it (table-busy). Kept over a power cut
+//   stat set <port> <counter> <hex>   ok: MIB counter <counter> (the STAT_GET
+//       index, decimal) of logical <port> holds the 64-bit value <hex>, as the
+//       firmware's STAT_GET reads it (STAT_V_HIGH, STAT_V_LOW). Nothing counts
+//       on its own; a power cut clears them, as a new chip
 //   holds                             ok <n>, then "r <addr> <mask>", "p <phy>.<dev>.<reg>
 //       <mask>", "flash wp" and "reg busy 5cac 1 <n>" for what is held
 //   flash wp on|off                   ok: write protect: write enable (0x06) is

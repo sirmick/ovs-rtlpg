@@ -207,6 +207,7 @@ def loop(r):
     P = r.P
     a, b = (4, 5) if len(P) >= 6 else (2, 3)
     r.boot()
+    r.counters()			# for stat: rtlsim counts nothing
     r.link(P[a], True)
     r.link(P[b], True)
     r.cli("loop on")
@@ -349,6 +350,7 @@ def sfp(r):
         return
     port = r.cages[1][0]
     r.boot()
+    r.counters()
     r.login()
     r.sfp(1, _sfp("10g"))
     r.link(port, True, "10g")
@@ -368,6 +370,7 @@ def flaps(r):
     """Links up and down at several speeds; the port table and the JSON."""
     P = r.P
     r.boot()
+    r.counters()
     r.login()
     for i, up, sp in [(1, True, "1g"), (2, True, "2g5"), (3, True, "100m"), (1, False, None),
                       (3, True, "10m"), (2, False, None), (1, True, "2g5")]:

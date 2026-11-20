@@ -28,9 +28,10 @@ Every result has the builds' identity scrubbed from it (the version string,
 source match. A name only one side has is a difference too. --expect FILE lists the
 differences a change is meant to make, one per line:
 
-    <scenario glob> <name glob>   # why
+    <scenario glob>[,<scenario glob>...] <name glob> [-/RE/|+/RE/]...   # why
 
-(fnmatch patterns; '#' starts a comment). Those are reported as expected and
+(fnmatch patterns; '#' starts a comment; -/RE/ and +/RE/ the lines the
+result may lose and gain, load_expect()). Those are reported as expected and
 don't fail the run; a line that matched no difference is flagged (it may be
 stale), without failing it. Exit 0 when every scenario matches, 1 otherwise. --save
 DIR writes each side's results, as JSON, for a look.
@@ -174,7 +175,7 @@ class Run:
         v = what.values(m, self)
         if not new:
             out = self._typed(line, until)
-            return None if out is None else "refused" if translate.refused(out) else translate.canon(v)
+            return None if out is None else "refused" if translate.refused(out) else translate.canon(translate.normalized(v))
         for l in [f"set {p} {x}" for p, x in v.items()] + ["apply"]:
             out = self._typed(l, until)
             if out is None:
@@ -188,7 +189,7 @@ class Run:
             if out is None:
                 return None
             text += out
-        return translate.canon(translate.values(text))
+        return translate.canon(translate.normalized(translate.values(text)))
 
     def _read(self, m, what, fetch, until):
         """A Read row (a printer or a page) on this image: from the old
@@ -349,6 +350,15 @@ class Run:
     def sfp(self, slot, eeprom):
         self._now()
         self.b.sfp(slot, eeprom)
+
+    def counters(self):
+        """Every port's good and error counters (STAT 46, 47, 48) nonzero and
+        distinct, the good TX count past 32 bits (stat prints its low half):
+        rtlsim counts nothing on its own (control's stat set)."""
+        self._now()
+        for p in sorted(set(self.P) | {c[0] for c in self.cages.values()}):
+            for cnt, v in ((46, (p + 1 << 32) | 0x100 * p | 0x11), (47, 0x2000 + p), (48, (0x30 + p) << 32 | 0x40 + p)):
+                self.b.sim.cmd(f"stat set {p} {cnt} {v:x}")
 
     def powercut(self):
         self._now()
@@ -744,8 +754,8 @@ EXPECT_LINES = re.compile(r"\s+([-+])/(.*?)/(?=\s|$)")
 def load_expect(path):
     """[(scenario glob, result glob, [(-|+, line regex)], line number)]: a
     line may end in -/RE/ and +/RE/ items, the lines the result may lose
-    and gain (each line matched in full); without, the whole result may
-    differ."""
+    and gain (each line matched in full, or a run of them as one block, \n
+    between); without, the whole result may differ."""
     out = []
     if not path:
         return out
@@ -760,10 +770,15 @@ def load_expect(path):
 
 
 def _covered(a, b, rx):
-    """Whether every line `a` loses and `b` gains matches one of rx's."""
+    """Whether every run of lines `a` loses and `b` gains is covered by rx's
+    items of its sign: each line matched by one, or the run, its lines
+    joined by newlines, by one (a block: "\n" in the item)."""
+    def ok(run, sign):
+        items = [r for o, r in rx if o == sign]
+        return not run or all(any(r.fullmatch(x) for r in items) for x in run) or \
+            any(r.fullmatch("\n".join(run)) for r in items)
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
-        if any(not any(o == "-" and r.fullmatch(x) for o, r in rx) for x in a[i1:i2] if op != "equal") or \
-           any(not any(o == "+" and r.fullmatch(x) for o, r in rx) for x in b[j1:j2] if op != "equal"):
+        if op != "equal" and not (ok(a[i1:i2], "-") and ok(b[j1:j2], "+")):
             return False
     return True
 
@@ -783,7 +798,8 @@ def compare(name, old, new, expect, used=None):
             block = f"  {k}:\n" + "\n".join("    " + x for x in d.splitlines())
         else:
             block = f"  {k}: old {a!r}, new {b!r}"
-        lines = [(rx, n) for s, g, rx, n in expect if fnmatch.fnmatch(name, s) and fnmatch.fnmatch(k, g)]
+        lines = [(rx, n) for s, g, rx, n in expect
+                 if any(fnmatch.fnmatch(name, x) for x in s.split(",")) and fnmatch.fnmatch(k, g)]
         hits = [n for rx, n in lines if not rx]
         rx = [x for r, _ in lines for x in r]
         if not hits and rx and _covered(a.splitlines(), b.splitlines(), rx):

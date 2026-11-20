@@ -7,11 +7,14 @@
 # port.N (dab5d13): the boot no longer prints the EEE setup per port, nor
 # the port table (stat's), and so no longer reads the STAT counters at boot
 * *boot -/EEE on for \d+ speed \w+/ -/EEE can't be enabled for SFP port \d+/
-* *boot -/Verifying PHY settings:/ -// -/Port\tState\tLink\t.*/ -/\d+\t(On|Off|SFP IN|NO SFP)\t.*/
-# The STAT block: read by the boot's port table and nothing else before a
-# stat; after one, its last counter differs (get reads the ports in front
-# order, stat in logical order)
-* reg 0f6[048]
+* *boot -/Verifying PHY settings:\n\nPort\tState\tLink\t[^\n]*(\n\d+\t(On|Off|SFP IN|NO SFP)\t[^\n]*)+/
+# The STAT block: the boot's port table reads it, the new boot doesn't. A
+# scenario that reads counters (stat, /ports.json, /traffic.json and
+# /counters.json by value) has all three on both images; they hold the last
+# port read, and get reads the ports in front order, stat in logical order:
+# on the SWGT024 another port's (on the 8x the same)
+* reg 0f6[048] -/[0-9a-f]{8}/ +/<absent>/
+vlan,cli,web,loop,sfp,flaps reg 0f6[048] -/[0-9a-f]{8}/ +/[0-9a-f]{8}/
 
 # port.N against /ports.json by value: 53ee574 reads the MTU register, 0 in
 # rtlsim (the boot never writes it); feat/om's port.N.mtu is the default,

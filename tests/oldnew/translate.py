@@ -227,8 +227,18 @@ def canon(v, rest=()):
     return "\n".join([f"{p} {v[p]}" for p in sorted(v, key=_key)] + [f"~ {l}" for l in rest])
 
 
+# What the old CLI says, not through cmd_error(), when it does nothing
+REFUSALS = ("is SFP no PHY information available", "Unknown port <port> lldp")
+
+
 def refused(text):
-    return text is None or any(l.startswith(("Error:", "err ")) for l in text.splitlines())
+    return text is None or any(l.startswith(("Error:", "err ")) or any(x in l for x in REFUSALS)
+                               for l in text.splitlines())
+
+
+def normalized(v):
+    """Values by path as the canon has them (each path's norm())."""
+    return {p: path_of(p)[1](x) if path_of(p) else x for p, x in v.items()}
 
 
 # --- rows
@@ -464,13 +474,21 @@ row(r"pvid (\d+) (\d+)", Set("port", lambda m, r: {f"port.{m[1]}.pvid": m[2]}))
 row(r"mtu (\d+) (\d+)", Set("port", lambda m, r: {f"port.{m[1]}.mtu": m[2]}))
 row(r"port (\d+) name (\S.*)", Set("port", lambda m, r: {f"port.{m[1]}.name": m[2][:31]}))
 row(r"port (\d+) lldp (block|permit)", Set("port", lambda m, r: {f"port.{m[1]}.lldp": m[2]}))
-row(r"port (\d+) (on|off)", Set("port", lambda m, r: {f"port.{m[1]}.enabled": m[2]}))
-row(r"port (\d+) (auto|10m|100m|1g|2g5|5g|10g)(?: (half|full))?",
-    Set("port", lambda m, r: {f"port.{m[1]}.speed": m[2], **({f"port.{m[1]}.duplex": m[3]} if m[3] else {})}))
-row(r"port (\d+) duplex (full|half)", Set("port", lambda m, r: {f"port.{m[1]}.duplex": m[2]}))
-row(r"isolate (\d+) off", Set("port", lambda m, r: {f"port.{m[1]}.isolate": "all,cpu"}))
-row(r"isolate (\d+)((?: (?:\d+|cpu))+)",
-    Set("port", lambda m, r: {f"port.{m[1]}.isolate": ",".join(m[2].split())}))
+row(r"port (\d+) lldp(?: .*)?", Refused("port"))	# "Unknown port <port> lldp ..." (cmd_parser.c:1002)
+# parse_port(): on is enabled at auto speed (cmd_parser.c:1051); off only
+# powers the PHY down; a speed powers it up, its duplex auto (:973) but for
+# 10m and 100m's half or full (:1027-1046; other words ignored); duplex is
+# full for "full", else half
+row(r"port (\d+) on", Set("port", lambda m, r: {f"port.{m[1]}.enabled": "on", f"port.{m[1]}.speed": "auto"}))
+row(r"port (\d+) off", Set("port", lambda m, r: {f"port.{m[1]}.enabled": "off"}))
+row(r"port (\d+) (auto|10m|100m|1g|2g5|5g|10g)(?: (\S+).*)?",
+    Set("port", lambda m, r: {f"port.{m[1]}.enabled": "on", f"port.{m[1]}.speed": m[2], f"port.{m[1]}.duplex":
+                              m[3] if m[2] in ("10m", "100m") and m[3] in ("half", "full") else "auto"}))
+row(r"port (\d+) duplex(?: (\S+).*)?", Set("port", lambda m, r: {f"port.{m[1]}.duplex": "full" if m[2] == "full" else "half"}))
+# parse_isolate(): off is every port and the CPU; the CPU is port 0
+row(r"isolate (\d+) off", Set("port", lambda m, r: {f"port.{m[1]}.isolate": plist(_ports(r), True)}))
+row(r"isolate (\d+)((?: \d+)+)",
+    Set("port", lambda m, r: {f"port.{m[1]}.isolate": plist([int(x) for x in m[2].split() if x != "0"], "0" in m[2].split())}))
 row(r"ingress ([uta])", Set("port", lambda m, r: {f"port.{p}.ingress": INGRESS[m[1]] for p in _ports(r)}))
 row(r"ingress((?: \d+[uta])+)",
     Set("port", lambda m, r: {f"port.{w[:-1]}.ingress": INGRESS[w[-1]] for w in m[1].split()}))

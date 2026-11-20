@@ -49,11 +49,11 @@ class Console:
         return "", f"{line}\n{self.replies.get(line, 'ok')}\n> "
 
 
-def run(side_om, line, replies):
+def run(side_om, line, replies, board=None):
     r = object.__new__(Run)
     r.b, r.t, r.n, r.results, r.replies = Console(replies), 0, 0, {}, {}
     r.om, r.oms, r.canon = set(side_om), [set(), {"port"}], {"port"}
-    r.P, r.F, r.cages = [0, 1], ["1", "2"], {1: (8, "3")}
+    r.P, r.F, r.cages = ([0, 1], ["1", "2"], {1: (8, "3")}) if board is None else (board.P, board.F, board.cages)
     r.cli(line)
     return r.b.typed, r.results[f"000 cli {line}"]
 
@@ -122,8 +122,59 @@ def main():
     bad, ok = compare("vlan", old, {"000 boot": "a\nb\nc"}, ex, used)
     case("N", any("000 boot" in b for b in bad) and 1 not in used, "a gained line not listed is a difference")
 
+    f = tempfile.NamedTemporaryFile("w", suffix=".expect", delete=False)
+    f.write("* *boot -/Verifying:\\n\\nPort\\t.*(\\n\\d+\\t.*)+/\n")
+    f.close()
+    ex = load_expect(f.name)
+    os.unlink(f.name)
+    blk = "a\nVerifying:\n\nPort\tState\n1\tOn\n2\tOff\nb"
+    ok1 = compare("boot", {"000 boot": blk}, {"000 boot": "a\nb"}, ex)[0] == []
+    ok2 = compare("boot", {"000 boot": "x\n\n" + blk}, {"000 boot": "x\na\nb"}, ex)[0] != []
+    case("O", ok1 and ok2, "a block item covers its run of lines, not a blank line elsewhere")
+    fails += not (ok1 and ok2)
+    fails += real_gets(case)
     fails += state_paths(case)
     sys.exit(1 if fails else 0)
+
+
+# Replies of feat/om dab5d13 in rtlsim (2026-11-20), as get prints them
+REAL = {"get port.2.isolate": "port.2.isolate 1,3-4,cpu\nok", "get port.7.isolate": "port.7.isolate 1-9,cpu\nok",
+        "get port.3.name": "port.3.name front-three\nok", "get port.4.speed": "port.4.speed 100m\nok",
+        "get port.4.duplex": "port.4.duplex half\nok", "get port.4.enabled": "port.4.enabled on\nok",
+        "get port.5.eee": "port.5.eee off\nok", "get port.6.enabled": "port.6.enabled off\nok",
+        "set port.9.speed 1g": "err port.9.speed: not on this port",
+        "apply": "ok"}
+
+
+def real_gets(case):
+    """The settings' two sides, the new one from real get replies: the
+    old line accepted means the values its parser sets (parse_port(),
+    parse_isolate()), and get prints them back in its own form."""
+    fails = 0
+    B = SimpleNamespace(P=list(range(8)), F=[str(i + 1) for i in range(8)], cages={1: (8, "9")})
+    for name, old, want, real in [
+            ("Q1", "isolate 2 1 3 4 0", "port.2.isolate 1,3,4,cpu", REAL),
+            ("Q2", "isolate 7 off", "port.7.isolate 1,2,3,4,5,6,7,8,9,cpu",
+             {**REAL, "get port.7.isolate": "port.7.isolate 1-9,cpu\nok"}),
+            ("Q3", "port 3 name front-three", "port.3.name front-three", REAL),
+            ("Q4", "port 4 100m half", "port.4.duplex half\nport.4.enabled on\nport.4.speed 100m", REAL),
+            ("Q5", "port 4 1g half", "port.4.duplex auto\nport.4.enabled on\nport.4.speed 1g",
+             {**REAL, "get port.4.speed": "port.4.speed 1g\nok", "get port.4.duplex": "port.4.duplex auto\nok"}),
+            ("Q6", "port 6 off", "port.6.enabled off", REAL),
+            ("Q7", "port 4 on", "port.4.enabled on\nport.4.speed auto", {**REAL, "get port.4.speed": "port.4.speed auto\nok"}),
+            ("Q8", "eee off 5", "port.5.eee off", REAL)]:
+        _, o = run((), old, {old: ""}, B)
+        t, n = run({"port"}, old, real, B)
+        ok = o == n == want
+        fails += not ok
+        case(name, ok, f"{old!r}: old and new both {want!r}" if ok else f"{old!r}: old {o!r}, new {n!r} (typed {t})")
+    _, o = run((), "port 9 1g", {"port 9 1g": "Logical Port: 08\n is SFP no PHY information available."}, B)
+    t, n = run({"port"}, "port 9 1g", REAL, B)
+    _, o2 = run((), "port 2 lldp x", {"port 2 lldp x": "Logical Port: 01\nUnknown port <port> lldp [block|permit] command"}, B)
+    ok = o == n == o2 == "refused" and "discard" in t
+    fails += not ok
+    case("Q9", ok, f"the old SFP and lldp refusals without Error: are refused; the new err too ({o!r}, {n!r}, {o2!r})")
+    return fails
 
 
 # --- the state-path map (P3G): the old surfaces' samples, the conversions,

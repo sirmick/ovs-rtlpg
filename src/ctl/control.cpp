@@ -725,6 +725,12 @@ bool controller::request(const std::string &line, std::string &reply)
 			m_tbl_busy = 0;
 			m_sys->tables().busy_reads = 0;
 			reply = "ok";
+		} else if (c == "stat" && w.size() == 5 && w[1] == "set") {
+			unsigned const port = unsigned(parse_num(w[2])), cnt = unsigned(parse_num(w[3]));
+			if (port > 15 || cnt > 63)
+				throw ctl_error("stat set: port 0-15, counter 0-63");
+			m_sys->tables().set_counter(u8(port), u8(cnt), std::stoull(w[4], nullptr, 16));
+			reply = "ok";
 		} else if (c == "flash" && w.size() == 3 && w[1] == "wp" && (w[2] == "on" || w[2] == "off")) {
 			m_flash_wp = w[2] == "on";
 			m_sys->flash().write_protect = m_flash_wp;
