@@ -118,11 +118,11 @@ def main():
 
     # long_steps(): the bound is 50 ms (decision 25), FL_ERASE included; a
     # step at or under it passes, one over fails, FL_ERASE's longest reported
-    def steps(table):
+    def steps(table, hdr="state\truns\tmax"):
         class B:
             now = 0
             def console(self, line, until):
-                return "", "health tasks\nslot\ttask\tstate\tmask\twake\nstate\truns\tmax\n" + table + \
+                return "", "health tasks\nslot\ttask\tstate\tmask\twake\n" + hdr + "\n" + table + \
                     "passes 00001000 idle 00000800 longest 41ms\n\n> "
         r = SimpleNamespace(b=B(), replies={"cli l2": 3_000_000}, checks=[])
         r._type = lambda line, until: Run._type(r, line, until)
@@ -138,6 +138,11 @@ def main():
     ok = len(c) == 1 and c[0][0] == "long steps" and c[0][1] == [] and "FL_ERASE 45ms, 2 runs" in c[0][2] and "over 50 ms" in c[0][2]
     fails += not ok
     print(f"{'PASS' if ok else 'FAIL'}  U: all at or under 50 ms: one PASS, FL_ERASE's longest reported: {c[0][2] if c else c}")
+    # FR's header (runs in the last second) is read the same way
+    c = steps("CLI_RUN\t5\t3ms\nRX_STEP\t9\t51ms\n", hdr="state\truns/s\tmax")
+    ok = sorted(x[0] for x in c) == ["long step RX_STEP"]
+    fails += not ok
+    print(f"{'PASS' if ok else 'FAIL'}  V: the runs/s header is read too: {sorted(x[0] for x in c)}")
     sys.exit(1 if fails else 0)
 
 

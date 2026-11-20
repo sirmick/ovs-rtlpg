@@ -369,11 +369,13 @@ class Run:
         <STATE>"), or "long steps" if none is; skipped ("long steps") on a
         build without the command."""
         _, out = self._type("health tasks", self.b.now + slot * 1000)
-        if out is None or "state\truns\tmax" not in out:
+        # the header is "state\truns\tmax", or "state\truns/s\tmax" since FR (runs in the last second)
+        hdr = re.search(r"state\truns(?:/s)?\tmax", out or "")
+        if hdr is None:
             self.checks.append(("long steps", None, "no `health tasks` in this build: skipped", None, [], None))
             return
         bad, longest, erase = [], (0, ""), None
-        for l in out.split("state\truns\tmax", 1)[1].splitlines():
+        for l in out[hdr.end():].splitlines():
             m = re.match(r"(\w+)\t(\d+)\t(>?)(\d+)(us|ms)$", l)
             if not m:
                 continue
