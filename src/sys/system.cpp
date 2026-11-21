@@ -39,8 +39,8 @@ rtl837x_system::rtl837x_system(std::unique_ptr<flash_controller> flash, const bo
 	m_cpu.uart_tx = [this](u8 c) { fputc(c, uart_out); if (c == '\n') { uart_lines++; fflush(uart_out); } };
 	m_core.soc_reset = [this]() { m_reset_pending = true; };
 	m_core.on_write(0x6040, [this](u32 v) { m_clock_set = true; return v; });	// HW_CONF: setup_clock()
-	m_core.written = [this](u16 a, u32 v) {	// early_reset_hang's proxy for the switch init
-		if (a == 0x632c && (v & 0x001f0000) == 0x001f0000)
+	m_core.written = [this](u16 a, u32 v) {	// early_reset_hang: the write that ends the switch init
+		if (switch_init_mask && a == switch_init_reg && (v & switch_init_mask) == switch_init_mask)
 			m_switch_init = true;
 	};
 	m_flash->now = [this]() { return m_cpu.cycles_total; };
@@ -78,7 +78,8 @@ void rtl837x_system::reset(bool chip_reset)
 	m_nic.reset();
 	m_cpu.reset();
 	m_cpu.cov_region = 0;		// the common code as the flash has it
-	m_cpu.cov_load_pending = false;
+	m_cpu.code_load_pending = false;
+	m_cpu.code_loaded = false;
 	m_halted = false;
 	map_code_pages();
 }
@@ -208,7 +209,7 @@ void rtl837x_system::model_code_ram_load()
 			u32 const conf = m_core.reg(0x6040);
 			if (conf & 0x02) {
 				m_code_ram[((conf >> 2) & 3) * 0x1000 + i] = u8(v);
-				m_cpu.cov_load_pending = true;
+				m_cpu.code_load_pending = true;
 			}
 			return v;
 		});
@@ -444,18 +445,18 @@ void rtl837x_system::chip_reset()
 {
 	u16 const pc = m_cpu.pc();
 	u8 const bank = m_cpu.psbank();
-	bool const app = m_cpu.cov_region == 1;	// the loader has started the application
+	bool const app = m_cpu.code_loaded;	// software loaded the code running: the application
 	resets++;
 	m_tables.settle();
 	reset(true);
-	if (!early_reset_hang || !app || m_switch_init || m_held)
+	if (!early_reset_hang || !switch_init_mask || !app || m_switch_init || m_held)
 		return;
 	m_held = true;
 	u64 const us = m_flash->now() * 4 / 125;	// firmware time, 31.25 cycles a µs
 	report("early-reset", "early reset: chip reset by the application at pc=%04x psbank=%02x, t=%llu.%03llu ms, "
-		"before the switch init since power-on (proxy: MAC access, 0x632c bits 16-20): the chip hangs until "
-		"a power cycle, as the 8x's did (doc/sched/silicon.md)",
-		pc, bank, (unsigned long long)(us / 1000), (unsigned long long)(us % 1000));
+		"before the switch init since power-on (no write of %04x with %08x set): the chip hangs until "
+		"a power cycle, as an RTL8373 was seen to",
+		pc, bank, (unsigned long long)(us / 1000), (unsigned long long)(us % 1000), switch_init_reg, switch_init_mask);
 }
 
 bool rtl837x_system::run(int cycles)

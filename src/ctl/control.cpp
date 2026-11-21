@@ -242,6 +242,8 @@ void controller::attach()
 	s.flash().keep_before = true;
 	s.flash_busy_check = m_opt.flash_timing;
 	s.early_reset_hang = m_opt.early_reset_hang;
+	s.switch_init_reg = m_opt.switch_init_reg;
+	s.switch_init_mask = m_opt.switch_init_mask;
 	s.cpu().uart_timing = true;
 	s.cpu().uart_lost = [this](u8 c, bool ri) {
 		report("uart-lost", "uart: received 0x%02x lost, %s", c, ri ? "RI still set (the last byte unread)" : "reception off (REN)");

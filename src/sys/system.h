@@ -106,30 +106,26 @@ public:
 	u64 resets = 0;
 	bool trace_reset = false;		// log each chip reset to stderr
 	u64 uart_lines = 0;			// sent so far, to place a reset in the console
-	// The early-reset hang, a model of what the 8x (RTL8373) was seen to do
-	// (rtlpg-sched doc/sched/silicon.md, c1f9c37): with RTLPlayground's
-	// loader, a chip reset made by the application before it had done the
+	// The early-reset hang, a model of what an RTL8373 was seen to do on the
+	// bench: a chip reset made by the application before it had done the
 	// switch init hung the chip until its power was cycled - the reset
 	// happened, then the CPU never ran again, not even the loader's banner;
 	// with the init done, every reset booted. rtlsim models no hang on a
-	// guess (f849c0c took one out): this one rests on that bench result,
-	// and goes no further than it. So only a reset made while the
-	// application runs (the loader has loaded the common code RAM and jumped
-	// to it: cov_region 1) hangs; a reset by the loader itself, or on an
-	// image without one, boots as before, unconfirmed on silicon. What
-	// exactly the init must have done is unknown (a bench bisect may refine
-	// it); the trigger here is a proxy, the last step of RTLPlayground's
-	// rtl8373_init() and rtl8372_init(), after the PHY and SerDes set-up:
-	// a write to 0x632c (MAC access) with bits 16-20 all set, since
-	// power-on. The loader's own network set-up sets only bits 16-19 there,
-	// so it doesn't count; neither does the NIC reset, nor setup_clock().
-	// With early_reset_hang, a reset before that resets the chip as any
+	// guess: this one rests on that bench result, and goes no further. Only a
+	// reset while code software loaded runs (code_loaded: on a loader image,
+	// the application) hangs; a reset by the loader itself, or on an image
+	// without one, boots, unconfirmed on silicon. What the init must have
+	// done is unknown, and what marks it done is the firmware's: the caller
+	// names the write (switch_init_reg, with every bit of switch_init_mask
+	// set: --switch-init REG:MASK); none named, no hang. With
+	// early_reset_hang, a reset before that write resets the chip as any
 	// other, then holds the CPU: no instructions, no UART, frames in are
 	// dropped, firmware time still passes; only a new system (a power cut)
 	// gets out of it. It is reported once ("early-reset", with the firmware
-	// time, PC and PSBANK at the reset). Off: every reset boots, as before.
-	// (A SWTG024AS has hung on a reset mid-boot too, rtl837x_sfr.h says.)
+	// time, PC and PSBANK at the reset). Off: every reset boots.
 	bool early_reset_hang = false;
+	u16 switch_init_reg = 0;
+	u32 switch_init_mask = 0;
 	bool switch_init_done() const { return m_switch_init; }
 	bool held() const { return m_held; }
 	// A chip reset now, as the firmware's write to 0x0024 makes one (the

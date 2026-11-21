@@ -94,11 +94,12 @@
 // operation with PC, PSBANK and SP.
 //
 // --early-reset-hang (always on with --control, unless --no-early-reset-hang)
-// models what the 8x was seen to do (doc/sched/silicon.md in rtlpg-sched): a
-// chip reset made by the application, started by the loader, before it has
-// done the switch init (its last step, MAC access in 0x632c, since power-on:
-// a proxy trigger, see sys/system.h) hangs the chip until a power cycle; a
-// reset by the loader itself boots, unconfirmed on silicon. The reset
+// models what an RTL8373 was seen to do on the bench: a chip reset made by
+// the application, started by the loader, before it has done the switch
+// init hangs the chip until a power cycle; a reset by the loader itself
+// boots, unconfirmed on silicon. What marks the init done is the firmware's:
+// --switch-init REG:MASK (hex) names the write, to REG with every bit of
+// MASK set, since power-on (sys/system.h); without it nothing hangs. The reset
 // happens, then the CPU is held; it is reported ("early reset", with PC,
 // PSBANK and the firmware time) and rtlsim exits with 7. Off in plain mode,
 // where every reset boots, as it always has: the existing plain-mode runs and
@@ -206,6 +207,7 @@ int main(int argc, char **argv)
 	control_options control;
 	bool check_flash_busy = false;
 	bool early_reset_hang = false;
+	unsigned switch_init_reg = 0, switch_init_mask = 0;
 	long nic_rx_ring = -1;
 	const char *cov_file = nullptr;
 	coverage cov_bits;
@@ -307,6 +309,15 @@ int main(int argc, char **argv)
 			early_reset_hang = true;
 		else if (!strcmp(argv[i], "--no-early-reset-hang"))
 			control.early_reset_hang = false;
+		else if (!strcmp(argv[i], "--switch-init") && i + 1 < argc) {
+			if (sscanf(argv[++i], "%x:%x", &switch_init_reg, &switch_init_mask) != 2 || switch_init_reg > 0xffff
+			    || !switch_init_mask) {
+				fprintf(stderr, "rtlsim: --switch-init REG:MASK, both hex, MASK not 0 (%s)\n", argv[i]);
+				return 1;
+			}
+			control.switch_init_reg = u16(switch_init_reg);
+			control.switch_init_mask = switch_init_mask;
+		}
 		else if (!strcmp(argv[i], "--cov") && i + 1 < argc)
 			cov_file = argv[++i];
 		else {
@@ -368,6 +379,8 @@ int main(int argc, char **argv)
 		sys.flash().timing = flash_timing || check_flash_busy;
 		sys.flash_busy_check = check_flash_busy;
 		sys.early_reset_hang = early_reset_hang;
+		sys.switch_init_reg = u16(switch_init_reg);
+		sys.switch_init_mask = switch_init_mask;
 		if (nic_rx_ring >= 0)
 			sys.nic().rx_ring_cap = unsigned(nic_rx_ring);
 		if (cov_file)

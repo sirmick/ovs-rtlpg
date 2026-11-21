@@ -167,6 +167,8 @@ struct control_options {
 	bool quiet = false;		// findings only through checks, not on stderr
 	bool flash_timing = true;	// the flash busy model (--no-flash-timing: off)
 	bool early_reset_hang = true;	// --no-early-reset-hang: off
+	u16 switch_init_reg = 0;	// --switch-init REG:MASK: the write that ends the switch init
+	u32 switch_init_mask = 0;	// (none: no early-reset hang)
 	unsigned nic_rx_ring = 10240;	// --nic-rx-ring: the NIC RX ring's capacity, bytes (sys/nic.h)
 };
 

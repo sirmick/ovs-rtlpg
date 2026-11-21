@@ -8,8 +8,12 @@ What the 8x (RTL8373) was seen to do (rtlpg-sched doc/sched/silicon.md): a
 reset made by the application, started by RTLPlayground's loader, before it
 has done the switch init resets the chip, then the CPU never runs again - no
 loader banner, no UART - until the power is cycled. rtlsim --control models
-it, for the application's resets only (sys/system.h has the proxy for "the
-switch init"); a reset by the loader itself boots, unconfirmed on silicon.
+it, for the application's resets only; a reset by the loader itself boots,
+unconfirmed on silicon. What marks the switch init done is the firmware's,
+so this test names it (SWITCH_INIT, --switch-init): RTLPlayground's last
+step of rtl8373_init()/rtl8372_init(), after the PHY and SerDes set-up, a
+write to 0x632c (MAC access) with bits 16-20 set. Its loader's own network
+set-up sets only bits 16-19 there, so it doesn't count.
 With --no-early-reset-hang every reset boots, as before. IMAGE is a boot
 image (loader and application).
 
@@ -38,8 +42,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from rtlsim_ctl import Sim, fmt_us
 
 PROMPT_RE = r"\n(\[confirm [0-9]+\] )?\*?> $"	# with P3A's markers; a POSIX ERE too
+SWITCH_INIT = "632c:1f0000"	# RTLPlayground's last switch-init write (module docstring)
 FINDING_RE = (r"early reset: chip reset by the application at pc=[0-9a-f]{4} psbank=[0-9a-f]{2}, t=\d+\.\d{3} ms, "
-              r"before the switch init since power-on \(proxy: .*\): the chip hangs until a power cycle, as the 8x's did")
+              r"before the switch init since power-on \(no write of 632c with 001f0000 set\): the chip hangs until "
+              r"a power cycle, as an RTL8373 was seen to")
 failures = 0
 
 
@@ -76,7 +82,7 @@ def session(a, model, script):
             log(f"check {fmt_us(t)} {kind} {text}")
         return found
 
-    args = ["--quiet"] + ([] if model else ["--no-early-reset-hang"])
+    args = ["--quiet", "--switch-init", SWITCH_INIT] + ([] if model else ["--no-early-reset-hang"])
     sim = Sim(a.image, board=a.board, rtlsim=a.rtlsim, args=args)
     with sim:
         boot(sim, "boot")

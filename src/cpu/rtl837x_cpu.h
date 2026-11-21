@@ -92,14 +92,16 @@ public:
 	// instruction during which stop_request was set. Unset (-1, false), they
 	// cost one compare per instruction.
 	int break_pc = -1, break_bank = -1;
-	// Coverage (sys/coverage.h): each instruction run marks its address in
-	// region cov_region; cov_load_pending switches to region 1 when PC next
-	// reaches 0 (software loaded the common code and jumps to it), with or
-	// without cov: region 1 is the application on a loader image (the
-	// early-reset hang asks). Unset, one compare per instruction.
+	// Software loaded the common code RAM (code_load_pending, set by the
+	// system's model of the load) and PC then reached 0: code_loaded, the
+	// code running is what software put there (on a loader image, the
+	// application). Coverage (sys/coverage.h) marks each instruction run in
+	// region cov_region: 0 before, 1 once code_loaded. Unset, one compare per
+	// instruction.
 	coverage *cov = nullptr;
 	int cov_region = 0;
-	bool cov_load_pending = false;
+	bool code_load_pending = false;
+	bool code_loaded = false;
 	bool stop_request = false;
 	bool stopped = false;
 

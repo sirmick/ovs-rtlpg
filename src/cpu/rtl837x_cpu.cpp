@@ -283,9 +283,10 @@ void rtl837x_cpu::execute_run()
 		bool const ran = instruction_enabled();
 		if (ran) {
 			m_ppc = m_pc;
-			if (cov_load_pending && m_pc == 0) {
+			if (code_load_pending && m_pc == 0) {
+				code_loaded = true;
 				cov_region = 1;
-				cov_load_pending = false;
+				code_load_pending = false;
 			}
 			if (cov)
 				cov->hit(cov_region, m_psbank, m_pc);
