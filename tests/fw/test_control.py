@@ -60,6 +60,7 @@ from console import Console, PROMPT
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROMPT_RE = r"\n(\[confirm [0-9]+\] )?\*?> $"	# with P3A's markers; a POSIX ERE too
 failures = 0
+RINGS = False
 
 
 CMD, ANSWER, BURST, ROW = "version", "Software version", "stat", r"Port"
@@ -213,10 +214,10 @@ def uart_timing(a):
         sim.run_until_uart(ROW, max_ms=100)
         paste = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"
         sim.uart_write(paste)
-        sim.run_until_uart(r"\n(\[confirm [0-9]+\] )?\*?> [A-Za-z]*$", max_ms=20000 if OM else 400)
+        sim.run_until_uart(r"\n(\[confirm [0-9]+\] )?\*?> [A-Za-z]*$", max_ms=20000 if RINGS else 400)
         sim.run(20)
         lines = sim.uart_read()
-        ring = sim.sym("con_rx_buf" if OM else "sbuf")[2]
+        ring = sim.sym("con_rx_buf" if RINGS else "sbuf")[2]
         lost = [c for c in sim.checks() if c[1] == "uart-lost"]
         # interrupts off: nobody reads SBUF, so the UART itself overruns
         ie = sim.peek("s:0xa8", 1)
@@ -235,7 +236,7 @@ def uart_timing(a):
     rows = [(t, x) for t, x, done in lines if done and (x.startswith("port.") if OM else x[:1].isdigit() and "\t" in x)]
     per = [(rows[i + 1][0] - rows[i][0]) / (len(rows[i][1]) + 2) for i in range(len(rows) - 1)]	# + CR LF
     keep = len(paste) % ring
-    want = paste[:ring - 1] if OM else paste[-keep:] if keep else ""	# the OM's ring drops, the old one wraps
+    want = paste[:ring - 1] if RINGS else paste[-keep:] if keep else ""	# the scheduler's ring drops, the old one wraps
     return per, lines[-1][1], "> " + want, ring, lost, overrun, nul
 
 
@@ -257,8 +258,10 @@ def main():
     ap.add_argument("--transcript")
     a = ap.parse_args()
     a.map = a.map or os.path.join(os.path.dirname(os.path.abspath(a.image)), "rtlplayground.map")
-    global OM
+    global OM, RINGS
     OM = om_image(a)
+    # the scheduler's console rings (con_ring.c: feat/sched, and main after it), or the old sbuf
+    RINGS = "_con_rx_buf" in open(a.map).read()
 
     first, f = session(a)
     if a.transcript:
@@ -313,7 +316,7 @@ def main():
     check(per and all(86 < p < 92 for p in per),
           f"console output costs a character time a character: {', '.join(f'{p:.2f}' for p in per)} µs (87.04 + handshake)")
     check(tail == want and not lost,
-          f"a 40-byte paste while {BURST} prints {'fits' if OM else 'overruns'} the {ring}-byte serial ring: "
+          f"a 40-byte paste while {BURST} prints {'fits' if RINGS else 'overruns'} the {ring}-byte serial ring: "
           f"{tail!r} echoed, {want!r} expected; "
           f"{len(lost)} lost at the UART itself")
     check(len(overrun) == 2 and "0x79" in overrun[0] and "0x7a" in overrun[1] and "RI still set" in overrun[0],
