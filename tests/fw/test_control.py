@@ -15,7 +15,8 @@
 - Nothing reads the bank window while the flash erases or programs (the
   boot writes its default config).
 - The boot's coverage (cov dump, tools/cov_report.py) has main,
-  print_string and flash_default_config run, cmd_parser not yet, and is the
+  print_string and flash_default_config run, cmd_parser replays config.txt (on
+  an object-model image: om_apply_next, and cmd_parser not yet), and is the
   same in both runs.
 - A power cut and a chip reset both boot it again, with time running on; a
   line the cut interrupted stays unfinished, and the boot starts afresh.
@@ -63,11 +64,14 @@ failures = 0
 
 CMD, ANSWER, BURST, ROW = "version", "Software version", "stat", r"Port"
 BOOTFN = "flash_default_config"		# the OM's boot leaves a blank config blank: its apply instead
+# Whether the boot runs cmd_parser: the old one replays config.txt through it,
+# the OM applies its config without it (until a line is typed: "not yet").
+BOOT_PARSES = True
 
 
 def om_image(a):
     """the object model's CLI: version and stat are get lines (module docstring)"""
-    global CMD, ANSWER, BURST, ROW, BOOTFN
+    global CMD, ANSWER, BURST, ROW, BOOTFN, BOOT_PARSES
     c = Console(a.rtlsim, a.image, ["--board", a.board] if a.board else [])
     try:
         c.expect(PROMPT, 120)
@@ -80,6 +84,7 @@ def om_image(a):
     if om:
         CMD, ANSWER, BURST, ROW = "get state.sys.version", "state.sys.version ", "get port", r"port\."
         BOOTFN = "om_apply_next"
+        BOOT_PARSES = False
     return om
 
 
@@ -283,9 +288,9 @@ def main():
                     o.write(f"{r:5d}/{t:<5d} {n}  {mod}\n")
     ran = [n for n, v in boot1.functions.items() if v[0]]
     check(all(boot1.ran_function(n) for n in ("main", "print_string", BOOTFN))
-          and not boot1.ran_function("cmd_parser"),
+          and boot1.ran_function("cmd_parser") == BOOT_PARSES,
           f"the boot's coverage: {len(ran)} of {len(boot1.functions)} functions ran (main, print_string, "
-          f"{BOOTFN}; cmd_parser not yet), region {boot1.region}")
+          f"{BOOTFN}; cmd_parser {'replaying config.txt' if BOOT_PARSES else 'not yet'}), region {boot1.region}")
     check(boot1.functions == boot2.functions, "and two boots' coverage is the same, function by function")
     for c in (f["cov"], f2["cov"]):
         os.unlink(c)
