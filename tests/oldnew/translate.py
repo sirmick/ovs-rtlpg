@@ -190,8 +190,7 @@ PATHS = [
 ]
 # Objects whose rows wait for their node; each takes itself out (P4-*, P5-*)
 # sys.mac: P4-1 left it (the MAC type's cost); the mac command stays until it moves
-PENDING = {"sys.mac",
-           "state.loader"}
+PENDING = {"state.loader"}
 # Fields a moved state object defers (its schema lists them): the new image
 # has no path for them, so while the surface lasts both images read them there
 DEFERRED = [_r for _r in (
