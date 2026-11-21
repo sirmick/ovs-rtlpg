@@ -17,6 +17,41 @@ enum : u8 {
 };
 enum : u8 { EXEC_BUSY = 0x01, EXEC_GO = 0x04 };
 
+// The parts on the boards we run, by JEDEC id: their datasheets' typical
+// times (section 10.6, AC Electrical Characteristics; the PDFs and their text
+// in rtlpg-bench object-model/datasheets/).
+// - W25Q40CL (EF 40 13; Winbond, Rev E, 2017-07-28, p.57), the SWGT024's:
+//   tSE 30 ms, tBE1/tBE2 120/150 ms, tBP1 15 + tBP2 2.5 us a byte, tPP 0.4 ms.
+//   The bench's (the 4+2) erased in 6.2 ms (P8, save-timing.log): it beats
+//   the datasheet, which is the conservative side.
+// - W25Q16JV (EF 40 15; Winbond, Rev H, 2019-04-08, p.61), the 8x's: tSE 45
+//   ms, tBE1/tBE2 120/150 ms, tPP 0.4 ms. It gives no byte-program time: a
+//   program keeps the fit to the 8x (10.5 + (n - 1) 1 us, doc/sched/silicon.md:
+//   a 4-byte write 49-55 us all in), which is under its tPP.
+// A command stays 1 us, the 8x's fit (control.cpp).
+static const struct part {
+	u32 id;
+	const char *name;
+	u64 sector_erase_us, block_erase_us, program_first_ns, program_byte_ns, page_max_ns;
+} parts[] = {
+	{ 0xef4013, "W25Q40CL", 30000, 150000, 15000, 2500, 400000 },
+	{ 0xef4015, "W25Q16JV", 45000, 150000, 10500, 1000, 400000 },
+};
+
+const char *flash_controller::part_timings()
+{
+	for (const part &p : parts)
+		if (p.id == jedec()) {
+			t.sector_erase = p.sector_erase_us * 125 / 4;	// 31.25 cycles a us
+			t.block_erase = p.block_erase_us * 125 / 4;
+			t.program_first_ns = p.program_first_ns;
+			t.program_byte_ns = p.program_byte_ns;
+			t.page_max_ns = p.page_max_ns;
+			return p.name;
+		}
+	return nullptr;
+}
+
 flash_controller::flash_controller(const std::vector<u8> &image, u32 chip_size, u8 jedec_mfr, u8 jedec_type)
 	: m_mfr(jedec_mfr), m_type(jedec_type)
 {
