@@ -33,7 +33,9 @@ FWCFG=/sys/firmware/qemu_fw_cfg/by_name/opt/rtlsw
 disk=$(findfs LABEL=RTLSW 2>/dev/null || true)
 if [ -n "$disk" ]; then
 	mkdir -p /mnt/rtlsw
-	mountpoint -q /mnt/rtlsw || mount "$disk" /mnt/rtlsw
+	# sync: rtlsim writes flash.bin back within 50 ms, and the guest then
+	# writes it through, so a VM stopped right after a save keeps it
+	mountpoint -q /mnt/rtlsw || mount -o sync "$disk" /mnt/rtlsw
 	FLASH=/mnt/rtlsw/flash.bin
 	[ -f /mnt/rtlsw/firmware.bin ] && FIRMWARE=/mnt/rtlsw/firmware.bin
 	[ -f /mnt/rtlsw/rtlsw.conf ] && { cd /mnt/rtlsw; . ./rtlsw.conf; cd /; }
