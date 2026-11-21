@@ -557,7 +557,9 @@ int main(int argc, char **argv)
 		printf("\n--- flows\n%s", flows_text(compile_flows(sys.core(), sys.tables(), sys.board_info(), fcfg)).c_str());
 	sys.flash().sync();
 	fflush(stdout);
-	if (sys.bankcheck && sys.bankcheck->report(stderr) && rc != 2)
+	// bank findings win over the ordinary ends (halted, cycles spent, input
+	// ended); a power cut and a hold keep theirs
+	if (sys.bankcheck && sys.bankcheck->report(stderr) && (rc == 0 || rc == 2 || rc == 3))
 		rc = 4;
 	if (sys.flash_busy_violations) {
 		fprintf(stderr, "rtlsim: %llu reads of the bank window while the flash was busy\n",

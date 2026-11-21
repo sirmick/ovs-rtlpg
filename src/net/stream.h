@@ -4,7 +4,7 @@
 //
 // rtlsim listens at the path and takes one peer at a time; when it goes
 // away the port waits for the next. A peer can be QEMU (-netdev
-// stream,addr.type=unix,addr.path=PATH,server=off) or tests/net/tapbridge.py.
+// stream,addr.type=unix,addr.path=PATH,server=off) or rtlpg-tests's net/tapbridge.py.
 #ifndef RTLSIM_STREAM_H
 #define RTLSIM_STREAM_H
 

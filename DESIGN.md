@@ -134,7 +134,7 @@ function from the map file.
 A pure function of the register file, the tables and the board
 (`src/fabric/compiler.h`). It produces a complete, readable flow set
 (ovs-ofctl-like text, `rtlsim --print-flows`); golden tests check the text
-for firmware configurations without OVS (`tests/fabric`). The controller
+for firmware configurations without OVS (rtlpg-tests's `fabric/`). The controller
 installs only the difference to what is installed (adds, strict deletes);
 the plan was an OpenFlow bundle with replace-flows semantics, and that can
 come back if a half-applied update ever shows.
@@ -218,7 +218,7 @@ cycles/s, ~15 MIPS. The 10 KiB RX ring holds ~6 full-size or ~140 minimum
 frames: at 2.5 Gb/s that is ~33 µs of traffic, so a flood towards the CPU
 overflows it within one main-loop pass. Hence the traps and storm control.
 
-Measured on rtlsim (`make test-net`, the SWTG024AS compact image against
+Measured on rtlsim (rtlpg-tests's `make net`, the SWTG024AS compact image against
 Linux in a netns). The cost is the CPU's busy machine cycles from a frame
 landing in the ring to the reply's `NIC_TXCMD`. In rtlsim DMA, register
 handshakes and flash reads are instant, so silicon is somewhat slower:
@@ -368,14 +368,14 @@ floods forever.
 - **Unit:** core ISA (SDCC regressions vs ucsim), bank mapping, each SFR
   peripheral, compiler goldens (register state in → flow text out).
 - **Boot:** the boot log matches a silicon serial log line for line
-  (`tests/fw/golden/`); the bank checker stays silent; the "unmodelled" list is reviewed.
+  (rtlpg-tests's `fw/golden/`); the bank checker stays silent; the "unmodelled" list is reviewed.
 - **Register traces:** run a CLI script on the sim and on silicon (`REGDBG`) and
   diff the traces.
 - **Behaviour (pytest over topologies):** VLAN tagged/untagged/PVID/leaks; L2
   learn and ageing; isolation; LAG between two sims and against Linux bonding;
   STP rings of 3 with link pulls; LLDP neighbours; IGMP snooping; mirroring;
   rate limits (iperf3); web UI and API; firmware update, and power cuts in the
-  flash model; loader XMODEM via `rtlctl.py` against the pty.
+  flash model; loader XMODEM against the pty. These live in rtlpg-tests now.
 - **Hybrid:** add a physical NIC to a sim bridge and cable it to a bench switch.
   Run the same tests sim ↔ silicon. This is the calibration loop for the
   register semantics.

@@ -101,9 +101,11 @@ vm:
 
 # The bank check over a firmware boot (slower: every instruction is watched).
 FW_MAP ?= $(dir $(FW_IMAGE))rtlplayground.map
+# rtlsim ends on its cycle budget (exit 2) unless the check finds something (4).
 check-banks: $(BUILD)/rtlsim
+	@test -n "$(FW_IMAGE)" || { echo "check-banks: no firmware image (build RTLPlayground or set FW_IMAGE)"; exit 2; }
 	$(BUILD)/rtlsim --image $(FW_IMAGE) --check-banks $(FW_MAP) --cycles 600000000 --quiet < /dev/null > /dev/null; \
-		test $$? -ne 4
+		rc=$$?; [ $$rc -eq 2 ] || { echo "check-banks: rtlsim exited $$rc$$( [ $$rc -eq 4 ] && echo ': bank findings above')"; exit 1; }
 
 clean:
 	rm -rf $(BUILD)

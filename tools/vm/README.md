@@ -38,7 +38,7 @@ qemu-system-x86_64 -enable-kvm -m 256 -nographic \
     -netdev stream,id=p2,server=off,addr.type=unix,addr.path=/tmp/vm2-eth0.sock -device virtio-net-pci,netdev=p2
 ```
 
-`make test-vm` (`tests/vm/test_vm.py`) boots it twice, in about 15 s. It
+rtlpg-tests's `make vm` (`vm/test_vm.py`) boots it twice, in about 15 s. It
 needs no root, so it suits CI. Its test is the other end of two stream
 sockets: the firmware console answers, a `-fw_cfg` module is found, ARP is
 answered on port 1, broadcasts flood to port 2, unicast is switched, and the

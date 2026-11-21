@@ -89,7 +89,7 @@ behind its switch's name; `NAME CMD` goes to one switch's CLI, and
 ## As a VM
 
     make vm                 # build/vm/rtlsw.qcow2 (Alpine, ~54 MB)
-    make test-vm            # boot it under QEMU, no root (~15 s)
+    make -C ../rtlpg-tests vm       # boot it under QEMU, no root (~15 s; rtlpg-tests)
 
 `make vm` builds a small VM that boots into the switch: rtlsim running the
 firmware as the controller of a kernel-datapath OVS bridge over the VM's NICs.
@@ -199,7 +199,7 @@ transcripts.
 | Target | Covers | Needs |
 |---|---|---|
 | `make test` | ISA vs host, bank mapping, flash busy, coverage, the flash model, control mode and the early-reset model on a firmware image | SDCC |
-| `make check-banks` | boot `FW_IMAGE` with the bank check | SDCC |
+| `make check-banks` | boot `FW_IMAGE` with the bank check; fails on any finding | a firmware image and its map |
 
 The tests of the firmware itself (its boot against silicon, the network,
 switching, IGMP, LACP, web updates, power cuts, the flash matrix, old vs

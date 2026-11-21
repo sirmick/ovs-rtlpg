@@ -42,8 +42,8 @@ the entries, so there is nothing to forward.
 
 ## Measured on silicon (2026-11-16)
 
-`tests/net/hardware/mc_oracle.py` on switch-bench (RTL8372) and moker81
-(RTL8373), both on the pre-#904 IGMP code; `tests/net/test_igmp.py` holds
+rtlpg-tests's `net/hardware/mc_oracle.py` on switch-bench (RTL8372) and moker81
+(RTL8373), both on the pre-#904 IGMP code; rtlpg-tests's `net/test_igmp.py` holds
 rtlsim to the same table. What it showed, and what the model does about it:
 
 - **Snooping prunes.** After a member's IGMPv2 report, a group stream reaches
@@ -99,9 +99,9 @@ rtlsim to the same table. What it showed, and what the model does about it:
 
 Silicon says what the chip does with a register state; it can't say whether
 the firmware's snooping decisions are right. For that the reference is the
-Linux bridge's IGMP snooping (RFC 4541): `tests/net/test_igmp.py IMAGE
+Linux bridge's IGMP snooping (RFC 4541): rtlpg-tests's `net/test_igmp.py IMAGE
 --oracle linux` runs `mc_oracle.run_router` on a bridge in a netns
-(`tests/net/linux_bridge.py`), then on the firmware in rtlsim, on the same
+(`net/linux_bridge.py`), then on the firmware in rtlsim, on the same
 four veths, and fails every step where the firmware differs. The scenario has
 a sender S, members M and O that behave as IGMPv2 hosts (`mc_oracle.Host`:
 they answer queries), and a multicast router / querier R that sends a general

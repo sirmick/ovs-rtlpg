@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """mcprobe.py - differential probe of the L3MC table engine: rtlsim vs a real
 RTL837x, driven to the same ASIC state by direct register pokes (no firmware
-IGMP logic). The companion to tests/net/test_igmp.py: that proves forwarding,
+IGMP logic). The companion to rtlpg-tests's net/test_igmp.py: that proves forwarding,
 this proves the table engine (switch_tables) the forwarding rests on.
 
     mcprobe.py IMAGE [--rtlsim build/rtlsim]        # run on rtlsim, check vs EXPECTED
