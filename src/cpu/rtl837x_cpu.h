@@ -62,6 +62,15 @@ public:
 	u64 busy_cycles = 0;		// machine cycles spent running instructions
 	u64 cycles_total = 0;		// every machine cycle, the skipped idle ones too
 	bool fast_idle = true;
+	// Silicon fetches the bank window (0x4000-0xffff) from the SPI flash: on
+	// the 4+2 (SWGT024, 2026-11-21) banked code ran ~2x rtlsim's (console
+	// get 1.96-2.04x, one ARP 1.85x, httpd's per-byte header scan 2.6x;
+	// rtlpg-bench object-model/tools/calib.py). An instruction there costs
+	// bank_x16/16 of its cycles (16: as before; env RTLSIM_BANK_X16, 32 for
+	// the 4+2), the remainder carried. A per-MOVC and a per-bank-switch cost
+	// were tried and explained nothing.
+	u32 bank_x16 = 16;
+	u32 bank_rem = 0;
 	// Time kept exactly (the control socket), so that a run done in one call or
 	// in several ends in the same state, and the timers keep step with
 	// cycles_total: idle fast-forwards only by whole multiples of 3 cycles

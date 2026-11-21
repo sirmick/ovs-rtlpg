@@ -1,5 +1,6 @@
 // rtl837x_cpu.cpp - see rtl837x_cpu.h.
 #include "cpu/rtl837x_cpu.h"
+#include <cstdlib>
 
 static const machine_config s_mconfig;
 
@@ -15,6 +16,8 @@ rtl837x_cpu::rtl837x_cpu(u32 clock)
 	port_in_cb<1>().set([]() -> u8 { return 0xff; });
 	port_in_cb<2>().set([]() -> u8 { return 0xff; });
 	port_in_cb<3>().set([]() -> u8 { return 0xff; });
+	if (char const *x = getenv("RTLSIM_BANK_X16"))
+		bank_x16 = strtoul(x, nullptr, 0);
 }
 
 void rtl837x_cpu::device_reset()
@@ -290,6 +293,11 @@ void rtl837x_cpu::execute_run()
 			u8 op = m_program.read_byte(m_pc++);
 			prepare_instruction(op);
 			execute_op(op);
+			if (bank_x16 != 16 && m_ppc >= 0x4000) {
+				u32 const x = m_inst_cycles * bank_x16 + bank_rem;
+				m_inst_cycles = x >> 4;
+				bank_rem = x & 15;
+			}
 			busy_cycles += m_inst_cycles;
 		} else {
 			m_inst_cycles++;
