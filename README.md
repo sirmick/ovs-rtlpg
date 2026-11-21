@@ -39,7 +39,7 @@ is logged (`unmodelled reg ...`).
 Boot a firmware image and drive its CLI over stdin/stdout:
 
     build/rtlsim --image fw.bin
-    tests/fw/console.py fw.bin --cmd "vlan 10 1t 2" --cmd l2
+    tools/simconsole.py fw.bin --cmd "get port.1" --cmd "get state.l2"
 
 `fw.bin` is a full flash image (512 KiB / 1 / 2 MiB), the kind RTLPlayground's
 build produces. `--flash state.bin` keeps the chip in a file across runs, so
@@ -205,7 +205,7 @@ The tests of the firmware itself (its boot against silicon, the network,
 switching, IGMP, LACP, web updates, power cuts, the flash matrix, old vs
 new, the VM booting it) are in [rtlpg-tests](https://github.com/sirmick/rtlpg-tests),
 beside this checkout. They use this repository's simulator and libraries
-(`build/rtlsim`, `boards/`, `tools/`, `tests/rtlsim_ctl.py`, `tests/fw/console.py`).
+(`build/rtlsim`, `boards/`, `tools/` with `simconsole.py` and `rtlswitch.py`, `tests/rtlsim_ctl.py`).
 
 - **`tests/isa`** builds each program with SDCC (small/medium/large/stack-auto)
   and compares rtlsim's output with the host build's.
@@ -217,3 +217,8 @@ beside this checkout. They use this repository's simulator and libraries
 - **`tests/flash`** is the flash model's own test, on the host.
 - **`tests/sdcc-bugs`** holds two SDCC 4.6.0 miscompilations the ISA tests
   surfaced.
+
+## Licence
+
+MIT (`LICENSE`). `third_party/mame/` is MAME's mcs51 core, unchanged, under
+BSD-3-Clause (each file's header; `third_party/mame/UPSTREAM`).

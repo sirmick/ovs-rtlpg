@@ -397,8 +397,9 @@ floods forever.
   libopenvswitch-dev, so the controller speaks a minimal OpenFlow 1.3 itself
   (hello, echo, features, packet-in/out, bundles, flow-mods); flow text can
   also go through `ovs-ofctl`.
-- **Licence:** MIT (as RTLPlayground, and the flash model, `flash_dev.c`) or Apache-2.0
-  (OVS). MAME's mcs51 is BSD-3, compatible with both.
+- **Licence:** MIT (`LICENSE`), as RTLPlayground and the flash model
+  (`flash_dev.c`). MAME's mcs51 (`third_party/mame/`) keeps its BSD-3-Clause,
+  in each file's header.
 - **Repo:** github.com/sirmick/ovs-rtlpg. Developed on Linux with taps,
   network namespaces, KVM and userspace OVS.
 
