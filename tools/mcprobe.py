@@ -17,7 +17,6 @@ the comparison (sim uses a placeholder hash; see tables.h).
 import argparse, os, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(HERE, "../tests/fw"))
 import hwprobe
 
 G = "239.1.2.3"
@@ -68,8 +67,8 @@ class SerialSwitch(hwprobe.Switch):
 
 class SimSwitch(hwprobe.Switch):
 	def __init__(self, image, rtlsim):
-		from console import Console, PROMPT
-		self.PROMPT = PROMPT
+		from simconsole import Console
+		self.PROMPT = b"\n> "	# the firmware's prompt
 		self.c = Console(rtlsim, image, ["--board", os.path.join(HERE, "../boards/swgt024_v2_0_unmanaged.json"), "--cycles", "0"])
 		if not self.c.expect(PROMPT, 30):
 			raise SystemExit("mcprobe: rtlsim did not reach the prompt")

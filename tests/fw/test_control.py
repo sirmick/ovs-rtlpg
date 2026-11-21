@@ -7,7 +7,7 @@
 --map defaults to rtlplayground.map next to IMAGE. One scripted session:
 
 - The firmware boots, paused until told, to its prompt (run until uart), and
-  prints what it prints without --control (tests/fw/console.py), line for line.
+  prints what it prints without --control (tools/simconsole.py), line for line.
 - A symbol from the map (ticks) reads through peek and the struct decoder,
   and moves on as firmware time does; run until <sym> > value stops there.
 - A command typed on the UART reaches cmd_parser (run until pc, a banked
@@ -49,13 +49,13 @@ default config: its coverage has om_apply_next, the boot's apply. Its
 console RX ring (con_rx_buf, 256 bytes) drops what doesn't fit rather than
 wrap, and is drained between the stream's steps: the whole paste is echoed.
 """
-import argparse, os, sys, tempfile
+import argparse, os, re, sys, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../tools"))
 from cov_report import Coverage
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rtlsim_ctl import Sim, fmt_us
-from console import Console, PROMPT
+from simconsole import Console
+PROMPT = re.compile(rb"\n(\[confirm [0-9]+\] )?\*?> ")	# the firmware's prompt, with P3A's markers
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROMPT_RE = r"\n(\[confirm [0-9]+\] )?\*?> $"	# with P3A's markers; a POSIX ERE too

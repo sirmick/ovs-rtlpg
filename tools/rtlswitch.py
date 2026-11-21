@@ -16,8 +16,8 @@ switch runs, with no address and IPv6 off, and is back, down, afterwards.
 eth0 is refused. --flash keeps the switch's flash in a file, so its saved
 config (address, VLANs...) survives a restart. Then:
 
-    sudo ip netns exec rtl-sw0-1 ping 192.168.2.2
-    sudo ip netns exec rtl-sw0-1 curl http://192.168.2.2/
+    sudo ip netns exec rtl-sw0-1 ping 192.168.10.247      # the firmware's default address
+    sudo ip netns exec rtl-sw0-1 curl http://192.168.10.247/
 
 OVS (tools/privovs.py) runs as root in the namespace rtl-NAME, with its
 database and logs in a temporary directory; rtlsim runs as you, as the
@@ -25,7 +25,7 @@ bridge's OpenFlow controller (--ofp). Needs sudo. Nothing outside these
 namespaces is touched, and they go when it ends.
 
 As a library: Lab(image, board, name, hosts, extra, console=True).start()
-and .stop(), with .console (a tests/fw/console.py Console). A host's address
+and .stop(), with .console (a tools/simconsole.py Console). A host's address
 may be None, to set later with .address(); start(attach=False) leaves the
 bridge without its controller until .attach(), so the boot runs at full
 speed before the firmware's clock is held to the wall clock.
@@ -35,8 +35,8 @@ Several switches, cabled to each other (DESIGN.md, "Topology file"):
     tools/rtlswitch.py IMAGE --topo topo.yaml
 
     switches:
-      a: { ip: 192.168.2.2 }                   # also image, board, flash, args: [...]
-      b: { ip: 192.168.2.3, board: boards/swgt024_v2_0_unmanaged.json }
+      a: {}                                    # image, board, flash, args: [...]
+      b: { board: boards/swgt024_v2_0_unmanaged.json }
     links:
       - [a.4, b.4]                             # a cable: front port 4 to front port 4
     hosts:
@@ -46,13 +46,16 @@ Several switches, cabled to each other (DESIGN.md, "Topology file"):
 A cable is a veth pair, one end a --port of each switch, so pulling it
 (`link a.4 down`) takes the carrier from both. Each switch gets its own
 namespace and OVS, as with one; switches on the same board file get
-distinct chip UUIDs (so distinct MACs), and a switch's ip is set through
-its CLI once it boots. The consoles share this terminal: output is
-prefixed with the switch's name, and a line `NAME CMD` goes to that
-switch's CLI; `link A.F up|down` pulls or replugs a cable; `NAME` alone
-picks the switch that unprefixed lines go to. As a library: Net(image,
-topo).start() and .stop(), .cli(NAME, CMD), .link(END, up),
-.sh(HOST, *cmd).
+distinct chip UUIDs (so distinct MACs). The switches run the firmware's
+own config: an address for each is the firmware's business, set on its
+console. The consoles share this terminal: output is prefixed with the
+switch's name, and a line `NAME CMD` goes to that switch's console;
+`link A.F up|down` pulls or replugs a cable; `NAME` alone picks the switch
+that unprefixed lines go to. As a library: Net(image, topo).start(ready,
+after_boot) and .stop(), .labs[NAME].console, .link(END, up), .sh(HOST,
+*cmd). ready, a pattern, is what a booted console shows (none: no wait);
+after_boot(net) runs before the controllers attach. What the firmware's
+console says is the caller's to know (rtlpg-tests: lib/console.py).
 """
 import argparse, json, os, re, shutil, signal, subprocess, sys, tempfile, threading, time
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -128,8 +131,7 @@ class Lab:
         if self.interactive:
             self.proc = subprocess.Popen([self.rtlsim, *args])
         else:
-            sys.path.insert(0, os.path.join(HERE, "../tests/fw"))
-            from console import Console
+            from simconsole import Console
             self.console = Console(self.rtlsim, self.image, args[2:], **({"stderr": self.stderr} if self.stderr else {}))
             self.proc = self.console.p
         return self
@@ -152,9 +154,6 @@ class Lab:
         sudo("rm", "-rf", self.dir, check=False)
 
 
-PROMPT = re.compile(rb"\n(\[confirm [0-9]+\] )?\*?> ")	# with P3A's markers (console.py's)
-
-
 class Net:
     """Switches (each a Lab, with its console), cables between their front
     ports and Linux hosts on them, from a topology (a dict, as the YAML)."""
@@ -169,8 +168,8 @@ class Net:
             sw = sw or {}
             board = sw.get("board", DEFAULT_BOARD)
             b = json.load(open(board))
-            if i:	# a chip of its own: the firmware's default MAC comes from the UUID
-                b["uuid"] = hex(int(b.get("uuid", "0xc8540700"), 16) ^ (i << 8))
+            if i:	# a chip of its own (the chip's UUID: its MAC is derived from it)
+                b["uuid"] = hex(int(b.get("uuid", "0"), 16) ^ (i << 8))
                 board = os.path.join(self.dir, f"{name}.json")
                 json.dump(b, open(board, "w"))
             extra = [*(["--flash", os.path.abspath(sw["flash"])] if sw.get("flash") else []), *sw.get("args", [])]
@@ -200,14 +199,14 @@ class Net:
             raise SystemExit(f"rtlswitch: {ref!r} isn't SWITCH.FRONT, with a switch of {', '.join(self.labs)}")
         return s, f
 
-    def start(self):
+    def start(self, ready=None, after_boot=None, timeout=60):
         for a, b in self.made:
             sudo("ip", "link", "add", a, "type", "veth", "peer", "name", b)
         for lab in self.labs.values():
             lab.start(attach=False)
         for name, lab in self.labs.items():
-            if not lab.console.expect(PROMPT, 60):
-                raise RuntimeError(f"rtlswitch: switch {name} didn't boot to its prompt")
+            if ready is not None and not lab.console.expect(ready, timeout):
+                raise RuntimeError(f"rtlswitch: switch {name}'s console didn't show {ready!r} in {timeout} s")
         for h, spec in (self.topo.get("hosts") or {}).items():
             for sysctl in ("net.ipv6.conf.all.disable_ipv6=1", "net.ipv6.conf.default.disable_ipv6=1"):
                 self.sh(h, "sysctl", "-q", "-w", sysctl)
@@ -218,19 +217,11 @@ class Net:
                 if spec.get("ip"):
                     self.sh(h, "ip", "addr", "add", spec["ip"], "dev", dev, check=True)
                 self.sh(h, "ip", "link", "set", dev, "up", check=True)
-        for name, sw in (self.topo.get("switches") or {}).items():
-            if sw and sw.get("ip"):
-                self.cli(name, f"ip {sw['ip']}")
+        if after_boot:
+            after_boot(self)
         for lab in self.labs.values():
             lab.attach()
         return self
-
-    def cli(self, name, cmd, timeout=10):
-        c = self.labs[name].console
-        start = len(c.log)
-        c.send(cmd)
-        c.expect(PROMPT, timeout)
-        return c.log[start:].decode(errors="replace")
 
     def link(self, end, up):
         """Pulls (up=False) or replugs a cable, by either of its ends."""
@@ -245,11 +236,6 @@ class Net:
 
     def sh(self, host, *cmd, check=False, timeout=30):
         return sudo("ip", "netns", "exec", self.host_ns(host), *cmd, check=check, timeout=timeout)
-
-    def mac(self, name):
-        """The MAC the firmware gave itself at boot."""
-        m = re.search(rb"Setting MAC to: ([0-9a-fA-F:]{17})", self.labs[name].console.log)
-        return m.group(1).decode().lower() if m else None
 
     def stop(self):
         for lab in self.labs.values():
@@ -276,7 +262,7 @@ def run_topo(image, topo_file, rtlsim):
             with lock:
                 for l in lines:
                     print(f"[{name}] {l.decode(errors='replace')}", flush=True)
-                if re.match(rb"(\[confirm [0-9]+\] )?\*?>( |$)", buf):
+                if buf:		# a line without its newline yet (a prompt): show it now
                     print(f"[{name}] {buf.decode(errors='replace')}", flush=True)
                     buf = b""
 
