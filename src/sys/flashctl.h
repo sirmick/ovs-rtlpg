@@ -87,6 +87,12 @@ public:
 		}
 	} t;
 	bool timing = false;
+	// The chip's JEDEC id (manufacturer, memory type, capacity: 9Fh's bytes).
+	u32 jedec() const { return u32(m_mfr) << 16 | m_type << 8 | m_cap; }
+	// The datasheet's typical times for a part we know by its JEDEC id, into
+	// t (control mode's, sys/flashctl.cpp's parts[]); its name, or null and t
+	// unchanged.
+	const char *part_timings();
 	std::function<u64()> now;
 
 	// Power cuts: let n more erase/program operations through, then drop

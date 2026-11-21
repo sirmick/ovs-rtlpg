@@ -238,6 +238,7 @@ void controller::attach()
 	s.flash().t.command = 32;		// (flashctl.h)
 	s.flash().t.page_max_ns = 400000;	// tPP, for a whole page
 	s.flash().t.block_erase = 4687500;	// 150 ms (W25Q16JV, typical)
+	s.flash().part_timings();		// the board's part, from its datasheet (flashctl.cpp)
 	s.flash().keep_before = true;
 	s.flash_busy_check = m_opt.flash_timing;
 	s.early_reset_hang = m_opt.early_reset_hang;
