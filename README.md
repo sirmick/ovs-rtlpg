@@ -58,7 +58,7 @@ The simplest wiring puts one front port on a UNIX socket:
 
 `--nic PATH --nic-port N` wires physical port N (4 is front port 1 on the
 SWTG024AS) straight to the CPU, over a UNIX stream socket framed as QEMU's
-`-netdev stream`. The peer is QEMU, or `tests/net/tapbridge.py` onto a tap.
+`-netdev stream`. The peer is QEMU, or rtlpg-tests' `net/tapbridge.py` onto a tap.
 While a peer is connected the firmware's clock is held to the wall clock, so
 protocol timers agree with the peer (`--no-realtime` turns that off).
 
@@ -198,27 +198,22 @@ transcripts.
 
 | Target | Covers | Needs |
 |---|---|---|
-| `make test` | ISA vs host, bank mapping, firmware boot log vs golden, the NIC, the flow compiler goldens, the flash model, a firmware install, the control socket | SDCC |
-| `make test-net` | Linux in a netns against the firmware over a tap and over OVS; three-host switching; two cabled switches | sudo |
-| `make test-vm` | the VM boots, switches, and keeps its flash | — |
-| `make test-flash` | the PoE board's RTL8238B; standard→compact migrations on 2 MiB | an image set |
-| `make test-update` | a web firmware update, and a power cut mid-install | sudo |
-| `make test-powercut` | a power cut at every step of an install | — |
+| `make test` | ISA vs host, bank mapping, flash busy, coverage, the flash model, control mode and the early-reset model on a firmware image | SDCC |
 | `make check-banks` | boot `FW_IMAGE` with the bank check | SDCC |
+
+The tests of the firmware itself (its boot against silicon, the network,
+switching, IGMP, LACP, web updates, power cuts, the flash matrix, old vs
+new, the VM booting it) are in [rtlpg-tests](https://github.com/sirmick/rtlpg-tests),
+beside this checkout. They use this repository's simulator and libraries
+(`build/rtlsim`, `boards/`, `tools/`, `tests/rtlsim_ctl.py`, `tests/fw/console.py`).
 
 - **`tests/isa`** builds each program with SDCC (small/medium/large/stack-auto)
   and compares rtlsim's output with the host build's.
 - **`tests/bank`** exercises code and constants in BANK1-3 called across banks.
-- **`tests/fw`** boots the image and checks its boot log against a golden
-  serial log and a few CLI commands.
-- **`tests/net`** puts hand-made frames on the socket (`test_nic.py`), bridges
-  the socket to Linux in a netns over a tap or OVS and loads the web UI
-  (`test_net.py`), runs three hosts through VLAN/PVID/isolation/learning/ageing
-  (`test_switching.py`), and cables two switches together (`test_topo.py`).
-- **`tests/fabric`** compares compiled flow sets with goldens (`--update`
-  rewrites them).
-- **`tests/flash`** tests the flash model, the PoE image stream, the
-  standard→compact migration, a firmware install and resume, and power-cut
-  sweeps. The image-set tests read `$RTLSIM_IMAGES` and skip without it.
+- **`tests/flashbusy`** checks the rule that banked code doesn't run while
+  the flash is busy, and **`tests/cov`** the coverage dump.
+- **`tests/fw`** drives a firmware image through control mode
+  (`test_control.py`) and the early-reset hang model (`test_early_reset.py`).
+- **`tests/flash`** is the flash model's own test, on the host.
 - **`tests/sdcc-bugs`** holds two SDCC 4.6.0 miscompilations the ISA tests
   surfaced.

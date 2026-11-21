@@ -63,20 +63,10 @@ test: $(BUILD)/rtlsim $(BUILD)/test_flash_dev
 	$(MAKE) -C tests/flashbusy RTLSIM=$(abspath $(BUILD)/rtlsim) SDCC_DIR=$(SDCC_DIR)
 	python3 tests/flashbusy/test_busy_control.py --rtlsim $(BUILD)/rtlsim
 	python3 tests/cov/test_cov.py --rtlsim $(BUILD)/rtlsim
-	python3 tests/oldnew/test_known.py
-	python3 tests/oldnew/test_translate.py
 ifneq ($(FW_IMAGE),)
-	python3 tests/fw/test_boot.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
-	python3 tests/net/test_nic.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
-	python3 tests/net/test_l2_age.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
-	python3 tests/fabric/test_flows.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
-	python3 tests/flash/test_boot0.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
 	python3 tests/fw/test_control.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
-	python3 tests/fw/test_nic_ring.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
-	python3 tests/fw/test_lacp.py $(FW_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
 ifneq ($(FW_BOOT_IMAGE),)
 	python3 tests/fw/test_early_reset.py $(FW_BOOT_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
-	python3 tests/fw/test_holds.py $(FW_BOOT_IMAGE) $(FWB) --rtlsim $(BUILD)/rtlsim
 endif
 else
 	@echo "fw: no firmware image (set FW_IMAGE or build RTLPlayground), skipped"
@@ -100,76 +90,14 @@ ER_EXPECT ?= boot
 test-early-reset: $(BUILD)/rtlsim
 	python3 tests/fw/test_early_reset.py $(ER_IMAGE) $(if $(ER_BOARD),--board $(ER_BOARD)) --expect $(ER_EXPECT) --rtlsim $(BUILD)/rtlsim
 
-# Old vs new (tests/oldnew/README.md): the reference scenarios on two boot
-# images in rtlsim --control, compared on results; < 1 min in parallel.
-#   make oldnew OLD=... NEW=... [BOARD=boards/....json] [EXPECT=file] [ONLY="boot cli"] [NEW_OM=port,...]
-# NEW_OM (OLD_OM): the objects the image has on the object model, compared by
-# value (tests/oldnew/translate.py; EXPECT=tests/oldnew/om.expect). OLD defaults to the reference build of fork main for the 8x in
-# ~/src/rtlpg-ref (tests/oldnew/README.md), NEW to OLD: old against old, which
-# must match on every scenario.
-OLD ?= $(firstword $(wildcard $(HOME)/src/rtlpg-ref/output/KEEPLINK_KP_9000_9XHPML_V1_2-compact/rtlplayground-boot-v*.bin))
-NEW ?= $(OLD)
-BOARD ?= $(if $(findstring KEEPLINK_KP_9000_9XHPML,$(OLD)),boards/keeplink_kp_9000_9xhpml_v1_2.json)
-oldnew: $(BUILD)/rtlsim
-	python3 tests/oldnew/oldnew.py --old $(OLD) --new $(NEW) $(if $(BOARD),--board $(BOARD)) \
-		$(if $(EXPECT),--expect $(EXPECT)) $(if $(ONLY),--only $(ONLY)) \
-		$(if $(NEW_PAYLOAD),--new-payload $(NEW_PAYLOAD)) $(if $(CHECKS),--checks) \
-		$(if $(KNOWN),--known $(KNOWN)) $(if $(NEW_OM),--new-om $(NEW_OM)) $(if $(OLD_OM),--old-om $(OLD_OM)) \
-		--rtlsim $(BUILD)/rtlsim
+# The firmware's own tests (old vs new, the network, the flash matrix, web
+# updates, power cuts, the VM booting the image) are in rtlpg-tests
+# (github.com/sirmick/rtlpg-tests), beside this checkout: make -C ../rtlpg-tests core.
 
-# The bench's HTTP client against a scripted switch (no rtlsim): it honours
-# the switch's TCP window (tests/oldnew/test_bench.py).
-test-bench:
-	python3 tests/oldnew/test_bench.py
-
-# The new-only acceptance checks (tests/oldnew/checks.py) on one image, IMAGE
-# (default NEW): LACPDU gaps, BPDU hello spacing, long steps (`health tasks`),
-# the flash after an upload. KNOWN=tests/oldnew/known-failures marks today's.
-IMAGE ?= $(NEW)
-CHECKS_BOARD = $(if $(filter command line environment,$(origin BOARD)),$(BOARD),$(if $(findstring KEEPLINK_KP_9000_9XHPML,$(IMAGE)),boards/keeplink_kp_9000_9xhpml_v1_2.json))
-oldnew-checks: $(BUILD)/rtlsim
-	python3 tests/oldnew/checks.py --image $(IMAGE) $(if $(CHECKS_BOARD),--board $(CHECKS_BOARD)) \
-		$(if $(ONLY),--only $(ONLY)) $(if $(KNOWN),--known $(KNOWN)) $(if $(NEW_OM),--om $(NEW_OM)) --rtlsim $(BUILD)/rtlsim
-
-# The firmware against Linux's TCP/IP in a network namespace (needs sudo;
-# real time, so a few seconds): ping, the web UI, and what each frame costs.
-# Once over a tap on the --nic socket, once through a private OVS bridge;
-# then hosts on three front ports, switched as the firmware configures it;
-# then two switches cabled together; then IGMP snooping against silicon.
-test-net: $(BUILD)/rtlsim
-	python3 tests/net/test_net.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim --via tap
-	python3 tests/net/test_net.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim --via ovs
-	python3 tests/net/test_switching.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
-	python3 tests/net/test_topo.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
-	python3 tests/net/test_igmp.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
-
-# A firmware update through the web UI on a persistent flash, with a power
-# cut in the middle of the install (needs sudo; real time, ~1.5 min).
-test-update: $(BUILD)/rtlsim
-	python3 tests/net/test_update.py $(FW_IMAGE) --rtlsim $(BUILD)/rtlsim
-
-# Flash and board tests that take a few seconds more, and an image matrix
-# ($RTLSIM_IMAGES, ~/rtlsim/images): the PoE board loading its RTL8238B,
-# standard -> compact on the 2 and 4 MiB boards (--sweep for power cuts), and
-# a web update through the loader on every board of the matrix.
-test-flash: $(BUILD)/rtlsim
-	python3 tests/flash/test_pse.py --rtlsim $(BUILD)/rtlsim
-	python3 tests/flash/test_migrate.py --rtlsim $(BUILD)/rtlsim
-	python3 tests/flash/test_loader.py --rtlsim $(BUILD)/rtlsim
-	python3 tests/flash/test_loader_update.py --rtlsim $(BUILD)/rtlsim
-
-# A power cut at every step of a firmware install (rtlsim --powercut-after;
-# no sudo; minutes, in parallel). FW_OLD is what the switch runs before.
-FW_OLD ?= $(FW_IMAGE)
-test-powercut: $(BUILD)/rtlsim
-	python3 tests/flash/test_powercut.py $(FW_IMAGE) --old $(FW_OLD) --rtlsim $(BUILD)/rtlsim
-
-# The switch as a small VM (tools/vm/README.md): build/vm/rtlsw.qcow2, and
-# a test of it under QEMU that needs no root.
+# The switch as a small VM (tools/vm/README.md): build/vm/rtlsw.qcow2
+# (rtlpg-tests' make vm boots it under QEMU).
 vm:
 	tools/vm/mkvm.sh $(FW_IMAGE)
-test-vm:
-	python3 tests/vm/test_vm.py
 
 # The bank check over a firmware boot (slower: every instruction is watched).
 FW_MAP ?= $(dir $(FW_IMAGE))rtlplayground.map
@@ -185,4 +113,4 @@ clean:
 
 -include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
-.PHONY: all test test-control test-early-reset oldnew oldnew-checks test-bench test-net test-update test-flash test-powercut vm test-vm check-banks clean
+.PHONY: all test test-control test-early-reset vm check-banks clean
